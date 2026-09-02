@@ -2,7 +2,7 @@
 # - runs-on: ubuntu-24.04-arm — 운영 노드(OCI Ampere A1)와 이미지/도구가 모두 arm64이므로
 #   퍼블릭 arm64 러너에서 같은 아키텍처로 검사한다.
 # - 모든 액션은 전체 커밋 SHA로 핀한다(주석의 vX.Y.Z는 사람용 표기).
-#   태그→SHA 갱신은 Renovate(config:best-practices의 pinGitHubActionDigests)가 유지한다.
+#   SHA 갱신은 Renovate(온보딩 필요 — T116에서 확인), 그 전까지 수동.
 # - job 이름 `validate`는 ruleset(main)의 required check 이름과 일치해야 한다 — 바꾸면 머지가 막힌다.
 # - 검사 7항목의 정본: 계약 gitops-repo.md §validate.yml — 실제 검사는 T033에서 채운다.
 name: validate
@@ -39,11 +39,12 @@ jobs:
         run: echo "자리 — T033에서 작성"
       - name: "검사 3 — ExternalSecret 규약 7항목·images newTag 금지·platform image digest 경고"
         run: echo "자리 — T033에서 작성"
-      - name: "검사 4 — 정책 lint(Namespace 14개·공통 정책 세트·egress ipBlock·LimitRange)"
+      - name: "검사 4 — 정책 lint(Namespace 14개·공통 정책 세트·egress ipBlock·LimitRange · helm values 포트 ↔ 정책 포트 일치)"
         run: echo "자리 — T033에서 작성"
       - name: "검사 5 — joshuatech-gitapp-1[bot] 경로 lint(dev digest bump 외 변경 거부)"
         run: echo "자리 — T033에서 작성"
       - name: "검사 6 — sync-wave 값 = 계약 §sync-wave 단일 표"
         run: echo "자리 — T033에서 작성"
+      # T033은 이 스텝에 `pull-requests: write` 권한을 추가해야 한다(현재 contents: read 유지 — 최소 권한).
       - name: "검사 7 — 렌더링 diff PR 코멘트(main ↔ PR kustomize build 비교)"
         run: echo "자리 — T033에서 작성"
