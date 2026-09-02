@@ -1,0 +1,46 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": [
+    "FR-037 공급망 강화: 자동 머지 금지, 잠금파일이 정본, GitHub Actions는 전체 커밋 SHA 핀.",
+    "config:best-practices에 helpers:pinGitHubActionDigests와 docker digest 핀이 이미 포함되어 있으나, best-practices를 교체하더라도 SHA 핀 정책이 유지되도록 명시적으로 반복 선언한다.",
+    "argocd/kubernetes/helm-values의 managerFilePatterns는 이 파일을 platform-gitops 저장소(T003)로 그대로 복사·확장할 수 있도록 지금 선언한다."
+  ],
+  "extends": [
+    "config:best-practices",
+    "helpers:pinGitHubActionDigests"
+  ],
+  "automerge": false,
+  "argocd": {
+    "description": "Argo CD Application/ApplicationSet 매니페스트는 platform-gitops 레이아웃의 bootstrap/·clusters/ 아래에 놓인다. 이 매니저는 기본 패턴이 없으므로 해당 파일이 생기기 전까지는 동작하지 않는다.",
+    "managerFilePatterns": [
+      "/(^|/)(bootstrap|clusters)/.+\\.ya?ml$/"
+    ]
+  },
+  "kubernetes": {
+    "description": "일반 Kubernetes 매니페스트(platform-gitops의 platform/·secrets/, 모노레포의 deploy/ 트리). 매니저는 실제 Kubernetes 리소스를 담은 파일에만 반응한다.",
+    "managerFilePatterns": [
+      "/(^|/)(platform|secrets)/.+\\.ya?ml$/",
+      "/(^|/)deploy/.+\\.ya?ml$/"
+    ]
+  },
+  "helm-values": {
+    "description": "Helm values 파일과 환경별 변형(values.yaml, values-<env>.yaml).",
+    "managerFilePatterns": [
+      "/(^|/)values(-.+)?\\.ya?ml$/"
+    ]
+  },
+  "pep621": {
+    "description": "uv 워크스페이스: uv.lock의 전이 의존성 핀을 lockFileMaintenance PR로 갱신한다(자동 머지 금지는 전역 automerge: false가 보장).",
+    "lockFileMaintenance": {
+      "enabled": true
+    }
+  },
+  "packageRules": [
+    {
+      "description": "자체 이미지(ghcr.io/joshua92y/**)는 Renovate가 아니라 gitops 흐름의 digest 승격으로 갱신한다.",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["ghcr.io/joshua92y/**"],
+      "enabled": false
+    }
+  ]
+}
