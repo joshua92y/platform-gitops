@@ -1,0 +1,6 @@
+# platform/cloudflared/ — Cloudflare 터널
+# sync-wave: 계약 gitops-repo.md §sync-wave 단일 표 참조(wave 번호는 표에만 기재 — 중복 금지).
+# 빈 뼈대(T003) — 실제 매니페스트는 T031+에서 작성한다.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: []

@@ -1,0 +1,7 @@
+# apps/identity-admin/overlays/prod/ — namespace(jt-prod)·images[].digest(태그 금지)·
+# Ingress host JSON6902·replicas·admin Ingress. 계약 gitops-repo.md §디렉터리·§이미지·승격.
+# prod 승격은 promote.yml이 연 PR을 사람이 머지한다(FR-038 — auto-merge 금지).
+# 빈 뼈대(T003) — 실제 내용은 T031+에서 작성한다.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: []
