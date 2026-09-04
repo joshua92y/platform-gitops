@@ -1,12 +1,13 @@
 # cloudflared 터널 커넥터 — replica 2(노드 A·B 각 1개), remote-managed 터널.
 #
-# 터널 `joshuatech-tunnel`(id d0cf3291-f55a-415d-b305-5548c0ebd5bf)의 ingress 3개
-# (`ssh-a` → 노드 A 22 · `ssh-b` → 노드 B 22 · `k8s` → `tcp://kubernetes.default.svc.cluster.local:6443` + catch-all 404)는
-# OpenTofu `infra/cloudflare/tunnel.tf`(T011)가 Cloudflare 쪽 config로 선언한다(`config_src = "cloudflare"`).
+# 터널 `joshuatech-tunnel`의 ingress 3개(`ssh-a` → 노드 A 22 · `ssh-b` → 노드 B 22 ·
+# `k8s` → `tcp://kubernetes.default.svc.cluster.local:443`(Service port 443 → targetPort 6443) + catch-all 404)는
+# 모노레포 OpenTofu `infra/cloudflare/tunnel.tf`(T011)가 Cloudflare 쪽 config로 선언한다(`config_src = "cloudflare"`).
+# 터널 id·토큰 같은 식별자는 public인 이 저장소에 두지 않는다 — 정본은 그 파일과 Cloudflare 대시보드다.
 # 따라서 이 pod는 **터널 설정 파일을 갖지 않고 실행 토큰만** 갖는다 — 설정을 여기서 중복 선언하지 않는다.
 #
-# 도달 경로(계약 network-policy.md 허용 매트릭스 cloudflared 행): 외부 7844·443(edge QUIC/HTTP2) ·
-# 노드 A 22 · 노드 B 22 · `allow-kube-api`(노드 A 6443, `k8s` ingress가 ClusterIP를 거쳐 도착) · `allow-dns`.
+# 도달 경로(계약 network-policy.md 허용 매트릭스 cloudflared 행): 외부 7844(TCP·UDP 둘 다 — UDP가 없으면 QUIC이 막혀 http2로 폴백) ·
+# 외부 443 · 노드 A 22 · 노드 B 22 · `allow-kube-api`(노드 A 6443 — `k8s` ingress가 ClusterIP DNAT를 거쳐 도착) · `allow-dns`.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -102,15 +103,17 @@ spec:
             timeoutSeconds: 5
             failureThreshold: 3
           resources:
-            # plan A14 노드 예산표의 cloudflared 몫 = 노드당 0.1 GiB. requests는 그 안(64Mi)에서 잡고,
-            # limit은 누수 상한으로만 128Mi를 둔다. CPU limit은 두지 않는다 — QUIC 핸드셰이크·대용량 kubectl
-            # 전송에서 버스트가 필요하고, 이 저장소는 CPU limit로 인한 스로틀링을 피하는 쪽을 택한다(계약의 LimitRange 방침과 같은 이유).
-            # 실측(`kubectl top pod -n cloudflared`)으로 조정한다.
+            # requests: plan A14 노드 예산표의 cloudflared 몫(노드당 0.1 GiB) 안에서 64Mi — 스케줄러 예약은 requests로만 잡힌다.
+            # limit 256Mi 근거: QUIC 수신 버퍼가 커질 수 있다(HA 연결 기본 4 × connection flow control 약 30 MB ≈ 120 MB).
+            #   128Mi로 두면 대용량 전송(kubectl cp·터널 SSH) 중 OOMKill 위험이 있어 256Mi로 잡았다.
+            #   대안이었던 `--ha-connections 2`는 edge 이중화를 절반으로 줄이므로 택하지 않았다.
+            # CPU limit은 두지 않는다 — QUIC 핸드셰이크·대용량 전송의 버스트를 스로틀링하지 않기 위해서다(계약 LimitRange 방침과 같은 이유).
+            # 실측 항목(`kubectl top pod -n cloudflared`): 정상 상태 RSS와 대용량 전송 중 최대 RSS를 함께 보고 위 상한을 조정한다.
             requests:
               cpu: 25m
               memory: 64Mi
             limits:
-              memory: 128Mi
+              memory: 256Mi
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

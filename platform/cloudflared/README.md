@@ -1,7 +1,8 @@
 # platform/cloudflared/ — 운영자 절차 (T039)
 
 Cloudflare 터널 커넥터(`joshuatech-tunnel`)의 클러스터 쪽 배포. 터널 ingress 3개(`ssh-a` → 노드 A 22 · `ssh-b` → 노드 B 22 ·
-`k8s` → K3s API 6443)와 Access 앱은 OpenTofu `infra/cloudflare/`(T011)가 소유하고, 이 디렉터리는 **커넥터 Deployment만** 소유한다.
+`k8s` → K3s API(svc `kubernetes.default` 443 → targetPort 6443))와 Access 앱은 OpenTofu `infra/cloudflare/`(T011)가 소유하고,
+이 디렉터리는 **커넥터 Deployment만** 소유한다.
 
 | 파일 | 내용 |
 |---|---|
@@ -39,25 +40,38 @@ Secret `cloudflared-tunnel`, 키 `TUNNEL_TOKEN`(=`deployment.yaml`의 `secretKey
 `--dry-run=client -o yaml > secret.yaml`(평문 파일 생성 → 커밋 사고) · 토큰을 채팅·이슈·로그에 붙여넣기.
 **주의**: 끝에 개행이 붙으면 인증이 실패한다 — 아래 두 방법 모두 개행 없이 기록한다.
 
-PowerShell(운영자 워크스테이션):
+### 워크스테이션(Windows/PowerShell) — 기본 경로, 임시 파일 없음
+
+파이프로만 넘기므로 토큰이 디스크에 닿지 않는다. `apply --server-side`라 회전 시 재실행해도 되고,
+`last-applied-configuration` 어노테이션(토큰 사본)이 생기지 않는다.
 
 ```powershell
 Set-PSReadLineOption -HistorySaveStyle SaveNothing      # 이 세션 히스토리 저장 끄기
 $sec  = Read-Host -AsSecureString 'TUNNEL_TOKEN 붙여넣기(화면에 표시되지 않음)'
 $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec)
-$tmp  = Join-Path ([IO.Path]::GetTempPath()) ([IO.Path]::GetRandomFileName())
 try {
-  $plain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
-  [IO.File]::WriteAllText($tmp, $plain, (New-Object Text.UTF8Encoding $false))   # 개행 없음
-  kubectl create secret generic cloudflared-tunnel -n cloudflared --from-file=TUNNEL_TOKEN=$tmp
+  $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(
+           [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)))   # 개행 없음
+  @"
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cloudflared-tunnel
+  namespace: cloudflared
+type: Opaque
+data:
+  TUNNEL_TOKEN: $b64
+"@ | kubectl apply --server-side --field-manager=operator-bootstrap -f -
 } finally {
-  Remove-Item $tmp -Force -ErrorAction SilentlyContinue
   [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
-  $plain = $null; $sec = $null; [GC]::Collect()
+  $b64 = $null; $sec = $null; [GC]::Collect()
 }
 ```
 
-bash(Git Bash · 노드 셸):
+### 노드 셸(Linux)에서 할 때만
+
+**Git Bash에서는 쓰지 말 것** — MSYS가 `/dev/stdin`을 `/proc/self/fd/0`으로 바꿔 네이티브 `kubectl.exe`가 열지 못한다(재현 확인).
+Windows에서는 위 PowerShell 경로만 쓴다.
 
 ```bash
 read -rs TUNNEL_TOKEN     # 입력은 화면에도 히스토리에도 남지 않는다(read는 셸 빌트인)
@@ -76,10 +90,12 @@ kubectl -n cloudflared get secret cloudflared-tunnel -o go-template='{{range $k,
 ## ③ 매니페스트 수동 apply (T041 전까지)
 
 Argo CD Application `platform-cloudflared`는 T041 산출물이므로, 그 전까지는 운영자가 직접 적용한다.
+**이 매니페스트가 PR로 main에 머지된 뒤**, main을 최신화한 로컬 클론에서 실행한다(브랜치 상태를 클러스터에 넣지 않는다).
 
 ```bash
-git -C <platform-gitops 경로> checkout main && git -C <platform-gitops 경로> pull --ff-only
-kubectl apply -k platform/cloudflared            # 저장소 루트에서
+REPO=<platform-gitops 로컬 클론 절대 경로>       # 예: D:/code/platform-gitops
+git -C "$REPO" checkout main && git -C "$REPO" pull --ff-only
+kubectl apply -k "$REPO/platform/cloudflared"    # cwd와 무관하게 명시 경로로
 
 kubectl -n cloudflared rollout status deploy/cloudflared --timeout=180s
 kubectl -n cloudflared get pods -o wide          # pod 2개, NODE 열이 서로 달라야 한다(노드 A·B)
@@ -88,6 +104,9 @@ kubectl -n cloudflared logs deploy/cloudflared --tail=50 | grep -i 'Registered t
 
 Cloudflare 대시보드(Zero Trust → Networks → Tunnels)에서 커넥터 2개가 HEALTHY인지도 함께 본다.
 그다음 터널 경로 자체를 확인한다 — ⑤의 SSH·kubeconfig가 실제로 동작해야 ⑧(임시 22 규칙 제거)로 넘어갈 수 있다.
+
+기동 로그의 `ICMP proxy feature is disabled` WARN은 **정상**이다 — `capabilities.drop: [ALL]` + 비루트라 ICMP 소켓을 열 수 없어서
+나는 경고이며, `ssh-a`·`ssh-b`·`k8s`(TCP) 터널 기능과는 무관하다.
 
 ## ④ T041 인수 확인 (Argo CD가 수동 적용분을 넘겨받았는가)
 
@@ -105,13 +124,15 @@ kubectl -n cloudflared get deploy cloudflared \
   -o jsonpath='{.metadata.annotations.kubectl\.kubernetes\.io/last-applied-configuration}'; echo
 ```
 
-- 기대: managedFields에 Argo CD 컨트롤러의 `Apply` 항목이 있고, 마지막 명령의 출력이 비어 있다(수동 apply 잔재 없음).
-- 잔재가 남거나 Argo CD가 field conflict를 보고하면 1회만 마이그레이션한다:
-  `kubectl apply --server-side --force-conflicts -k platform/cloudflared` → Argo CD 재Sync → 위 4개 명령 재확인.
+- **신뢰 판정은 managedFields다**: Argo CD 컨트롤러의 `Apply` 항목이 spec을 소유하면 인수된 것이다.
+  `last-applied-configuration` 어노테이션은 **남아 있을 수 있다** — SSA는 다른 매니저가 쓴 필드를 지우지 않는다. 남았다고 실패가 아니다.
+- 어노테이션이 남았거나 Argo CD가 field conflict를 보고하면 1회만 마이그레이션한다(이것이 정상 절차다):
+  `kubectl apply --server-side --force-conflicts -k "$REPO/platform/cloudflared"` → Argo CD 재Sync → 위 4개 명령 재확인.
 
 ## ⑤ 워크스테이션 접속 전환 (SSH ProxyCommand · kubeconfig)
 
-SSH 키는 `joshuatech-ops`(FIDO2 또는 passphrase + `ssh-add -c`; `.claude/rules/infra.md`의 실명 예외).
+SSH 키는 `joshuatech-ops`(FIDO2 또는 passphrase + `ssh-add -c`).
+설계 문서의 `jt-ops` 표기를 이 실명으로 읽는 **이름 예외의 기록처는 모노레포 `docs/runbooks/bootstrap.md` §0**이다.
 `~/.ssh/config`(Windows는 `%USERPROFILE%\.ssh\config`):
 
 ```sshconfig
@@ -221,11 +242,22 @@ spec:
 
 ---
 
-## T041로 넘기는 확인 항목
+## T041·T046·T098로 넘기는 항목
 
-- **kubelet 프로브 도달**: `default-deny`(ingress+egress)가 `cloudflared` ns에 걸린 뒤, 노드에서 오는 liveness/readiness 프로브가
-  막히지 않는지 확인한다. 계약의 cloudflared 행에는 ingress 허용이 없다(`allow-apiserver-webhook`도 이 ns 대상이 아니다).
-  프로브가 막히면 계약을 먼저 고친 뒤 정책을 추가한다 — 매니페스트 쪽에서 프로브를 지우는 방식으로 넘기지 않는다.
-- **`k8s` ingress 경로**: `tcp://kubernetes.default.svc.cluster.local:6443` → `allow-dns` + `allow-kube-api`(노드 A private IP:6443)가
-  둘 다 있어야 도달한다.
+- **kubelet 프로브는 `default-deny`에 막히지 않는다** — 계약에 cloudflared ingress 행을 **추가하지 않는다**.
+  K3s 기본 NetworkPolicy 엔진인 kube-router는 pod 방화벽 체인의 **맨 앞(-I … 1)** 에
+  `-m addrtype --src-type LOCAL -d <pod IP> -j ACCEPT`("from local node")를 넣으므로, 노드에서 출발하는 kubelet 프로브는
+  NetworkPolicy 평가 이전에 통과한다(kube-router `pkg/controllers/netpol/pod.go`에서 확인).
+  프로브 때문에 정책을 완화하지 말 것. **CNI/정책 엔진을 바꾸면**(Calico·Cilium 등) 이 전제가 사라지므로 그때 재검토한다.
+- **`cloudflared` → 외부 7844는 TCP와 UDP 둘 다** 필요하다. NetworkPolicy `ports[].protocol` 기본값은 TCP라,
+  UDP 7844가 없으면 QUIC이 막혀 http2로 조용히 폴백한다(성능·연결 특성이 달라진다). 443/TCP는 폴백 경로.
+- **`k8s` ingress 경로**: origin은 `tcp://kubernetes.default.svc.cluster.local:443`이다(Service port 443 → targetPort 6443).
+  `allow-dns`(svc DNS 해석) + `allow-kube-api`(노드 A private IP **6443**)가 둘 다 있어야 도달한다 —
+  ClusterIP DNAT가 정책 평가보다 먼저라 egress 규칙의 포트는 6443이 맞다.
+  전제 확인(운영자 1회): `kubectl -n default get svc kubernetes -o jsonpath='{.spec.ports[0].port} {.spec.ports[0].targetPort}'`
+  → `443 6443`. 다르게 나오면 모노레포 `infra/cloudflare/tunnel.tf`의 origin 포트를 그 값으로 맞춘다(하네스 단언 `tunnel-1`도 함께).
 - **`ssh-b` 경로**: 계약 매트릭스의 `cloudflared` → 노드 B private IP:22 행이 실제 정책으로 선언되어야 한다.
+- **알림 경로 0(T098)**: 지금 cloudflared에는 scrape도 알림도 없다 — 커넥터가 전부 죽어도 사람이 알 수 없다.
+  계약 매트릭스에 `monitoring → cloudflared 2000` 행을 추가할지 T098에서 결정한다(추가하면 Service·scrape 설정이 함께 필요).
+- **PodDisruptionBudget · `priorityClassName`(후보)**: 노드 drain(system-upgrade)·자원 압박에서 터널을 지키려면 유용하지만
+  지금은 계약에 없다. T041(정책·프로젝트)·T046(운영 강화) 때 도입 여부를 결정한다.
