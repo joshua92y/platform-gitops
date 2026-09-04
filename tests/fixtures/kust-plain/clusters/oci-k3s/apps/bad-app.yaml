@@ -1,0 +1,10 @@
+# 부정 픽스처 1b KUST-plain — kustomization 밖 매니페스트(clusters/**)의 스키마 오류: Application에 spec.project·destination·source.repoURL 없음
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-vault
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "10" }
+spec:
+  source: { path: platform/vault }
+  syncPolicy: { syncOptions: [ServerSideApply=true] }

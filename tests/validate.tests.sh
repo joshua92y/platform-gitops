@@ -9,7 +9,9 @@
 # 실제 트리 검사(validate.sh 기본 실행)는 tests/ 를 제외하므로 픽스처가 실제 결과에 섞이지 않는다.
 #
 # 도구가 없으면 VALIDATE_SKIP_TOOLS=1로 내려가 실행한다(어떤 검사가 SKIP되는지 출력). yq(mikefarah)가 없으면
-# 대부분의 단언이 성립할 수 없으므로 즉시 실패한다(fail-closed).
+# 대부분의 단언이 성립할 수 없으므로 즉시 실패한다(fail-closed). VALIDATE_TESTS_REQUIRE_TOOLS=1 또는 CI=true 이면
+# 도구 누락 시 SKIP 모드로 내려가지 않고 exit 1 (CI에서 조용히 불완전한 결과가 통과하지 않도록).
+# 각 케이스는 env -u 로 작성자 관련 환경변수를 지우고 시작한다(CI의 GITHUB_EVENT_NAME 등이 새지 않도록).
 # =============================================================================
 set -euo pipefail
 
@@ -26,6 +28,10 @@ for t in yq kustomize kubeconform gitleaks; do
   fi
 done
 if [[ ${#missing[@]} -gt 0 ]]; then
+  if [[ ${VALIDATE_TESTS_REQUIRE_TOOLS:-0} == 1 || ${CI:-} == true ]]; then
+    printf '도구 없음: %s — VALIDATE_TESTS_REQUIRE_TOOLS=1/CI=true 이므로 SKIP 모드로 내려가지 않고 실패한다(exit 1)\n' "${missing[*]}"
+    exit 1
+  fi
   printf '도구 없음: %s → VALIDATE_SKIP_TOOLS=1 로 실행(해당 검사는 SKIP, 결과는 CI 기준으로 불완전)\n' "${missing[*]}"
   export VALIDATE_SKIP_TOOLS=1
   for m in "${missing[@]}"; do
@@ -47,7 +53,8 @@ run_case() {
     esac
   done
   local out rc=0 ok=1 a
-  out=$(env "${envs[@]}" bash "$VALIDATE" --root "$root" 2>&1) || rc=$?
+  out=$(env -u GITHUB_EVENT_NAME -u VALIDATE_REQUIRE_AUTHOR -u PR_AUTHOR -u CHANGED_FILES -u CHANGED_DIFF \
+        -u VALIDATE_BASE_SHA -u VALIDATE_HEAD_SHA "${envs[@]}" bash "$VALIDATE" --root "$root" 2>&1) || rc=$?
   N=$((N + 1))
   local problems=()
   if [[ $rc != "$want" ]]; then ok=0; problems+=("exit $rc ≠ 기대 $want"); fi
@@ -88,7 +95,23 @@ fi
 # --- 긍정 ---------------------------------------------------------------------
 run_case positive "$FIX/positive" 0 "${positive_asserts[@]}"
 
-# --- ExternalSecret ①–⑦ -----------------------------------------------------
+# --- 1b: kustomization 밖 매니페스트 스키마 오류(kubeconform 없으면 SKIP이 정답) ----------
+kust_plain_asserts=()
+if command -v kubeconform >/dev/null 2>&1; then
+  kust_plain_asserts+=('+[FAIL] 1b KUST-plain — kubeconform 실패: clusters/oci-k3s/apps/bad-app.yaml')
+else
+  kust_plain_asserts+=('+[SKIP] 1b KUST-plain — 도구 없음(kubeconform)')
+fi
+run_case kust-plain "$FIX/kust-plain" 1 "${kust_plain_asserts[@]}"
+
+# --- ExternalSecret 규약 보강(3.0) · ①–⑦ ---------------------------------------
+run_case es-0-conventions "$FIX/es-0-conventions" 1 \
+  "+[FAIL] 3.0 ES-apiVersion — apps/identity-admin/base/externalsecrets.yaml ExternalSecret/-/es-apiversion: apiVersion=external-secrets.io/v1beta1" \
+  "+[FAIL] 3.0 ES-store — apps/identity-admin/base/externalsecrets.yaml ExternalSecret/-/es-storekind: secretStoreRef.kind=SecretStore" \
+  "+[FAIL] 3.0 ES-store — apps/identity-admin/base/externalsecrets.yaml ExternalSecret/-/es-unknown-store: 알 수 없는 store 'vault-all'" \
+  "+[FAIL] 3.0 ES-dataFrom — apps/identity-admin/base/externalsecrets.yaml ExternalSecret/-/es-datafrom-find: dataFrom은 extract.key만 허용" \
+  "+[FAIL] 3.0 ES-sourceRef — apps/identity-admin/base/externalsecrets.yaml ExternalSecret/-/es-data-sourceref: data[]/dataFrom[].sourceRef" \
+  "+[FAIL] 3.0 ES-sourceRef — apps/identity-admin/base/externalsecrets.yaml ExternalSecret/-/es-datafrom-sourceref: data[]/dataFrom[].sourceRef"
 run_case es-1-key-regex "$FIX/es-1-key-regex" 1 \
   "+[FAIL] 3.1 ES-① — apps/identity-admin/base/externalsecret.yaml ExternalSecret/jt-dev/identity-admin-env: remoteRef.key 'dev/DB/Identity Admin'" \
   "+remoteRef.key 'secret/data/dev/db/identity_admin' 정규식 위반"
@@ -149,6 +172,8 @@ run_case pol-port "$FIX/pol-port" 1 \
 run_case pol-limitrange "$FIX/pol-limitrange" 1 \
   "+[FAIL] 5.5 POL-limitrange — platform/policies/limitrange.yaml LimitRange/jt-dev/defaults[Container]: default.cpu=500m 금지" \
   "+LimitRange/jt-dev/defaults[Container]: max.cpu=2 금지"
+run_case pol-location "$FIX/pol-location" 1 \
+  "+[FAIL] 5.0 POL-location — apps/identity-admin/base/networkpolicy.yaml NetworkPolicy/allow-all: 정책 객체(Namespace·NetworkPolicy·ResourceQuota·LimitRange)는 platform/policies/ 에만 둔다"
 
 # --- Application · sync-wave -------------------------------------------------
 run_case wave-and-app "$FIX/wave-and-app" 1 \
@@ -159,7 +184,7 @@ run_case wave-and-app "$FIX/wave-and-app" 1 \
   "+[FAIL] 7.1 WAVE-missing — clusters/oci-k3s/apps/apps.yaml Application/platform-cnpg: argocd.argoproj.io/sync-wave 어노테이션 없음(기대 20)" \
   "+[FAIL] 7.1 WAVE-path — clusters/oci-k3s/apps/apps.yaml Application/platform-kafka: source.path 'platform/kafka-topics' ≠ platform/kafka" \
   "+[FAIL] 7.1 WAVE-name — clusters/oci-k3s/apps/apps.yaml Application/weird-name: 이름 규약 위반" \
-  '-Application/root:' \
+  "+[FAIL] 7.1 WAVE-name — clusters/oci-k3s/apps/apps.yaml Application/root: 'root'는 bootstrap/root-app.yaml에서 source.path clusters/oci-k3s/apps 로만 허용(현재 위치 clusters/oci-k3s/apps/apps.yaml, path 'platform/vault', wave 999)" \
   "+[FAIL] 7.2 WAVE-dir — platform/unknown-thing/: §sync-wave 단일 표에 없는 디렉터리"
 
 # --- gitleaks: 대상 0개 = FAIL --------------------------------------------------
@@ -188,6 +213,16 @@ run_case author-bot-no-input "$FIX/positive" 1 \
 run_case author-human-unrestricted "$FIX/positive" 0 \
   --env "PR_AUTHOR=joshua92y" --env "CHANGED_FILES=$DIGEST_FILE" --env "CHANGED_DIFF=$FIX/author/bad-line.diff" \
   "+[PASS] 6 AUTHOR — 작성자 'joshua92y'는 봇 아님"
+# PR 이벤트인데 PR_AUTHOR가 비면 조용히 꺼지지 않고 FAIL
+run_case author-required-pr-event "$FIX/positive" 1 \
+  --env "GITHUB_EVENT_NAME=pull_request" \
+  "+[FAIL] 6 AUTHOR-input — PR 이벤트(GITHUB_EVENT_NAME='pull_request', VALIDATE_REQUIRE_AUTHOR=0)인데 PR_AUTHOR가 비어 있음"
+run_case author-required-flag "$FIX/positive" 1 \
+  --env "VALIDATE_REQUIRE_AUTHOR=1" \
+  "+[FAIL] 6 AUTHOR-input — PR 이벤트(GITHUB_EVENT_NAME='', VALIDATE_REQUIRE_AUTHOR=1)인데 PR_AUTHOR가 비어 있음"
+run_case author-push-event-ok "$FIX/positive" 0 \
+  --env "GITHUB_EVENT_NAME=push" \
+  "+[PASS] 6 AUTHOR — PR 작성자 미지정(push 이벤트 등)"
 
 # --- 저장소 밖 root 거부(exit 2) — 실제 트리 검사는 여기서 하지 않는다(트리 상태에 따라 결과가 달라지므로) -----
 outside_rc=0

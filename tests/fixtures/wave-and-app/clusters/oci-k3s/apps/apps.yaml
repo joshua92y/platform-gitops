@@ -1,5 +1,6 @@
 # 부정 픽스처 2 APP-SSA · 7.1 WAVE — (1) platform-vault wave 20(표 10) (2) platform-foo 표에 없는 컴포넌트 (3) identity-admin-dev wave 50(표 100) + ServerSideApply 없음
-# (4) platform-cnpg 어노테이션 없음 (5) platform-kafka source.path 불일치 (6) 이름 규약 위반. root는 통과해야 한다.
+# (4) platform-cnpg 어노테이션 없음 (5) platform-kafka source.path 불일치 (6) 이름 규약 위반
+# (7) 가짜 root: bootstrap/root-app.yaml 이 아닌 위치 + source.path platform/vault + wave 999 → WAVE-name
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -76,8 +77,9 @@ kind: Application
 metadata:
   name: root
   namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "999" }
 spec:
   project: platform
-  source: { repoURL: https://github.com/joshua92y/platform-gitops.git, targetRevision: main, path: clusters/oci-k3s/apps }
-  destination: { server: https://kubernetes.default.svc, namespace: argocd }
+  source: { repoURL: https://github.com/joshua92y/platform-gitops.git, targetRevision: main, path: platform/vault }
+  destination: { server: https://kubernetes.default.svc, namespace: vault }
   syncPolicy: { syncOptions: [ServerSideApply=true] }

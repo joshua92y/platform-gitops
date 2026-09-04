@@ -1,0 +1,9 @@
+# 부정 픽스처 5.0 POL-location — 정책 객체(NetworkPolicy)가 platform/policies/ 밖(apps/)에 있음
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: allow-all, namespace: jt-dev }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - {}

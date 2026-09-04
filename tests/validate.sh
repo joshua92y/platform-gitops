@@ -23,6 +23,7 @@
 #   3.7  ES-⑦              apps/** 의 key가 (dev|prod)/(access|web)/ 접두면 FAIL(Workers 전용)
 #   4a   IMG-newTag         kustomization images[].newTag 금지(digest 형식도 검사)
 #   4b   IMG-platform-digest platform/** 의 image: 줄에 @sha256 없으면 경고(WARN)
+#                           한계: `image:` 스칼라 줄만 검사한다 — helm values의 분리형 image.repository / image.tag 는 보지 않는다
 #   5.0  POL-location       Namespace·NetworkPolicy·ResourceQuota·LimitRange는 platform/policies/ 에만
 #   5.1  POL-ns             platform/policies Namespace 목록 = 계약 표 14개(누락·초과·중복 FAIL)
 #   5.2  POL-set            ns마다 공통 정책 세트 존재(deny-imds=kube-system 전용, allow-imds=vault 전용)
@@ -30,6 +31,10 @@
 #   5.4  POL-port           포트 출처 각주 ↔ 정책 포트 · helm values 포트 ↔ 정책 포트
 #   5.5  POL-limitrange     LimitRange에 default.cpu·max.cpu 없음
 #   6    AUTHOR             봇 작성자 PR: 변경 파일 = apps/*/overlays/dev/kustomization.yaml, 변경 줄 = images[].digest 뿐
+#                           한계: 변경 줄이 `digest: sha256:<64hex>` 형식인지만 본다(값의 진위·서명은 보지 않음). 보증은 이 줄 검사와
+#                           같은 실행의 트리 검사(4a·kustomize build)의 결합이며, PR head의 스크립트로 돌리면 같은 PR에서 무력화될 수
+#                           있으므로 CI는 base ref의 tests/validate.sh 로 실행해야 한다(tests/README.md). PR 이벤트에서 PR_AUTHOR가
+#                           비면 FAIL(조용한 비활성 금지)
 #   7.1  WAVE               Application sync-wave = §sync-wave 단일 표(이름·경로 규약 포함)
 #   7.2  WAVE-dir           표에 없는 platform/<component>/ 디렉터리 금지
 #   8    LEAK               gitleaks 파일 스캔 — 스캔 대상 0개(빈 트리)면 FAIL
@@ -44,10 +49,13 @@
 #   VALIDATE_BOT_AUTHORS    봇 로그인 목록(쉼표). 기본 "jt-ci[bot],joshuatech-gitapp-1[bot]"
 #   VALIDATE_K8S_VERSION    kubeconform -kubernetes-version (기본 master)
 #   VALIDATE_KUSTOMIZE_FLAGS kustomize build 추가 플래그(예: --load-restrictor LoadRestrictionsNone)
+#   VALIDATE_KUBECONFORM_CACHE kubeconform 스키마 캐시 디렉터리(기본 ${TMPDIR:-/tmp}/kubeconform-cache — 저장소 밖 임시 경로)
+#   GITHUB_EVENT_NAME=pull_request | VALIDATE_REQUIRE_AUTHOR=1   PR_AUTHOR가 비어 있으면 검사 6 FAIL
 #
-# 원칙: --root 트리(와 명시적으로 넘긴 입력 파일) 밖을 읽거나 쓰지 않는다. 명시적 임시 파일을 만들지
-#       않는다(파이프·변수만). 자격·비밀을 요구하지 않는다. 결과는 [PASS]/[FAIL]/[WARN]/[SKIP] 한 줄씩이며
-#       FAIL이 하나라도 있으면 exit 1(SKIP은 exit에 영향 없음 — 단, 요약에 "불완전"으로 표시).
+# 원칙: --root 트리(와 명시적으로 넘긴 입력 파일) 밖을 읽거나 쓰지 않는다(예외: kubeconform 스키마 캐시만 저장소 밖
+#       임시 경로에 둔다). 저장소 안에는 임시 파일을 만들지 않는다(파이프·변수만). 자격·비밀을 요구하지 않는다.
+#       결과는 [PASS]/[FAIL]/[WARN]/[SKIP] 한 줄씩이며 FAIL이 하나라도 있으면 exit 1(SKIP은 exit에 영향 없음 —
+#       단, 요약에 "불완전"으로 표시).
 # =============================================================================
 set -euo pipefail
 
@@ -64,9 +72,12 @@ K8S_VERSION="${VALIDATE_K8S_VERSION:-master}"
 KUSTOMIZE_FLAGS="${VALIDATE_KUSTOMIZE_FLAGS:-}"
 BASE_SHA="${VALIDATE_BASE_SHA:-}"
 HEAD_SHA="${VALIDATE_HEAD_SHA:-}"
+KUBECONFORM_CACHE="${VALIDATE_KUBECONFORM_CACHE:-${TMPDIR:-/tmp}/kubeconform-cache}"
+REQUIRE_AUTHOR="${VALIDATE_REQUIRE_AUTHOR:-0}"
+GH_EVENT="${GITHUB_EVENT_NAME:-}"
 
 usage() {
-  sed -n '2,45p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,56p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 while [[ $# -gt 0 ]]; do
@@ -256,7 +267,9 @@ need_tool() {
 export YQ_SEP=$'\x1f'
 
 # shellcheck disable=SC2016  # 아래 $ps·$ns·$n·$r·$c 는 yq 변수이지 셸 변수가 아니다
-YQ_ES='select(.kind == "ExternalSecret") | [ (.apiVersion // "-"), (.metadata.namespace // "-"), (.metadata.name // "-"), (.spec.secretStoreRef.kind // "-"), (.spec.secretStoreRef.name // "-"), ((.spec.data // []) | map((.remoteRef.key // "-") + "=" + (.remoteRef.property // "-")) | join(",")), ((.spec.dataFrom // []) | map(.extract.key | select(. != null)) | join(",")), ((.spec.dataFrom // []) | map(select(.extract == null)) | length | tostring), ((.spec.data // []) | map(select(.sourceRef != null)) | length | tostring) ] | join(strenv(YQ_SEP))'
+# 주의: yq v4는 없는 경로를 traverse하면 그 키를 만들어 버린다(`.extract.key` 한 번이면 find 항목에도 `extract`가 생겨
+# 뒤따르는 `select(.extract == null)`이 0이 된다). dataFrom 판정은 traverse 대신 has("extract")로만 한다.
+YQ_ES='select(.kind == "ExternalSecret") | [ (.apiVersion // "-"), (.metadata.namespace // "-"), (.metadata.name // "-"), (.spec.secretStoreRef.kind // "-"), (.spec.secretStoreRef.name // "-"), ((.spec.data // []) | map((.remoteRef.key // "-") + "=" + (.remoteRef.property // "-")) | join(",")), ((.spec.dataFrom // []) | map(select(has("extract")) | .extract.key | select(. != null)) | join(",")), ((.spec.dataFrom // []) | map(select(has("extract") | not)) | length | tostring), ((((.spec.data // []) | map(select(.sourceRef != null)) | length) + ((.spec.dataFrom // []) | map(select(.sourceRef != null)) | length)) | tostring) ] | join(strenv(YQ_SEP))'
 # shellcheck disable=SC2016
 # (yq v4의 `,` 합집합은 수집자 안에서 두 번째 가지를 잃으므로 배열 셋을 `+`로 이어 붙인다)
 YQ_WL='select(.kind == "Deployment" or .kind == "StatefulSet" or .kind == "DaemonSet" or .kind == "Job" or .kind == "CronJob") | (.spec.jobTemplate.spec.template.spec // .spec.template.spec // {}) as $ps | (($ps.containers // []) + ($ps.initContainers // [])) as $cs | [ .kind, (.metadata.namespace // "-"), (.metadata.name // "-"), ($ps.automountServiceAccountToken | tostring), (([ $cs[] | (.envFrom // [])[] | .secretRef.name | select(. != null) ] + [ $cs[] | (.env // [])[] | .valueFrom.secretKeyRef.name | select(. != null) ] + [ ($ps.volumes // [])[] | .secret.secretName | select(. != null) ]) | join(",")) ] | join(strenv(YQ_SEP))'
@@ -334,6 +347,17 @@ for t in yq kustomize kubeconform gitleaks helm; do
   fi
 done
 
+# kubeconform 공통 인자. 스키마 캐시는 저장소 밖 임시 경로(카탈로그를 실행마다 다시 받지 않도록) — 생성 실패 시 캐시 없이 진행
+KC_ARGS=(-strict -ignore-missing-schemas -summary -kubernetes-version "$K8S_VERSION" -schema-location default -schema-location "$DATREE_SCHEMA")
+if [[ ${TOOL_OK[kubeconform]} == 1 ]]; then
+  if mkdir -p "$KUBECONFORM_CACHE" 2>/dev/null; then
+    KC_ARGS+=(-cache "$KUBECONFORM_CACHE")
+    printf '  kubeconform 스키마 캐시: %s\n' "$KUBECONFORM_CACHE"
+  else
+    printf '  kubeconform 스키마 캐시 디렉터리 생성 실패(%s) — 캐시 없이 실행\n' "$KUBECONFORM_CACHE"
+  fi
+fi
+
 mapfile -t YAML_FILES < <(find "$ROOT" -type f \( -name '*.yaml' -o -name '*.yml' \) \
   -not -path '*/.git/*' -not -path "$ROOT/tests/*" -not -path '*/charts/*' | LC_ALL=C sort)
 mapfile -t KUST_FILES < <(find "$ROOT" -type f \( -name 'kustomization.yaml' -o -name 'kustomization.yml' -o -name 'Kustomization' \) \
@@ -382,8 +406,7 @@ check_1_kustomize() {
     add_src "$rdir" "$rdir (rendered)" rendered "$rendered"
     n=$((n + 1))
     if [[ ${TOOL_OK[kubeconform]} == 1 ]]; then
-      if ! out=$(printf '%s\n' "$rendered" | kubeconform -strict -ignore-missing-schemas -summary \
-          -kubernetes-version "$K8S_VERSION" -schema-location default -schema-location "$DATREE_SCHEMA" 2>&1); then
+      if ! out=$(printf '%s\n' "$rendered" | kubeconform "${KC_ARGS[@]}" 2>&1); then
         fail "1 KUST" "kubeconform 실패: $rdir — $(printf '%s' "$out" | tr -d '\r' | head -n 5 | tr '\n' ' ')"
       fi
     fi
@@ -392,9 +415,12 @@ check_1_kustomize() {
     need_tool "1 KUST" kubeconform || true
   fi
   finish_group "1 KUST" "kustomization ${n}개 빌드·스키마 검증(렌더링 결과는 검사 3에도 포함)" "$fails_before"
+}
 
-  # 1b(보강) — 어떤 kustomization에도 속하지 않는 매니페스트(clusters/**, bootstrap/root-app.yaml 등 Argo가 디렉터리로 읽는 것)도 kubeconform
-  local f1b=$N_FAIL m=0 f rf kdir covered
+# 1b(보강) — 어떤 kustomization에도 속하지 않는 매니페스트(clusters/**, bootstrap/root-app.yaml 등 Argo가 디렉터리로 읽는 것)도 kubeconform.
+# kustomize 유무와 무관하게 실행한다(kubeconform만 필요).
+check_1b_plain() {
+  local f1b=$N_FAIL m=0 f rf kfile kdir covered out
   need_tool "1b KUST-plain" kubeconform || return 0
   for f in "${YAML_FILES[@]}"; do
     rf=$(rel "$f")
@@ -406,8 +432,7 @@ check_1_kustomize() {
     done
     [[ $covered == 0 ]] || continue
     m=$((m + 1))
-    if ! out=$(kubeconform -strict -ignore-missing-schemas -summary -kubernetes-version "$K8S_VERSION" \
-        -schema-location default -schema-location "$DATREE_SCHEMA" "$f" 2>&1); then
+    if ! out=$(kubeconform "${KC_ARGS[@]}" "$f" 2>&1); then
       fail "1b KUST-plain" "kubeconform 실패: $rf — $(printf '%s' "$out" | tr -d '\r' | head -n 5 | tr '\n' ' ')"
     fi
   done
@@ -453,7 +478,7 @@ check_3_externalsecrets() {
       *) fail "3.0 ES-store" "$es: 알 수 없는 store '$store' (vault-platform·vault-dev·vault-prod·vault-data·k8s-data-ca)" ;;
     esac
     [[ $dfother == 0 ]] || fail "3.0 ES-dataFrom" "$es: dataFrom은 extract.key만 허용(find·sourceRef 금지 — 경로 lint 우회)"
-    [[ $dsref == 0 ]] || fail "3.0 ES-sourceRef" "$es: data[].sourceRef(항목별 store 우회) 금지"
+    [[ $dsref == 0 ]] || fail "3.0 ES-sourceRef" "$es: data[]/dataFrom[].sourceRef(항목별 store 우회) 금지"
 
     # 키 목록 = data[].remoteRef(key=property) + dataFrom[].extract.key(property 없음)
     keys=(); props=()
@@ -742,6 +767,11 @@ check_6_author() {
   local fails_before=$N_FAIL is_bot=0 b f n=0 diff_text='' line content a_path b_path
   local -a arr_bots
   if [[ -z $PR_AUTHOR ]]; then
+    # PR 이벤트(또는 명시 요구)인데 작성자가 비어 있으면 검사 6이 조용히 꺼진 것이므로 fail-closed
+    if [[ $GH_EVENT == pull_request || $GH_EVENT == pull_request_target || $REQUIRE_AUTHOR == 1 ]]; then
+      fail "6 AUTHOR-input" "PR 이벤트(GITHUB_EVENT_NAME='$GH_EVENT', VALIDATE_REQUIRE_AUTHOR=$REQUIRE_AUTHOR)인데 PR_AUTHOR가 비어 있음 — 작성자 lint의 조용한 비활성 금지"
+      return 0
+    fi
     pass "6 AUTHOR" "PR 작성자 미지정(push 이벤트 등) — 봇 경로 lint 대상 없음"
     return 0
   fi
@@ -814,7 +844,11 @@ check_7_sync_wave() {
       n=$((n + 1))
       x="${SRC_LABEL[$i]} Application/$name"
       if [[ $name == root ]]; then
-        continue   # root app(bootstrap/root-app.yaml)은 app-of-apps 진입점 — 표 밖(수동 apply)
+        # root app(app-of-apps 진입점, 수동 apply)은 bootstrap/root-app.yaml 에서 clusters/oci-k3s/apps 를 가리킬 때만 표 밖
+        if [[ ${SRC_PATH[$i]} != bootstrap/root-app.yaml || $path != clusters/oci-k3s/apps ]]; then
+          fail "7.1 WAVE-name" "$x: 'root'는 bootstrap/root-app.yaml에서 source.path clusters/oci-k3s/apps 로만 허용(현재 위치 ${SRC_PATH[$i]}, path '$path', wave $wave)"
+        fi
+        continue
       elif [[ $name =~ ^platform-(.+)$ ]]; then
         comp=${BASH_REMATCH[1]}
         if [[ -z ${WAVE_OF[$comp]:-} ]]; then
@@ -886,6 +920,7 @@ check_8_gitleaks() {
 # -----------------------------------------------------------------------------
 load_wave_table
 check_1_kustomize
+check_1b_plain
 check_2_app_ssa
 check_3_externalsecrets
 check_3_workloads
