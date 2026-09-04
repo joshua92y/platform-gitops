@@ -1,0 +1,266 @@
+# 긍정 픽스처 — 플랫폼 Application 19개(계약 §sync-wave 단일 표 그대로). 실제 트리는 컴포넌트당 파일 1개.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-argocd
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "-20" }
+spec:
+  project: platform
+  source: { repoURL: https://github.com/joshua92y/platform-gitops.git, targetRevision: main, path: bootstrap/argocd }
+  destination: { server: https://kubernetes.default.svc, namespace: argocd }
+  syncPolicy:
+    automated: { prune: false, selfHeal: true }
+    syncOptions: [ServerSideApply=true, CreateNamespace=true, Prune=confirm, Delete=confirm, SkipDryRunOnMissingResource=true]
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-policies
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "-10" }
+spec:
+  project: platform
+  source: { repoURL: https://github.com/joshua92y/platform-gitops.git, targetRevision: main, path: platform/policies }
+  destination: { server: https://kubernetes.default.svc, namespace: kube-system }
+  syncPolicy:
+    automated: { prune: false, selfHeal: true }
+    syncOptions: [ServerSideApply=true, CreateNamespace=true, Prune=confirm, Delete=confirm, SkipDryRunOnMissingResource=true]
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-cert-manager
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "0" }
+spec:
+  project: platform
+  source: { repoURL: https://github.com/joshua92y/platform-gitops.git, targetRevision: main, path: platform/cert-manager }
+  destination: { server: https://kubernetes.default.svc, namespace: cert-manager }
+  syncPolicy:
+    automated: { prune: false, selfHeal: true }
+    syncOptions: [ServerSideApply=true, CreateNamespace=true, Prune=confirm, Delete=confirm, SkipDryRunOnMissingResource=true]
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-external-secrets
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "0" }
+spec:
+  project: platform
+  source: { repoURL: https://github.com/joshua92y/platform-gitops.git, targetRevision: main, path: platform/external-secrets }
+  destination: { server: https://kubernetes.default.svc, namespace: external-secrets }
+  syncPolicy:
+    automated: { prune: false, selfHeal: true }
+    syncOptions: [ServerSideApply=true, CreateNamespace=true, Prune=confirm, Delete=confirm, SkipDryRunOnMissingResource=true]
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-vault
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "10" }
+spec:
+  project: platform
+  source: { repoURL: https://github.com/joshua92y/platform-gitops.git, targetRevision: main, path: platform/vault }
+  destination: { server: https://kubernetes.default.svc, namespace: vault }
+  syncPolicy:
+    automated: { prune: false, selfHeal: true }
+    syncOptions: [ServerSideApply=true, CreateNamespace=true, Prune=confirm, Delete=confirm, SkipDryRunOnMissingResource=true]
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-cert-manager-issuers
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "20" }
+spec:
+  project: platform
+  source: { repoURL: https://github.com/joshua92y/platform-gitops.git, targetRevision: main, path: platform/cert-manager-issuers }
+  destination: { server: https://kubernetes.default.svc, namespace: cert-manager }
+  syncPolicy:
+    automated: { prune: false, selfHeal: true }
+    syncOptions: [ServerSideApply=true, CreateNamespace=true, Prune=confirm, Delete=confirm, SkipDryRunOnMissingResource=true]
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-cnpg
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "20" }
+spec:
+  project: platform
+  source: { repoURL: https://github.com/joshua92y/platform-gitops.git, targetRevision: main, path: platform/cnpg }
+  destination: { server: https://kubernetes.default.svc, namespace: cnpg-system }
+  syncPolicy:
+    automated: { prune: false, selfHeal: true }
+    syncOptions: [ServerSideApply=true, CreateNamespace=true, Prune=confirm, Delete=confirm, SkipDryRunOnMissingResource=true]
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-system-upgrade
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "20" }
+spec:
+  project: platform
+  source: { repoURL: https://github.com/joshua92y/platform-gitops.git, targetRevision: main, path: platform/system-upgrade }
+  destination: { server: https://kubernetes.default.svc, namespace: system-upgrade }
+  syncPolicy:
+    automated: { prune: false, selfHeal: true }
+    syncOptions: [ServerSideApply=true, CreateNamespace=true, Prune=confirm, Delete=confirm, SkipDryRunOnMissingResource=true]
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-cnpg-cluster
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "30" }
+spec:
+  project: platform
+  source: { repoURL: https://github.com/joshua92y/platform-gitops.git, targetRevision: main, path: platform/cnpg-cluster }
+  destination: { server: https://kubernetes.default.svc, namespace: data }
+  syncPolicy:
+    automated: { prune: false, selfHeal: true }
+    syncOptions: [ServerSideApply=true, CreateNamespace=true, Prune=confirm, Delete=confirm, SkipDryRunOnMissingResource=true]
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-kafka
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "30" }
+spec:
+  project: platform
+  source: { repoURL: https://github.com/joshua92y/platform-gitops.git, targetRevision: main, path: platform/kafka }
+  destination: { server: https://kubernetes.default.svc, namespace: data }
+  syncPolicy:
+    automated: { prune: false, selfHeal: true }
+    syncOptions: [ServerSideApply=true, CreateNamespace=true, Prune=confirm, Delete=confirm, SkipDryRunOnMissingResource=true]
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-dragonfly
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "30" }
+spec:
+  project: platform
+  source: { repoURL: https://github.com/joshua92y/platform-gitops.git, targetRevision: main, path: platform/dragonfly }
+  destination: { server: https://kubernetes.default.svc, namespace: data }
+  syncPolicy:
+    automated: { prune: false, selfHeal: true }
+    syncOptions: [ServerSideApply=true, CreateNamespace=true, Prune=confirm, Delete=confirm, SkipDryRunOnMissingResource=true]
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-cnpg-databases
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "40" }
+spec:
+  project: platform
+  source: { repoURL: https://github.com/joshua92y/platform-gitops.git, targetRevision: main, path: platform/cnpg-databases }
+  destination: { server: https://kubernetes.default.svc, namespace: data }
+  syncPolicy:
+    automated: { prune: false, selfHeal: true }
+    syncOptions: [ServerSideApply=true, CreateNamespace=true, Prune=confirm, Delete=confirm, SkipDryRunOnMissingResource=true]
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-kafka-topics
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "40" }
+spec:
+  project: platform
+  source: { repoURL: https://github.com/joshua92y/platform-gitops.git, targetRevision: main, path: platform/kafka-topics }
+  destination: { server: https://kubernetes.default.svc, namespace: data }
+  syncPolicy:
+    automated: { prune: false, selfHeal: true }
+    syncOptions: [ServerSideApply=true, CreateNamespace=true, Prune=confirm, Delete=confirm, SkipDryRunOnMissingResource=true]
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-authentik
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "50" }
+spec:
+  project: platform
+  source: { repoURL: https://github.com/joshua92y/platform-gitops.git, targetRevision: main, path: platform/authentik }
+  destination: { server: https://kubernetes.default.svc, namespace: identity }
+  syncPolicy:
+    automated: { prune: false, selfHeal: true }
+    syncOptions: [ServerSideApply=true, CreateNamespace=true, Prune=confirm, Delete=confirm, SkipDryRunOnMissingResource=true]
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-openfga
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "50" }
+spec:
+  project: platform
+  source: { repoURL: https://github.com/joshua92y/platform-gitops.git, targetRevision: main, path: platform/openfga }
+  destination: { server: https://kubernetes.default.svc, namespace: identity }
+  syncPolicy:
+    automated: { prune: false, selfHeal: true }
+    syncOptions: [ServerSideApply=true, CreateNamespace=true, Prune=confirm, Delete=confirm, SkipDryRunOnMissingResource=true]
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-monitoring
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "60" }
+spec:
+  project: platform
+  source: { repoURL: https://github.com/joshua92y/platform-gitops.git, targetRevision: main, path: platform/monitoring }
+  destination: { server: https://kubernetes.default.svc, namespace: monitoring }
+  syncPolicy:
+    automated: { prune: false, selfHeal: true }
+    syncOptions: [ServerSideApply=true, CreateNamespace=true, Prune=confirm, Delete=confirm, SkipDryRunOnMissingResource=true]
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-cloudflared
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "60" }
+spec:
+  project: platform
+  source: { repoURL: https://github.com/joshua92y/platform-gitops.git, targetRevision: main, path: platform/cloudflared }
+  destination: { server: https://kubernetes.default.svc, namespace: cloudflared }
+  syncPolicy:
+    automated: { prune: false, selfHeal: true }
+    syncOptions: [ServerSideApply=true, CreateNamespace=true, Prune=confirm, Delete=confirm, SkipDryRunOnMissingResource=true]
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-reloader
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "60" }
+spec:
+  project: platform
+  source: { repoURL: https://github.com/joshua92y/platform-gitops.git, targetRevision: main, path: platform/reloader }
+  destination: { server: https://kubernetes.default.svc, namespace: reloader }
+  syncPolicy:
+    automated: { prune: false, selfHeal: true }
+    syncOptions: [ServerSideApply=true, CreateNamespace=true, Prune=confirm, Delete=confirm, SkipDryRunOnMissingResource=true]
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-traefik
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "60" }
+spec:
+  project: platform
+  source: { repoURL: https://github.com/joshua92y/platform-gitops.git, targetRevision: main, path: platform/traefik }
+  destination: { server: https://kubernetes.default.svc, namespace: kube-system }
+  syncPolicy:
+    automated: { prune: false, selfHeal: true }
+    syncOptions: [ServerSideApply=true, CreateNamespace=true, Prune=confirm, Delete=confirm, SkipDryRunOnMissingResource=true]

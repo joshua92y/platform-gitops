@@ -1,0 +1,12 @@
+# 부정 픽스처 3.6 ES-⑥ 범위 확인 — platform/vault(helm 차트 컴포넌트)는 lint 범위 밖이므로 automount 미지정이어도 FAIL이 아니어야 한다
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: vault-agent-injector, namespace: vault }
+spec:
+  selector: { matchLabels: { app: vault-agent-injector } }
+  template:
+    metadata: { labels: { app: vault-agent-injector } }
+    spec:
+      containers:
+        - name: sidecar-injector
+          image: hashicorp/vault-k8s:1.7.0@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef

@@ -1,0 +1,5 @@
+# 긍정 픽스처 — platform/cnpg-databases: DatabaseRole passwordSecret ExternalSecret(vault-data) + CA 미러 ExternalSecret(k8s-data-ca)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - externalsecrets.yaml

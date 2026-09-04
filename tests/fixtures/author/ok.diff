@@ -1,0 +1,10 @@
+diff --git a/apps/identity-admin/overlays/dev/kustomization.yaml b/apps/identity-admin/overlays/dev/kustomization.yaml
+index 0123456..89abcde 100644
+--- a/apps/identity-admin/overlays/dev/kustomization.yaml
++++ b/apps/identity-admin/overlays/dev/kustomization.yaml
+@@ -7,4 +7,4 @@ resources:
+ images:
+   - name: ghcr.io/joshua92y/identity-admin
+     newName: ghcr.io/joshua92y/identity-admin
+-    digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
++    digest: sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210

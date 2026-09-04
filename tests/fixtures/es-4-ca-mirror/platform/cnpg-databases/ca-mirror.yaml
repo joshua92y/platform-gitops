@@ -1,0 +1,32 @@
+# 부정 픽스처 3.4 ES-④ — k8s-data-ca: (1) dataFrom 전체 복사(ca.key 유출) (2) property ca.key (3) 허용 밖 key
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata: { name: pg-main-ca-datafrom, namespace: jt-dev }
+spec:
+  refreshInterval: 5m
+  secretStoreRef: { kind: ClusterSecretStore, name: k8s-data-ca }
+  target: { name: pg-main-ca, creationPolicy: Owner }
+  dataFrom:
+    - extract: { key: pg-main-ca }
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata: { name: pg-main-ca-key, namespace: jt-prod }
+spec:
+  refreshInterval: 5m
+  secretStoreRef: { kind: ClusterSecretStore, name: k8s-data-ca }
+  target: { name: pg-main-ca, creationPolicy: Owner }
+  data:
+    - secretKey: ca.key
+      remoteRef: { key: pg-main-ca, property: ca.key }
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata: { name: pg-main-server, namespace: identity }
+spec:
+  refreshInterval: 5m
+  secretStoreRef: { kind: ClusterSecretStore, name: k8s-data-ca }
+  target: { name: pg-main-server, creationPolicy: Owner }
+  data:
+    - secretKey: ca.crt
+      remoteRef: { key: pg-main-server, property: ca.crt }

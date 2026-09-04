@@ -1,0 +1,6 @@
+# 긍정 픽스처 — platform/dragonfly: 순수 매니페스트(Deployment)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: data
+resources:
+  - deployment.yaml

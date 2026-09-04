@@ -1,0 +1,44 @@
+# 부정 픽스처 5.3 POL-egress — (1) ports 없음 (2) except 4개 중 3개 누락 (3) vault 아닌 ns의 IMDS /32 (4) kube-system deny-imds 형식 오류
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: allow-egress-all, namespace: jt-dev }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: [169.254.169.254/32, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: allow-egress-443, namespace: jt-dev }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: [169.254.169.254/32]
+      ports: [{ protocol: TCP, port: 443 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: allow-imds-wrong-ns, namespace: jt-dev }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ ipBlock: { cidr: 169.254.169.254/32 } }]
+      ports: [{ protocol: TCP, port: 80 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: deny-imds, namespace: kube-system }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ ipBlock: { cidr: 10.0.0.0/8 } }]

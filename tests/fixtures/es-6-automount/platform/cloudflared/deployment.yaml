@@ -1,0 +1,13 @@
+# 부정 픽스처 3.6 ES-⑥ — platform/cloudflared Deployment가 automountServiceAccountToken: true
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: cloudflared, namespace: cloudflared }
+spec:
+  selector: { matchLabels: { app: cloudflared } }
+  template:
+    metadata: { labels: { app: cloudflared } }
+    spec:
+      automountServiceAccountToken: true
+      containers:
+        - name: cloudflared
+          image: cloudflare/cloudflared:2026.1.0@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef

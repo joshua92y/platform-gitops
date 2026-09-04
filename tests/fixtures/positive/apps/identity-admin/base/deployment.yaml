@@ -1,0 +1,36 @@
+# 긍정 픽스처 — 템플릿 pod Deployment: automountServiceAccountToken: false + securityContext, envFrom은 <pod>-env만
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: identity-admin
+  labels: { app: identity-admin }
+  annotations: { reloader.stakater.com/auto: "true" }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: identity-admin } }
+  template:
+    metadata:
+      labels: { app: identity-admin }
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: web
+          image: ghcr.io/joshua92y/identity-admin
+          ports:
+            - { name: http, containerPort: 8000 }
+            - { name: metrics, containerPort: 9100 }
+          envFrom:
+            - secretRef: { name: identity-admin-env }
+            - configMapRef: { name: identity-admin-config }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: tmp
+          emptyDir: {}

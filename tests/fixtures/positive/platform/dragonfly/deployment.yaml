@@ -1,0 +1,25 @@
+# 긍정 픽스처 — dragonfly Deployment: automountServiceAccountToken: false, 이미지 digest 병기(값은 가짜)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dragonfly
+  labels: { app: dragonfly }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: dragonfly } }
+  template:
+    metadata:
+      labels: { app: dragonfly }
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: dragonfly
+          image: docker.dragonflydb.io/dragonflydb/dragonfly:v1.30.0@sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210
+          ports: [{ name: redis, containerPort: 6379 }]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+            readOnlyRootFilesystem: true

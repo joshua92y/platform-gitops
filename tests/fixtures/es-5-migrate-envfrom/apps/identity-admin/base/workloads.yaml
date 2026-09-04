@@ -1,0 +1,47 @@
+# 부정 픽스처 3.5 ES-⑤ — Deployment envFrom·CronJob secretKeyRef가 <pod>-migrate를 참조. Job(PreSync migrate)은 허용이라 FAIL이 아니어야 한다.
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: identity-admin, namespace: jt-dev }
+spec:
+  selector: { matchLabels: { app: identity-admin } }
+  template:
+    metadata: { labels: { app: identity-admin } }
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: web
+          image: ghcr.io/joshua92y/identity-admin
+          envFrom:
+            - secretRef: { name: identity-admin-migrate }
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata: { name: identity-admin-cleanup, namespace: jt-dev }
+spec:
+  schedule: "0 3 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          containers:
+            - name: cleanup
+              image: ghcr.io/joshua92y/identity-admin
+              env:
+                - name: DATABASE_URL
+                  valueFrom: { secretKeyRef: { name: identity-admin-migrate, key: DATABASE_URL } }
+---
+apiVersion: batch/v1
+kind: Job
+metadata: { name: identity-admin-migrate-job, namespace: jt-dev }
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      containers:
+        - name: migrate
+          image: ghcr.io/joshua92y/identity-admin
+          envFrom:
+            - secretRef: { name: identity-admin-migrate }

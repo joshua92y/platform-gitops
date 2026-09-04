@@ -1,0 +1,16 @@
+# 부정 픽스처 4b IMG-platform-digest — platform/** image: 줄에 @sha256 없음 → WARN(FAIL 아님). digest 있는 줄은 경고하지 않는다.
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: cloudflared, namespace: cloudflared }
+spec:
+  selector: { matchLabels: { app: cloudflared } }
+  template:
+    metadata: { labels: { app: cloudflared } }
+    spec:
+      automountServiceAccountToken: false
+      initContainers:
+        - name: init
+          image: "busybox:1.37@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      containers:
+        - name: cloudflared
+          image: cloudflare/cloudflared:2026.1.0

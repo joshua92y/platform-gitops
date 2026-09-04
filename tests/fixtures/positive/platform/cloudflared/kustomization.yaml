@@ -1,0 +1,6 @@
+# 긍정 픽스처 — platform/cloudflared: 순수 매니페스트(Deployment), 이미지 태그에 @sha256 병기
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: cloudflared
+resources:
+  - deployment.yaml

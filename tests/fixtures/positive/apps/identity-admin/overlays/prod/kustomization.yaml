@@ -1,0 +1,34 @@
+# 긍정 픽스처 — overlays/prod: namespace jt-prod + images[].digest + ExternalSecret store/key 패치(vault-prod · prod/).
+# 렌더링 결과에 대한 검사 ②가 이 패치를 본다(파일만 보면 overlay에는 ExternalSecret 문서가 없다).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: jt-prod
+resources:
+  - ../../base
+images:
+  - name: ghcr.io/joshua92y/identity-admin
+    newName: ghcr.io/joshua92y/identity-admin
+    digest: sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210
+patches:
+  - target: { kind: ExternalSecret, name: identity-admin-env }
+    patch: |-
+      - op: replace
+        path: /spec/secretStoreRef/name
+        value: vault-prod
+      - op: replace
+        path: /spec/data/0/remoteRef/key
+        value: prod/db/identity_admin/app
+      - op: replace
+        path: /spec/data/1/remoteRef/key
+        value: prod/kafka/identity_admin
+      - op: replace
+        path: /spec/data/2/remoteRef/key
+        value: prod/authentik/webhooks/identity-admin
+  - target: { kind: ExternalSecret, name: identity-admin-migrate }
+    patch: |-
+      - op: replace
+        path: /spec/secretStoreRef/name
+        value: vault-prod
+      - op: replace
+        path: /spec/data/0/remoteRef/key
+        value: prod/db/identity_admin/owner
