@@ -1,6 +1,21 @@
-# platform/cloudflared/ — Cloudflare 터널
-# sync-wave: 계약 gitops-repo.md §sync-wave 단일 표 참조(wave 번호는 표에만 기재 — 중복 금지).
-# 빈 뼈대(T003) — 실제 매니페스트는 T031+에서 작성한다.
+# platform/cloudflared/ — Cloudflare 터널 커넥터 (T039)
+#
+# 정본 계약(모노레포 specs/003-platform-foundation/contracts/):
+#   - gitops-repo.md §Application 규약(워크로드 강화) · §sync-wave 단일 표(wave 번호는 그 표에만 적는다 — 여기 중복 기재 금지)
+#   - network-policy.md §네임스페이스 표(`cloudflared` = PSA restricted) · §허용 매트릭스(cloudflared 행 3개)
+#   - hostnames-and-access.md §호스트 표(`ssh-a` · `ssh-b` · `k8s`)
+#
+# 이 디렉터리가 만들지 "않는" 것 — 경계(운영 절차는 README.md):
+#   1) Namespace `cloudflared`와 PSA 라벨: 정본은 T041 `platform/policies/`다. T039 시점에는 운영자가 수동 생성한다(README ①).
+#      여기서 Namespace 리소스를 선언하면 계약(정책 객체는 `platform/policies/`만 소유)과 validate 검사 5.0을 어긴다.
+#   2) Application `platform-cloudflared`(`clusters/oci-k3s/apps/`): app-of-apps 자체가 T041 산출물이므로 **T041에서 추가**한다
+#      (project `platform`, source.path `platform/cloudflared`, destination ns `cloudflared`, sync-wave = 계약 단일 표,
+#       syncOptions 표준 `ServerSideApply=true`·`CreateNamespace=true`·`Prune=confirm`·`Delete=confirm`·`SkipDryRunOnMissingResource=true`).
+#      T039 동안 이 매니페스트는 운영자 수동 `kubectl apply -k`로만 클러스터에 들어가고, T041에서 Argo CD가 SSA로 인수한다(README ③④).
+#   3) Secret `cloudflared-tunnel`(키 `TUNNEL_TOKEN`): 최초는 운영자 수동 생성(README ②), T045 뒤 `secrets/cloudflared/`
+#      ExternalSecret(store `vault-platform`, `platform/cloudflare/tunnel`)으로 교체한다(README ⑨). 토큰 값은 이 저장소에 없다.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-resources: []
+namespace: cloudflared
+resources:
+  - deployment.yaml
