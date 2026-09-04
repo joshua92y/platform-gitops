@@ -1,0 +1,17 @@
+# 부정 픽스처 5.4 POL-port-values — helm values가 Vault 포트를 8300으로 바꿈(각주 8200과 불일치) + 정책에 없는 포트(WARN)
+# 주의: helmCharts가 있으므로 검사 1은 helm 없이는 FAIL/SKIP(도구 없음)이 되며, 이 픽스처의 단언은 5.4만 본다.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: vault
+helmCharts:
+  - name: vault
+    repo: https://helm.releases.hashicorp.com
+    version: 0.31.0
+    releaseName: vault
+    namespace: vault
+    valuesInline:
+      injector: { enabled: false }
+      server:
+        service: { port: 8300, targetPort: 8300 }
+        extraArgs: "-config=/vault/userconfig/config.hcl"
+      ui: { enabled: true, servicePortHttp: 8300 }

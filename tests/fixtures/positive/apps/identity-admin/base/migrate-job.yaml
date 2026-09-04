@@ -1,0 +1,27 @@
+# 긍정 픽스처 — PreSync migrate Job: <pod>-migrate(owner DB)를 참조하는 유일한 워크로드(Job은 검사 ⑤ 대상 밖)
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: identity-admin-migrate
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 1
+  template:
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: migrate
+          image: ghcr.io/joshua92y/identity-admin
+          args: [migrate]
+          envFrom:
+            - secretRef: { name: identity-admin-migrate }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+            readOnlyRootFilesystem: true

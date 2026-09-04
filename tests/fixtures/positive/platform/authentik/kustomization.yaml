@@ -1,0 +1,6 @@
+# 긍정 픽스처 — platform/authentik: 공유 컴포넌트 비밀(vault-platform, platform/) + 웹훅 비밀(vault-data, {env}/authentik/webhooks/<pod>)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: identity
+resources:
+  - externalsecrets.yaml

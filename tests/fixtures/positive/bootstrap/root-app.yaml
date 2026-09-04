@@ -1,0 +1,16 @@
+# 긍정 픽스처 — root app(app-of-apps 진입점, 유일한 수동 apply). sync-wave 표 밖(검사 7.1은 이름 root를 제외한다).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+spec:
+  project: platform
+  source:
+    repoURL: https://github.com/joshua92y/platform-gitops.git
+    targetRevision: main
+    path: clusters/oci-k3s/apps
+  destination: { server: https://kubernetes.default.svc, namespace: argocd }
+  syncPolicy:
+    automated: { prune: false, selfHeal: true }
+    syncOptions: [ServerSideApply=true]

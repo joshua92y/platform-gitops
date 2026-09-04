@@ -1,0 +1,27 @@
+# 긍정 픽스처 — cloudflared Deployment: automountServiceAccountToken: false + securityContext, 이미지 digest 병기(값은 가짜)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflared
+  labels: { app: cloudflared }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: cloudflared } }
+  template:
+    metadata:
+      labels: { app: cloudflared }
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: cloudflared
+          image: cloudflare/cloudflared:2026.1.0@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          args: [tunnel, --no-autoupdate, run]
+          envFrom:
+            - secretRef: { name: cloudflared-tunnel }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+            readOnlyRootFilesystem: true

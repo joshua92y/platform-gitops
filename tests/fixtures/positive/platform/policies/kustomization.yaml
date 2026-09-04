@@ -1,0 +1,8 @@
+# 긍정 픽스처 — platform/policies: Namespace 14개 + PSA 라벨 + 정책 세트 + 매트릭스 + Quota/LimitRange
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespaces.yaml
+  - policies-common.yaml
+  - policies-matrix.yaml
+  - quota.yaml

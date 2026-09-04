@@ -1,0 +1,28 @@
+# 긍정 픽스처 — 앱 Application <pod>-<env> (wave 100)
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: identity-admin-dev
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "100" }
+spec:
+  project: dev
+  source: { repoURL: https://github.com/joshua92y/platform-gitops.git, targetRevision: main, path: apps/identity-admin/overlays/dev }
+  destination: { server: https://kubernetes.default.svc, namespace: jt-dev }
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions: [ServerSideApply=true]
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: identity-admin-prod
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "100" }
+spec:
+  project: prod
+  source: { repoURL: https://github.com/joshua92y/platform-gitops.git, targetRevision: main, path: apps/identity-admin/overlays/prod }
+  destination: { server: https://kubernetes.default.svc, namespace: jt-prod }
+  syncPolicy:
+    automated: { prune: false, selfHeal: true }
+    syncOptions: [ServerSideApply=true]

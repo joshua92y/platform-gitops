@@ -1,0 +1,12 @@
+# 부정 픽스처 3.6 ES-⑥ — apps/** Deployment에 automountServiceAccountToken이 없음(null)
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: identity-admin, namespace: jt-dev }
+spec:
+  selector: { matchLabels: { app: identity-admin } }
+  template:
+    metadata: { labels: { app: identity-admin } }
+    spec:
+      containers:
+        - name: web
+          image: ghcr.io/joshua92y/identity-admin

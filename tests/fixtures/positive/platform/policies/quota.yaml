@@ -1,0 +1,24 @@
+# 긍정 픽스처 — ResourceQuota/LimitRange(jt-dev·jt-prod). LimitRange는 defaultRequest.cpu + memory default만(default.cpu·max.cpu 금지)
+apiVersion: v1
+kind: LimitRange
+metadata: { name: defaults, namespace: jt-dev }
+spec:
+  limits:
+    - type: Container
+      defaultRequest: { cpu: 50m, memory: 128Mi }
+      default: { memory: 256Mi }
+---
+apiVersion: v1
+kind: LimitRange
+metadata: { name: defaults, namespace: jt-prod }
+spec:
+  limits:
+    - type: Container
+      defaultRequest: { cpu: 100m, memory: 256Mi }
+      default: { memory: 512Mi }
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata: { name: quota, namespace: jt-dev }
+spec:
+  hard: { pods: "20", requests.memory: 2Gi, limits.memory: 4Gi }

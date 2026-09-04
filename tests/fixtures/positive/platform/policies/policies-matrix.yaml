@@ -1,0 +1,182 @@
+# 긍정 픽스처 — 허용 매트릭스 일부(계약 §포트 출처 각주의 포트가 ingress로 선언되는 행) + 외부 egress 규칙 형식 예시
+# monitoring → argocd 8082·8083·8084
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: allow-scrape-from-monitoring, namespace: argocd }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: monitoring } } }]
+      ports: [{ protocol: TCP, port: 8082 }, { protocol: TCP, port: 8083 }, { protocol: TCP, port: 8084 }]
+---
+# monitoring → external-secrets 8080
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: allow-scrape-from-monitoring, namespace: external-secrets }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: monitoring } } }]
+      ports: [{ protocol: TCP, port: 8080 }]
+---
+# monitoring → cert-manager 9402
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: allow-scrape-from-monitoring, namespace: cert-manager }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: monitoring } } }]
+      ports: [{ protocol: TCP, port: 9402 }]
+---
+# monitoring → cnpg-system 8080
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: allow-scrape-from-monitoring, namespace: cnpg-system }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: monitoring } } }]
+      ports: [{ protocol: TCP, port: 8080 }]
+---
+# monitoring → data 9187·9404
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: allow-scrape-from-monitoring, namespace: data }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: monitoring } } }]
+      ports: [{ protocol: TCP, port: 9187 }, { protocol: TCP, port: 9404 }]
+---
+# jt-dev · jt-prod → data 5432·9093·6379
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: allow-from-apps, namespace: data }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: jt-dev } }
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: jt-prod } }
+      ports: [{ protocol: TCP, port: 5432 }, { protocol: TCP, port: 9093 }, { protocol: TCP, port: 6379 }]
+---
+# external-secrets → vault 8200
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: allow-from-external-secrets, namespace: vault }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: external-secrets } } }]
+      ports: [{ protocol: TCP, port: 8200 }]
+---
+# jt-dev · jt-prod → identity 9000·8080, traefik → identity 9000
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: allow-from-apps, namespace: identity }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: jt-dev } }
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: jt-prod } }
+      ports: [{ protocol: TCP, port: 9000 }, { protocol: TCP, port: 8080 }]
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }, podSelector: { matchLabels: { app.kubernetes.io/name: traefik } } }]
+      ports: [{ protocol: TCP, port: 9000 }]
+---
+# traefik → jt-dev 8000 · monitoring → jt-dev 9100·9464
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: allow-from-traefik, namespace: jt-dev }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }, podSelector: { matchLabels: { app.kubernetes.io/name: traefik } } }]
+      ports: [{ protocol: TCP, port: 8000 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: allow-scrape-from-monitoring, namespace: jt-dev }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: monitoring } } }]
+      ports: [{ protocol: TCP, port: 9100 }, { protocol: TCP, port: 9464 }]
+---
+# traefik → jt-prod 8000 · monitoring → jt-prod 9100·9464
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: allow-from-traefik, namespace: jt-prod }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }, podSelector: { matchLabels: { app.kubernetes.io/name: traefik } } }]
+      ports: [{ protocol: TCP, port: 8000 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: allow-scrape-from-monitoring, namespace: jt-prod }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: monitoring } } }]
+      ports: [{ protocol: TCP, port: 9100 }, { protocol: TCP, port: 9464 }]
+---
+# 외부 egress 규칙 형식(계약 §외부 egress 규칙 형식): 0.0.0.0/0 + except 4개 + ports
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: allow-egress-external-443, namespace: jt-dev }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 169.254.169.254/32
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports: [{ protocol: TCP, port: 443 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: allow-egress-external-443, namespace: jt-prod }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 169.254.169.254/32
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports: [{ protocol: TCP, port: 443 }]
+---
+# cert-manager → 1.1.1.1/32 53 (DNS-01 전파 확인): /32 목적지는 except 없이 ports만
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: allow-egress-dns-1111, namespace: cert-manager }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ ipBlock: { cidr: 1.1.1.1/32 } }]
+      ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
