@@ -1,0 +1,71 @@
+# Plan `k3s-server` — 노드 A(control-plane) K3s 패치 자동 업그레이드. 순서: prepare(백업 게이트) → cordon → upgrade (T037, FR-048)
+#
+# 순서가 고정되는 근거(SUC v0.20.1 pkg/upgrade/job/job.go): prepare는 initContainers의 첫 항목(327–346행), cordon은 그 다음 initContainer(420–441행),
+#   upgrade는 main 컨테이너(467–476행). K8s는 init 컨테이너를 순서대로 실행하고 하나라도 실패하면 다음으로 넘어가지 않으므로 **prepare가 exit≠0이면
+#   cordon도 upgrade도 돌지 않는다**. 실패한 pod는 Job이 backoffLimit(99)·activeDeadlineSeconds 안에서 새로 만들고(prepare = 백업부터 다시), deadline이 지나면
+#   Job Failed → Plan 조건 Complete=False(reason JobFailed) + 이벤트 `JobFailed`(pkg/upgrade/handle_batch.go 86–101행).
+#   **실패 뒤 창(window) 우회 — 주의**: 실패 분기는 `status.applying`을 비우지 않고(handle_batch.go 86–101행에 Applying 변경 없음), 노드에 해시 라벨이 없어 같은 노드가
+#   다시 선택되므로(pkg/upgrade/plan.go SelectConcurrentNodes 155–178행: applying 노드 우선) `applying=[노드]`가 남는다. 창 검사는 `len(applying)==0`일 때만 한다
+#   (handle_upgrade.go 158–167행). 따라서 실패 뒤에는 Plan의 resourceVersion이 바뀌는 순간(retrigger PR·채널의 새 패치 해석·어떤 metadata 변경·컨트롤러 재시작)
+#   **창 밖에서도 즉시** 백업→cordon→k3s 재시작 Job이 생긴다. 실패를 보면 먼저 노드에 `plan.upgrade.cattle.io/k3s-server=disabled` 라벨을 붙여
+#   (선택 노드 0 → applying=nil, handle_upgrade.go 179–186행; 노드 이벤트가 Plan을 재평가 — handle_core.go 12행) 즉시 실행을 막는다 — 절차는 README §실패 시.
+#   라이브 미검증(**VD**: T041 첫 창 뒤 실측).
+#
+# prepare = `chroot /host /usr/local/bin/platform-backup.sh --pre-upgrade`(모노레포 infra/bootstrap/platform-backup.sh 머리 주석 "--pre-upgrade 게이트 범위"):
+#   - k3s 번들은 항상 필수, Vault 스냅샷은 **배포돼 있을 때만 필수**(T044 전에는 WARN 후 건너뜀 — 게이트가 구조적으로 막히지 않게), 하나라도 실패하면 exit 1.
+#   - /host = SUC가 모든 prepare/upgrade 컨테이너에 기본 마운트하는 호스트 루트(container.go New: host-root → /host; job.go 240–246행 hostPath "/").
+#     CRI 바인드는 rbind라 /proc·/run·/var/lib/rancher 같은 하위 마운트도 보인다(k3s-upgrade 자신도 /host/proc/<pid>/cmdline 을 읽는다).
+#   - 이미지는 upgrade와 같은 rancher/k3s-upgrade(alpine 3.23 — busybox `chroot` 포함). ENTRYPOINT /bin/upgrade.sh 는 `command`가 덮어쓴다.
+#     스크립트는 chroot 안에서 PATH를 스스로 export 하고 HOME 기본값을 둔다.
+#   - securityContext privileged: SUC는 prepare에 securityContext를 주지 않는다(job.go 329–335행 — Plan의 값만 전달). 호스트 파일시스템을 root로 읽고 쓰며
+#     (k3s SQLite·server/tls, node_exporter textfile) `k3s kubectl`·`oci`·`age`를 호스트에서 실행하므로 upgrade 컨테이너와 같은 privileged로 명시한다 —
+#     기본 AppArmor/seccomp 프로파일이 chroot 뒤 실행을 막는 변수를 없앤다. hostPID·hostNetwork는 pod 수준에서 이미 켜져 있다(kustomization 머리 주석).
+#     **VD**: T041 첫 창에서 privileged 없이(chroot만 — root + rw /host + 기본 캡의 CAP_SYS_CHROOT) 성공하면 이 값을 뺀다(최소 권한 지적, 검증 대기).
+# jobActiveDeadlineSecs 1800: 컨트롤러 기본 900은 백업(platform-backup.service TimeoutStartSec=30min)보다 짧을 수 있다 — 게이트의 상한과 같은 30분으로 둔다
+#   (백업 + 바이너리 교체 + k3s 재시작·상태 보고 대기 포함). 넘기면 Job Failed.
+# cordon만, drain 없음: 노드 2대에 단일 replica 워크로드(Vault Raft 1·pg-main 1·Dragonfly·Kafka)가 local-path PV로 노드에 고정돼 있어 drain 해도 옮겨갈 곳이
+#   없고 Pending만 남긴다. k3s 업그레이드는 k3s 프로세스만 재시작하고 컨테이너는 containerd가 유지하므로 drain의 이득이 없다(research.md K3S-D10).
+#   cordon은 SUC가 Job 완료 시 자동 해제한다(handle_batch.go 136–138행); 실패 시에는 남는다(README §실패 시).
+# tolerations 없음: 두 노드 모두 taint가 없고, SUC가 `node.kubernetes.io/unschedulable:NoSchedule`은 기본으로 더한다(job.go 234–238행).
+#   control-plane taint를 두는 날 여기에 추가한다.
+# window: SUC v0.20.1 CRD(crd.yaml `spec.window`) 필드명 days[]·startTime·endTime·timeZone 그대로(types.go TimeWindowSpec). days enum에 "sunday" 포함,
+#   시각은 kured 형식("HH:MM"), timeZone은 IANA. 창은 Job **생성**만 막는다 — 시작한 Job은 05:00을 넘겨도 계속된다(K3s 문서 §Scheduling Upgrades).
+#   그리고 위 "실패 뒤 창 우회"처럼 applying이 남아 있으면 창을 보지 않는다. Grafana mute timing(T098)이 같은 창이다.
+# channel v1.36: 패치만 자동(마이너 승격은 채널을 바꾸는 PR — skew 정책상 마이너를 건너뛰지 않는다). 채널이 302로 돌려주는 마지막 경로(v1.36.N+k3s1)를
+#   `+`→`-`로 바꿔 이미지 태그(v1.36.N-k3s1)로 쓴다. 현재 버전과 같으면 upgrade.sh가 "Binary already been replaced"로 exit 0 — 재시작 없이 Job 완료
+#   (첫 창은 사실상 리허설: 백업·cordon·uncordon만).
+# 재트리거 노브(annotations): Plan 해시는 spec 전체가 아니라 `status.latestVersion + serviceAccountName + (upgrade.cattle.io/digest 어노테이션이 가리키는 경로) + secrets`다
+#   (pkg/upgrade/plan.go DigestStatus 51–77행; 상수 pkg/apis/upgrade.cattle.io/constants.go AnnotationIncludeInDigest). 그래서 **성공한** 같은 버전을 다시 돌리려면
+#   spec을 고쳐도 소용없고, `retrigger` 값을 바꾸는 PR이 해시를 바꿔 노드가 다시 대상이 된다(노드 라벨 plan.upgrade.cattle.io/k3s-server ≠ 새 해시). 성공 뒤에는
+#   applying이 비어 있으므로 창 검사를 거쳐 다음 창에 돈다. **실패 뒤에는 쓰지 말 것** — 위 "창 우회" 때문에 머지 즉시 창 밖에서 실행된다(먼저 disabled 라벨,
+#   README §실패 시). 실패한 노드는 해시 라벨이 없어 disabled 라벨만 떼면 다시 대상이 되므로 retrigger가 필요 없다. **VD**: T041 첫 창 뒤 값을 한 번 바꿔 확인한다.
+apiVersion: upgrade.cattle.io/v1
+kind: Plan
+metadata:
+  name: k3s-server
+  annotations:
+    upgrade.cattle.io/digest: metadata.annotations.retrigger
+    retrigger: "0"
+spec:
+  concurrency: 1
+  cordon: true
+  nodeSelector:
+    matchExpressions:
+      - key: node-role.kubernetes.io/control-plane
+        operator: In
+        values: ["true"]
+  serviceAccountName: system-upgrade
+  channel: https://update.k3s.io/v1-release/channels/v1.36
+  window:
+    days: [sunday]
+    startTime: "03:00"
+    endTime: "05:00"
+    timeZone: Asia/Seoul
+  jobActiveDeadlineSecs: 1800
+  prepare:
+    image: rancher/k3s-upgrade
+    command: ["chroot", "/host", "/usr/local/bin/platform-backup.sh", "--pre-upgrade"]
+    securityContext:
+      privileged: true
+  upgrade:
+    image: rancher/k3s-upgrade
