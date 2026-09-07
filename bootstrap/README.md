@@ -6,7 +6,7 @@
 
 | 파일 | 내용 |
 |---|---|
-| `argocd/kustomization.yaml` | `namespace: argocd` + install.yaml@`e258ee23…`(v3.5.2 커밋) + 이미지 digest 2개 + 패치: dex 6·applicationset 8 삭제, requests/GOMEMLIMIT 5종, `argocd-cmd-params-cm`, `argocd-cm` |
+| `argocd/kustomization.yaml` | `namespace: argocd` + install.yaml@`e258ee23…`(v3.5.2 커밋) + 이미지 digest 2개 + 패치: dex 6·applicationset 8·upstream NetworkPolicy 5 삭제, requests/GOMEMLIMIT 5종, `argocd-cmd-params-cm`, `argocd-cm` |
 | `argocd/argocd-cmd-params-cm.yaml` | `server.insecure` · `controller.diff.server.side` · processors/parallelism 4키 |
 | `argocd/argocd-cm.yaml` | `timeout.reconciliation 180s` · `application.resourceTrackingMethod annotation` · Application 헬스 Lua(`resource.exclusions` 기본 유지) |
 | `argocd/resources-*.yaml` | controller(StatefulSet) 256Mi/1Gi · repo-server 128Mi/512Mi · server 128Mi/512Mi · redis 32Mi/128Mi · notifications 64Mi/256Mi + GOMEMLIMIT(Go 4종) |
@@ -48,9 +48,10 @@ T041의 자기 관리 Application도 SSA로 같은 객체를 다루므로 처음
 워크스테이션의 kubectl(내장 kustomize)이 `raw.githubusercontent.com`에 닿아야 한다(원격 base).
 
 ```bash
-# (선택) 렌더링 사전 확인 — 문서 45개(59 − 삭제 14), 삭제 대상 객체 이름 0
-kubectl kustomize "$REPO/bootstrap/argocd" | grep -c '^kind:'                                   # 45
+# (선택) 렌더링 사전 확인 — 문서 40개(59 − 삭제 19), 삭제 대상 객체 이름 0, NetworkPolicy 0
+kubectl kustomize "$REPO/bootstrap/argocd" | grep -c '^kind:'                                   # 40
 kubectl kustomize "$REPO/bootstrap/argocd" | grep -c -E '^  name: argocd-(dex-server|applicationset-controller)(-network-policy)?$'   # 0
+kubectl kustomize "$REPO/bootstrap/argocd" | grep -c '^kind: NetworkPolicy'                     # 0 (upstream NP 5장 제거 — 정본은 T041 platform/policies)
 
 kubectl apply --server-side --force-conflicts -k "$REPO/bootstrap/argocd"
 ```
@@ -165,8 +166,8 @@ kubectl delete namespace argocd
 
 - **Namespace 인수**: `platform/policies/`가 `argocd` ns + PSA restricted 라벨을 선언 → Argo CD가 SSA로 ①의 수동 생성분을 인수(라벨 값이 같아야 conflict 없음 — cloudflared README ④와 같은 판정: managedFields).
 - **AppProject → root 이관**: `clusters/oci-k3s/projects/` 4종 + `default` 봉인, `root-app.yaml` `project: platform`, 재적용 순서는 `root-app.yaml` 머리 주석. root의 path가 `apps/`라 `projects/`는 root가 동기화하지 못한다 — T041이 투입 방법을 정한다(계약 트리의 구조적 순환).
-- **자기 관리**: Application `platform-argocd`(source `bootstrap/argocd`, wave는 계약 §sync-wave 단일 표, syncOptions 표준 + `Prune=confirm` · `Delete=confirm`). 이후 업그레이드는 `kustomization.yaml`의 SHA·digest 변경 PR = Argo가 자기 자신을 갱신(research D13). 첫 인수에서 field conflict가 나면 ②를 1회 재실행.
-- **NetworkPolicy**: `argocd` ns의 `default-deny` 뒤에도 repo-server → `github.com`/`raw.githubusercontent.com` 443(원격 base·저장소), 전 컴포넌트 → kube-api 6443(`allow-kube-api`), `allow-same-namespace`(redis·repo-server), `monitoring → argocd 8082·8083·8084`가 계약 매트릭스대로 열려 있어야 한다.
+- **자기 관리**: Application `platform-argocd`(source `bootstrap/argocd`, wave는 계약 §sync-wave 단일 표, syncOptions 표준 + `Prune=confirm` · `Delete=confirm`). 이후 업그레이드는 `kustomization.yaml`의 SHA·digest 변경 PR = Argo가 자기 자신을 갱신(research D13). 첫 인수에서 field conflict 때문에 ②를 재실행할 필요는 없다 — Argo CD의 SSA는 항상 force(`gitops-engine/pkg/utils/kube/resource_ops.go:469` `o.ForceConflicts = serverSideApply`)라 conflict가 표면화되지 않고 필드 소유권이 Argo 컨트롤러로 넘어간다.
+- **NetworkPolicy**: T040이 install.yaml 동봉 upstream NP 5장을 제거했으므로(합집합 방지 — `argocd-server-network-policy`는 전 출발지 허용) **T041 `default-deny` 적용 전까지 argocd ns는 NetworkPolicy 없음**(다른 ns와 동일한 과도기). `default-deny` 뒤에는 repo-server → `github.com`/`raw.githubusercontent.com` 443(원격 base·저장소), 전 컴포넌트 → kube-api 6443(`allow-kube-api`), `allow-same-namespace`(server↔repo-server 8081↔redis 6379↔controller), `kube-system(traefik) → argocd 8080`, `monitoring → argocd 8082·8083·8084`가 계약 매트릭스대로 열려야 한다(대조 완료 — 전부 있음). 매트릭스에 없는 것: notifications-controller metrics **9001**(upstream NP는 전 ns에 열었음) — 스크레이프가 필요하면 T098/converge에서 행 추가.
 - **T043 Ingress·SSO**: `argocd-cm`에 `url` · `oidc.config`(Authentik PKCE public client, research D8) · `argocd-rbac-cm` · `admin.enabled: "false"`. 호스트 이름은 계약 hostnames-and-access.md(`argo.joshuatech.dev`)를 따른다 — research D8·D11의 `argocd.joshuatech.dev` 표기와 다르므로 계약이 우선.
 - **알림**: `argocd-notifications-cm` 서비스·트리거 + ESO Merge Secret(research D9).
 - **노드 배치(검토)**: plan A14는 Argo CD 0.6 GiB를 **노드 A(`role=platform`)** 예산에 두지만 T040 task 문면에 nodeSelector 지시가 없어 두지 않았다(노드 라벨 `role=platform`/`role=data`는 런북 §3 T035/T036에서 실측 확인됨). 첫 롤아웃(③)의 `get pods -o wide` NODE 열을 확인하고, 노드 B로 분산되면 T041/T046에서 `nodeSelector: {role: platform}` 패치를 결정한다.

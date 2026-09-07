@@ -14,6 +14,16 @@
 #         research D1이 고른 형식이고, 대안 `https://github.com/argoproj/argo-cd/manifests/cluster-install?ref=<같은 SHA>`
 #         (git clone, 12.7 s)와 렌더링 결과가 바이트 단위로 같다(실측 1,918,840 B · 59 문서). 태그 문자열(v3.5.2)은 어디에도 ref로 쓰지 않는다.
 #   업그레이드 = 새 태그의 커밋 SHA로 아래 URL을, 같은 릴리스의 이미지 인덱스 digest 2개(images:)를 함께 바꾼 PR 1건.
+#   Renovate 메모(T116): 기본 kustomize 매니저는 raw URL 속 SHA를 추적하지 않고, images[]의 digest-only 항목은 `latest` 기준 digest 갱신 PR을
+#   열 수 있다 — T116에서 `packageRules`(이 파일의 images digest 업데이트 비활성) + customManager(regex: URL 위의
+#   `# renovate: datasource=github-tags depName=argoproj/argo-cd currentValue=v3.5.2` 주석으로 SHA를 태그에 묶기)로 처리한다. 주석은 미리 둔다(동작은 T116).
+#
+# upstream NetworkPolicy 5장도 제거한다(리뷰 반영): install.yaml이 동봉하는 argocd NP는 `argocd-server-network-policy`가 `ingress: [{}]`(전 출발지),
+#   controller·repo-server·notifications NP가 `namespaceSelector: {}`(전 ns → metrics)라 계약 매트릭스보다 넓다. NetworkPolicy는 합집합이라
+#   T041 `platform/policies`(default-deny + allow-dns + allow-same-namespace + allow-kube-api + 매트릭스 행)로는 좁힐 수 없고 유일한 수정 지점이 여기다.
+#   계약 대조(network-policy.md): argocd가 필요로 하는 행 — allow-same-namespace 7 ns에 argocd(35행) · allow-kube-api 10 ns에 argocd(36행) ·
+#   kube-system(traefik) → argocd 8080(77행) · monitoring → argocd 8082·8083·8084(89행) · argocd → 외부 443 github/quay/auth(112행) — 전부 있음.
+#   T041 default-deny 적용 전까지 argocd ns는 NetworkPolicy 없음(다른 ns와 같은 과도기).
 #
 # 이 디렉터리가 만들지 "않는" 것 — 경계(운영 절차는 ../README.md):
 #   1) Namespace `argocd`(PSA restricted 라벨 3종): 정본은 T041 `platform/policies/`(정책 객체는 거기만 — validate 5.0).
@@ -25,12 +35,13 @@
 #
 # 패치 원칙: 모두 strategic merge patch(SSA로 적용 가능한 완전한 객체 조각). 패치 metadata에 namespace를 적지 않는다 —
 #   원격 base 리소스에 namespace가 없어 GVKN 매칭이 어긋나며, 아래 `namespace: argocd`가 패치 뒤에 붙인다.
-#   같은 객체에 delete 패치를 2개 두면 kustomize 오류이므로 삭제 대상 14개는 각각 1개씩만 둔다.
+#   같은 객체에 delete 패치를 2개 두면 kustomize 오류이므로 삭제 대상 19개(dex 6 · applicationset 8 · NetworkPolicy 5)는 각각 1개씩만 둔다.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: argocd
 
 resources:
+  # renovate: datasource=github-tags depName=argoproj/argo-cd currentValue=v3.5.2
   - https://raw.githubusercontent.com/argoproj/argo-cd/e258ee23c3e52266d407572f4bcdfe7d9ed36cb5/manifests/install.yaml
 
 # 이미지 digest 핀 — 인프라 규칙(태그만으로 참조하지 않는다) · FR-037. 렌더링 결과는 `<name>@sha256:…`(kustomize images[].digest는
@@ -140,6 +151,41 @@ patches:
       apiVersion: rbac.authorization.k8s.io/v1
       kind: ClusterRoleBinding
       metadata: { name: argocd-applicationset-controller }
+
+  # ---------------------------------------------------------------------------
+  # (1) upstream NetworkPolicy 5장 제거 — dex·applicationset NP 2장은 위에서 이미 제거, 남은 5장이 전부(머리 주석 "upstream NetworkPolicy" 참조).
+  #     argocd ns의 NetworkPolicy 정본은 T041 platform/policies(계약 network-policy.md)뿐이다.
+  # ---------------------------------------------------------------------------
+  - target: { kind: NetworkPolicy, name: argocd-server-network-policy }
+    patch: |-
+      $patch: delete
+      apiVersion: networking.k8s.io/v1
+      kind: NetworkPolicy
+      metadata: { name: argocd-server-network-policy }
+  - target: { kind: NetworkPolicy, name: argocd-application-controller-network-policy }
+    patch: |-
+      $patch: delete
+      apiVersion: networking.k8s.io/v1
+      kind: NetworkPolicy
+      metadata: { name: argocd-application-controller-network-policy }
+  - target: { kind: NetworkPolicy, name: argocd-repo-server-network-policy }
+    patch: |-
+      $patch: delete
+      apiVersion: networking.k8s.io/v1
+      kind: NetworkPolicy
+      metadata: { name: argocd-repo-server-network-policy }
+  - target: { kind: NetworkPolicy, name: argocd-redis-network-policy }
+    patch: |-
+      $patch: delete
+      apiVersion: networking.k8s.io/v1
+      kind: NetworkPolicy
+      metadata: { name: argocd-redis-network-policy }
+  - target: { kind: NetworkPolicy, name: argocd-notifications-controller-network-policy }
+    patch: |-
+      $patch: delete
+      apiVersion: networking.k8s.io/v1
+      kind: NetworkPolicy
+      metadata: { name: argocd-notifications-controller-network-policy }
 
   # ---------------------------------------------------------------------------
   # (2) requests/limits + GOMEMLIMIT — research D10 소형 프로파일. requests 합계 608Mi ≈ plan A14 "Argo CD 0.6 GiB"(노드 A 예산).
