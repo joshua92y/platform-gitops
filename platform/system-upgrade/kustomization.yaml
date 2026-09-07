@@ -1,6 +1,64 @@
-# platform/system-upgrade/ — System Upgrade Controller + Plan
-# sync-wave: 계약 gitops-repo.md §sync-wave 단일 표 참조(wave 번호는 표에만 기재 — 중복 금지).
-# 빈 뼈대(T003) — 실제 매니페스트는 T031+에서 작성한다.
+# platform/system-upgrade/ — system-upgrade-controller(SUC) v0.20.1 + Plan `k3s-server`·`k3s-agent` (T037, FR-048)
+#
+# 정본 계약(모노레포 specs/003-platform-foundation/contracts/):
+#   - gitops-repo.md §디렉터리(`system-upgrade/ 는 SUC + Plan`) · §Application 규약 · §sync-wave 단일 표(wave 번호는 그 표에만 — 여기 중복 기재 금지) · §이미지·승격
+#   - network-policy.md §네임스페이스 표(`system-upgrade` = PSA **privileged**) · §허용 매트릭스(`system-upgrade` → 외부 443 `update.k3s.io`, 컨트롤러만)
+#     · §hostNetwork 예외표(Plan Job)
+#
+# PSA privileged 사유(계약 표와 같은 문장): Plan Job pod의 hostPID · hostIPC · hostNetwork · `chroot /host`는 SUC에 **하드코딩되어 비활성화할 수 없다**
+#   (v0.20.1 pkg/upgrade/job/job.go 199–202행: HostIPC/HostPID/HostNetwork=true, DNSPolicy=ClusterFirstWithHostNet; 호스트 루트 "/"가 host-root 볼륨으로
+#   모든 prepare/upgrade 컨테이너의 /host 에 rw 마운트 — 같은 파일 240–246행 + pkg/upgrade/container/container.go New; upgrade 컨테이너는 privileged + CAP_SYS_BOOT —
+#   job.go 456–465행). 그래서 Plan Job은 계약 §hostNetwork 예외표에 등재되어 NetworkPolicy 밖에 있고, 컨트롤러 pod만 정책 안(`allow-kube-api` + `update.k3s.io` 443 egress)이다.
+#
+# 이 디렉터리가 만들지 "않는" 것 — 경계(운영 절차는 README.md):
+#   1) Namespace `system-upgrade` + PSA 라벨: 정본은 T041 `platform/policies/`(계약: 정책 객체는 거기에만 — validate 5.0). 업스트림 릴리스 매니페스트의
+#      첫 문서(Namespace)는 그래서 controller.yaml에서 뺐다. T041 전에는 운영자가 수동 생성한다(README ①).
+#   2) Application `platform-system-upgrade`(clusters/oci-k3s/apps/): app-of-apps 자체가 T041 산출물이므로 T041에서 추가한다(project `platform`,
+#      source.path `platform/system-upgrade`, destination ns `system-upgrade`, sync-wave = 계약 단일 표, syncOptions 표준 `ServerSideApply=true`·`CreateNamespace=true`·
+#      `Prune=confirm`·`Delete=confirm`·`SkipDryRunOnMissingResource=true` — CRD(crd.yaml)와 Plan(CR)이 같은 Application에 있으므로 마지막 옵션이 첫 sync의
+#      dry-run 실패를 막는다).
+#   3) NetworkPolicy(`allow-kube-api` · 외부 443 `update.k3s.io`): T041 `platform/policies/`.
+#
+# 레이아웃 결정 — 릴리스 자산을 **저장소에 복사**한다(원격 참조가 아니라):
+#   - crd.yaml·system-upgrade-controller.yaml은 git 트리에 없는 빌드 산출물(controller-gen·make 출력)이라 `?ref=<commit sha>`로 핀할 수 없고(계약이 태그 핀을
+#     금지하는 이유와 같다), 릴리스 다운로드 URL은 태그 기반이라 재업로드로 내용이 바뀔 수 있다.
+#   - Namespace 문서를 빼야 하는데 원격 참조로는 원본 파일 기준 검사(validate 5.0)를 통과할 수 없다.
+#   - 복사본이어야 Renovate(kubernetes 매니저, renovate.json)가 `image:` 줄의 태그·digest를 갱신하고, 리뷰어가 커밋에서 내용을 본다(계약 §이미지·승격의 취지).
+#   출처·대조(2026-09-07): https://github.com/rancher/system-upgrade-controller/releases/download/v0.20.1/{crd.yaml,system-upgrade-controller.yaml}
+#     crd.yaml                       sha256 68a2e6b786dc3a3d47f0ac557b06833d2f773d801f482f43d37c7e819309c656 — **원본 그대로**(`sha256sum crd.yaml`이 이 값)
+#     system-upgrade-controller.yaml sha256 11ba712de8b887b937e521a7278bcd37ba06975c581646903fd8ae8e296f3bfc — controller.yaml = 첫 문서(Namespace, 1–7행) 제거
+#       + 이미지 2줄 digest 병기 + 머리 주석. 대조: diff <(curl -sL <URL> | sed '1,7d') <(grep -v '^#' controller.yaml) → 이미지 2줄만 달라야 한다.
+#   SUC 업그레이드는 두 파일을 같은 절차로 다시 만들고 sha256·diff를 이 주석에 갱신한다(Renovate는 image 줄만 본다 — CRD 변경은 수동).
+#
+# 이미지(계약 §이미지·승격: platform/ 이미지는 태그에 @sha256 병기; validate 4b):
+#   - rancher/system-upgrade-controller:v0.20.1@sha256:aaf4dbf6… — Docker Hub registry v2 API의 manifest list(OCI index) digest. 본문 sha256이
+#     Docker-Content-Digest와 일치함을 확인, linux/amd64 + linux/arm64(+arm/v7) 포함 → 노드 2대(Ampere A1, arm64)가 이 인덱스로 해결된다(2026-09-07).
+#   - rancher/kubectl:v1.36.2@sha256:06c7a7a9… — SUC가 cordon/drain init 컨테이너에 쓰는 이미지(ConfigMap SYSTEM_UPGRADE_JOB_KUBECTL_IMAGE). 업스트림 기본
+#     v1.30.3은 클러스터(v1.36.4)와 kubectl 버전 skew(±1 minor) 밖이라 같은 minor의 최신 태그로 올리고 digest를 병기했다(linux/amd64 + arm64 확인).
+#   - **Plan 이미지 `rancher/k3s-upgrade`는 태그도 digest도 없다(의도)**: SUC가 채널이 고른 버전(예 v1.36.4+k3s1 → 태그 v1.36.4-k3s1)을 태그로 붙인다
+#     (container.go WithLatestTag — 이름만 있을 때만 붙이므로 digest를 두면 채널이 무력화되고, `@sha256` 뒤에 태그를 붙일 수도 없다). validate 4b는 이 4줄
+#     (Plan 2개 × prepare·upgrade)에 **경고(WARN, FAIL 아님)**를 낸다 — 이 예외의 근거가 이 주석이다. 이미지 자체는 k3s-io/k3s-upgrade Dockerfile의 verify
+#     단계가 k3s 릴리스 sha256sum 파일로 바이너리를 검증해 만든다. digest 고정이 필요하면 `channel`을 빼고 `version: vX.Y.Z+k3s1`으로 바꾼다(README §수동 트리거).
+#
+# CRD 삭제 보호: 계약 §Application 규약(삭제 보호 — 오퍼레이터 CRD에 `argocd.argoproj.io/sync-options: Delete=false,Prune=false`)을 SUC CRD에도 적용한다(아래 patches).
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-resources: []
+namespace: system-upgrade
+resources:
+  - crd.yaml
+  - controller.yaml
+  - plan-k3s-server.yaml
+  - plan-k3s-agent.yaml
+patches:
+  # 컨트롤러 Deployment: requests 30Mi · nodeSelector role=platform · securityContext — 근거는 controller-patch.yaml 머리 주석
+  - path: controller-patch.yaml
+  # CRD 삭제 보호(위 주석). crd.yaml 원본은 건드리지 않고 어노테이션만 더한다.
+  - target:
+      group: apiextensions.k8s.io
+      version: v1
+      kind: CustomResourceDefinition
+      name: plans.upgrade.cattle.io
+    patch: |-
+      - op: add
+        path: /metadata/annotations/argocd.argoproj.io~1sync-options
+        value: Delete=false,Prune=false

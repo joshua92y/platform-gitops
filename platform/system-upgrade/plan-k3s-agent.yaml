@@ -1,0 +1,38 @@
+# Plan `k3s-agent` — 노드 B(agent) K3s 패치 자동 업그레이드. 서버 Plan 완료를 기다린 뒤 cordon → upgrade (T037, FR-048)
+#
+# prepare = `rancher/k3s-upgrade` `prepare k3s-server`: k3s-upgrade 이미지의 upgrade.sh `prepare()`가 Plan `k3s-server`의 `.status.applying`이 빌 때까지,
+#   그리고 control-plane 노드의 kubelet 버전이 이 Plan의 SYSTEM_UPGRADE_PLAN_LATEST_VERSION과 같아질 때까지 5초 간격으로 대기한다(k3s-io/k3s-upgrade
+#   scripts/upgrade.sh prepare·verify_controlplane_versions — 이 순서 로직은 SUC가 아니라 이미지에 있다, K3s 문서 §Configuration 4). SA `system-upgrade`의
+#   ClusterRole이 plans·nodes get/list를 가지므로 in-cluster 토큰으로 조회한다(kubectl 대기만 하므로 privileged 불필요).
+#   서버 Plan이 실패하면 이 대기는 끝나지 않고 jobActiveDeadlineSecs에서 Job Failed가 된다 — 노드 B는 cordon되기 전이므로 스케줄 가능 상태로 남는다.
+# jobActiveDeadlineSecs 3600: 서버 Job(최대 1800초) 전체를 기다린 뒤 자기 업그레이드(바이너리 교체·k3s 재시작)까지 끝내야 하므로 서버 상한 + 자기 몫(컨트롤러
+#   기본 900) + 여유. 두 Job은 창 안에서 **동시에 생성**된다(Plan은 서로 독립; 순서는 오직 prepare 대기) — 그래서 대기 시간이 이 Job의 deadline을 소모한다.
+# 나머지(cordon만·drain 없음·tolerations 없음·window·channel·재트리거 노브 `retrigger`)는 plan-k3s-server.yaml의 주석과 같다.
+#   nodeSelector는 control-plane 라벨이 **없는** 노드(= 노드 B).
+apiVersion: upgrade.cattle.io/v1
+kind: Plan
+metadata:
+  name: k3s-agent
+  annotations:
+    upgrade.cattle.io/digest: metadata.annotations.retrigger
+    retrigger: "0"
+spec:
+  concurrency: 1
+  cordon: true
+  nodeSelector:
+    matchExpressions:
+      - key: node-role.kubernetes.io/control-plane
+        operator: DoesNotExist
+  serviceAccountName: system-upgrade
+  channel: https://update.k3s.io/v1-release/channels/v1.36
+  window:
+    days: [sunday]
+    startTime: "03:00"
+    endTime: "05:00"
+    timeZone: Asia/Seoul
+  jobActiveDeadlineSecs: 3600
+  prepare:
+    image: rancher/k3s-upgrade
+    args: [prepare, k3s-server]
+  upgrade:
+    image: rancher/k3s-upgrade
