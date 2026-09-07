@@ -24,7 +24,8 @@
 # `ApplyOutOfSyncOnly=true`(Application CR 20–30개를 매 sync 마다 SSA 하지 않고 OutOfSync 만 적용 — 컨트롤러 부하 절감).
 # `SkipDryRunOnMissingResource` 는 넣지 않는다 — root 가 만드는 것은 Application CR 뿐이고 그 CRD 는 bootstrap 이 먼저 설치한다(계약: "CRD 를 늦게 만드는 컴포넌트에만").
 # 삭제 보호 어노테이션(`argocd.argoproj.io/sync-options: Delete=false,Prune=false`)은 계약 §삭제 보호 대상(pg-main · Kafka · PVC · 오퍼레이터 CRD)이 아니므로 두지 않는다.
-# finalizer: root 삭제 시 child Application 까지 cascade(research D4) — `Delete=confirm` 이 승인 어노테이션 전까지 막는다(README ⑦).
+# finalizer: root 삭제 시 child Application 까지 cascade(research D4) — `Delete=confirm` 이 승인 어노테이션(`argocd.argoproj.io/deletion-approved`,
+#   RFC 3339 UTC) 전까지 막는다. 승인 시각은 deletionTimestamp 이상이어야 인정된다(v3.5.2 types.go IsDeletionConfirmed) — 순서는 delete → 어노테이션(README ⑦).
 # manifest-generate-paths: 이 경로 밖의 커밋으로는 root 매니페스트를 다시 생성하지 않는다(research D12 — 폴링에서도 캐시 무효화 억제).
 apiVersion: argoproj.io/v1alpha1
 kind: Application

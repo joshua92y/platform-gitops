@@ -48,12 +48,17 @@ T041의 자기 관리 Application도 SSA로 같은 객체를 다루므로 처음
 워크스테이션의 kubectl(내장 kustomize)이 `raw.githubusercontent.com`에 닿아야 한다(원격 base).
 
 ```bash
-# (선택) 렌더링 사전 확인 — 문서 45개(59 − 삭제 14), dex·applicationset 0
-kubectl kustomize "$REPO/bootstrap/argocd" | grep -c '^kind:'
-kubectl kustomize "$REPO/bootstrap/argocd" | grep -c -i -E 'dex|applicationset-controller'   # 0
+# (선택) 렌더링 사전 확인 — 문서 45개(59 − 삭제 14), 삭제 대상 객체 이름 0
+kubectl kustomize "$REPO/bootstrap/argocd" | grep -c '^kind:'                                   # 45
+kubectl kustomize "$REPO/bootstrap/argocd" | grep -c -E '^  name: argocd-(dex-server|applicationset-controller)(-network-policy)?$'   # 0
 
 kubectl apply --server-side --force-conflicts -k "$REPO/bootstrap/argocd"
 ```
+
+위 grep은 `metadata.name`과 roleRef/subjects 참조를 잡는다(삭제 전 원본 install.yaml에서는 20건, 정상 렌더에서는 0건 — 실측).
+텍스트로 `dex`·`applicationset`을 찾으면 정상 렌더에서도 12건이 남는데, argocd-server의 upstream env(`ARGOCD_SERVER_DEX_SERVER*` ·
+`ARGOCD_APPLICATIONSET_CONTROLLER_*`, cmd-params 키 참조) · `optional: true` 볼륨 `argocd-dex-server-tls` · CRD 설명문의 "indexed" 같은
+플러밍이라 무해하다(dex.config가 없으면 서버는 dex를 호출하지 않는다).
 
 ## ③ 롤아웃 확인 — Deployment 4 + StatefulSet 1
 
@@ -65,7 +70,9 @@ for d in argocd-repo-server argocd-server argocd-redis argocd-notifications-cont
   kubectl -n argocd rollout status deploy/$d --timeout=300s
 done
 kubectl -n argocd get deploy,statefulset                     # 정확히 5개 — dex·applicationset 없음
-kubectl -n argocd get pods -o wide                           # 전부 Running, 이미지 참조는 @sha256
+kubectl -n argocd get pods -o wide                           # 전부 Running; NODE 열 = 노드 배치 확인(아래 인계 항목 "노드 배치")
+kubectl -n argocd get pods -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.initContainers[*].image}{" "}{.spec.containers[*].image}{"\n"}{end}' \
+  | grep -v -c '@sha256'                                     # 0 = 모든 컨테이너·initContainer 이미지 참조가 digest(`-o wide`에는 IMAGE 열이 없다)
 kubectl -n argocd get events --field-selector reason=FailedCreate   # PSA 거부 0건
 kubectl -n argocd get cm argocd-cmd-params-cm -o jsonpath='{.data}'; echo   # server.insecure · processors 반영
 kubectl -n argocd get sts argocd-application-controller \
@@ -122,7 +129,10 @@ kubectl -n argocd port-forward svc/argocd-server 8080:80     # 세션 동안 켜
 # CLI(선택, v3.5.2 — 서버와 같은 태그): argocd login localhost:8080 --plaintext --username admin
 ```
 
-port-forward는 admin kubeconfig의 API 경로(`cloudflared access tcp` 6443 리스너)를 그대로 탄다 — 별도 노출 없음. 세션 종료 시 포워딩을 끊고 `cloudflared access logout`.
+port-forward는 admin kubeconfig의 API 경로(`cloudflared access tcp` 6443 리스너)를 그대로 탄다 — 별도 노출 없음.
+**세션 종료** = port-forward와 `cloudflared access tcp` 프로세스 종료 + Access 토큰 캐시 삭제: `~/.cloudflared/`(Windows `%USERPROFILE%\.cloudflared\`)의
+`*-token` · `*-token.lock` · `*-token.url` · `*-org-token*` 파일(`<host>-<hash>-token` 형태; `cert.pem` 같은 터널 자격은 건드리지 않는다).
+`cloudflared access logout`이라는 하위 명령은 **없다** — 2026.8.3 `cloudflared access --help`의 하위 명령은 login · curl · token · tcp/rdp/ssh/smb · ssh-config · ssh-gen 뿐(실측).
 
 ## ⑦ 되돌리기 — `kubectl delete -k`는 CRD까지 지운다
 
@@ -133,14 +143,19 @@ port-forward는 admin kubeconfig의 API 경로(`cloudflared access tcp` 6443 리
 T040 단계(root만 있고 apps/가 비어 있을 때)의 완전 철회 순서:
 
 ```bash
-# 1) root 삭제 — Delete=confirm 이라 승인 어노테이션이 먼저 필요하다(값은 RFC 3339 UTC 시각)
-kubectl -n argocd annotate application root argocd.argoproj.io/deletion-approved="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-kubectl -n argocd delete application root
-kubectl -n argocd get applications          # 비어 있어야 다음으로
+# 1) root 삭제 — Delete=confirm: 승인 어노테이션의 시각이 deletionTimestamp "이상"이어야 승인으로 인정된다
+#    (v3.5.2 types.go IsDeletionConfirmed(app.DeletionTimestamp) — 어노테이션을 delete 보다 먼저 달면 무시된다). 그래서 delete 가 먼저다.
+kubectl -n argocd delete application root --wait=false
+kubectl -n argocd get app root -o jsonpath='{.status.conditions}'; echo      # 'requires manual confirmation' 이 보이면 아래 승인
+kubectl -n argocd annotate application root argocd.argoproj.io/deletion-approved="$(date -u +%Y-%m-%dT%H:%M:%SZ)"   # 또는: argocd app confirm-deletion root
+kubectl -n argocd get applications          # root 가 사라질 때까지 대기 — 비어 있어야 다음으로
 # 2) Argo CD 삭제(CRD 포함) → 3) 네임스페이스(①에서 수동 생성했으므로 수동 삭제)
 kubectl delete -k "$REPO/bootstrap/argocd"
 kubectl delete namespace argocd
 ```
+
+- 승인 시각은 UTC RFC 3339이고 **deletionTimestamp 이상**이어야 한다(`date -u`). 승인 대기는 관리 리소스마다 `RequiresDeletionConfirmation` 을 볼 때만 걸리므로
+  **T040 시점(관리 리소스 0)에는 승인 단계가 발생하지 않고 root 는 바로 사라진다** — 위 승인 명령은 T041 이후(child Application 이 있을 때)에 필요하다.
 
 부분 되돌리기(설정만): 이 디렉터리의 패치를 고쳐 PR → ②를 재실행한다(SSA라 재적용이 diff만 반영). T041 뒤에는 `platform-argocd` Application이 같은 일을 자동으로 한다.
 
@@ -154,4 +169,5 @@ kubectl delete namespace argocd
 - **NetworkPolicy**: `argocd` ns의 `default-deny` 뒤에도 repo-server → `github.com`/`raw.githubusercontent.com` 443(원격 base·저장소), 전 컴포넌트 → kube-api 6443(`allow-kube-api`), `allow-same-namespace`(redis·repo-server), `monitoring → argocd 8082·8083·8084`가 계약 매트릭스대로 열려 있어야 한다.
 - **T043 Ingress·SSO**: `argocd-cm`에 `url` · `oidc.config`(Authentik PKCE public client, research D8) · `argocd-rbac-cm` · `admin.enabled: "false"`. 호스트 이름은 계약 hostnames-and-access.md(`argo.joshuatech.dev`)를 따른다 — research D8·D11의 `argocd.joshuatech.dev` 표기와 다르므로 계약이 우선.
 - **알림**: `argocd-notifications-cm` 서비스·트리거 + ESO Merge Secret(research D9).
-- **노드 배치(검토)**: plan A14는 Argo CD 0.6 GiB를 **노드 A(`role=platform`)** 예산에 넣지만 이 kustomization은 nodeSelector를 두지 않는다(T040 문면에 없음 — 라이브 라벨을 확인하지 않은 상태에서 잘못 두면 Pending). 첫 롤아웃의 `get pods -o wide` NODE 열을 보고 필요하면 T041·T046에서 `nodeSelector: {role: platform}` 패치를 추가한다.
+- **노드 배치(검토)**: plan A14는 Argo CD 0.6 GiB를 **노드 A(`role=platform`)** 예산에 두지만 T040 task 문면에 nodeSelector 지시가 없어 두지 않았다(노드 라벨 `role=platform`/`role=data`는 런북 §3 T035/T036에서 실측 확인됨). 첫 롤아웃(③)의 `get pods -o wide` NODE 열을 확인하고, 노드 B로 분산되면 T041/T046에서 `nodeSelector: {role: platform}` 패치를 결정한다.
+- **validate 공백 후보(T047, 미검증 — 리뷰 지적)**: ① 삭제 패치 `target`이 base에 없는 객체를 가리킬 때의 불일치 검사(②의 객체 이름 grep을 validate로 옮기는 안) ② 원격 base URL의 태그 문자열 ref(`?ref=v…` · `/v3.5.2/`) 금지 검사 ③ `bootstrap/**` 이미지 digest 요구(4b는 `platform/**`만) ④ GOMEMLIMIT ≤ memory limit 검사.
