@@ -1,0 +1,63 @@
+# bootstrap/root-app.yaml — Application "root"(app-of-apps 진입점) — 계약 gitops-repo.md §디렉터리 "유일한 수동 apply" (T040)
+#
+# 적용: `kubectl apply -f bootstrap/root-app.yaml`(../README.md ⑤). 사람이 클러스터에 직접 넣는 Application 은 이 파일뿐이고,
+# 나머지 Application(platform-<component> · <pod>-<env>)은 root 가 clusters/oci-k3s/apps/ 에서 읽어 만든다(T041).
+# validate: 검사 2(ServerSideApply=true) 적용 · 검사 7.1 은 name `root` + source.path `clusters/oci-k3s/apps` 일 때만 sync-wave 표 밖으로 인정.
+#
+# project 결정(T040 시점 = `default`, 임시):
+#   - 계약 §Application 규약은 root 의 project 를 명시하지 않는다(플랫폼 컴포넌트 → `platform`, 앱 → `dev`·`prod`, 검사 Job → `tests`).
+#     의도상 목적지는 `platform`(research D4 · tests/fixtures/positive) 이지만 AppProject `platform` 은 T041 산출물이라 지금은 없다.
+#   - 없는 project 를 참조하면 Argo CD 가 InvalidSpecError("Application referencing project platform which does not exist")로
+#     sync 를 거부해 T040 의 확인(root Synced/Healthy = 저장소 도달·조정 루프 동작 증명)이 불가능하다. 그래서 자동 생성되는 `default` 로 둔다.
+#   - 위험 범위: `default` 는 전권 project 지만, T041 이 봉인하기 전까지 root 가 읽는 clusters/oci-k3s/apps/ 는 비어 있고(README.md 뿐)
+#     main 은 PR + validate 로만 바뀐다(ruleset). 창은 T040→T041 사이로 한정된다.
+# T041 이관 절차(순서 고정 — 기록처는 여기와 ../README.md):
+#   1) T041 PR 에서 clusters/oci-k3s/projects/{platform,dev,prod,tests}.yaml + `default` 봉인 + 이 파일의 `project: platform` 변경 + apps/ Application 들을 함께 올린다.
+#   2) 머지 후 운영자: AppProject 4종(+default 봉인)을 먼저 클러스터에 넣는다 — root 의 path 는 apps/ 라 projects/ 를 스스로 동기화하지 못한다
+#      (계약 트리의 구조적 순환: AppProject 없이는 root 가 못 돌고, root 는 projects/ 를 읽지 않는다 — T041 이 방법(수동 apply 또는 부트스트랩 포함)을 정한다).
+#   3) `kubectl apply -f bootstrap/root-app.yaml`(project: platform 반영 — 같은 파일 재적용은 멱등).
+#   4) `kubectl -n argocd get app root` → Synced/Healthy. 2)와 3) 사이의 짧은 "repository not permitted in project 'default'" 는 봉인 효과라 정상.
+#   5) validate 는 project 값을 검사하지 않으므로(검사 2·7.1) 이관 확인은 클러스터에서 한다.
+#
+# syncPolicy — 계약 §Application 규약 플랫폼 표준(automated prune:false/selfHeal:true · ServerSideApply=true · Prune=confirm · Delete=confirm)에
+# root 만의 차이 2개: `CreateNamespace=false`(목적지 argocd ns 는 Argo CD 자신의 ns — README ①에서 만들고 T041 policies 가 소유; root 가 만들면 안 된다),
+# `ApplyOutOfSyncOnly=true`(Application CR 20–30개를 매 sync 마다 SSA 하지 않고 OutOfSync 만 적용 — 컨트롤러 부하 절감).
+# `SkipDryRunOnMissingResource` 는 넣지 않는다 — root 가 만드는 것은 Application CR 뿐이고 그 CRD 는 bootstrap 이 먼저 설치한다(계약: "CRD 를 늦게 만드는 컴포넌트에만").
+# 삭제 보호 어노테이션(`argocd.argoproj.io/sync-options: Delete=false,Prune=false`)은 계약 §삭제 보호 대상(pg-main · Kafka · PVC · 오퍼레이터 CRD)이 아니므로 두지 않는다.
+# finalizer: root 삭제 시 child Application 까지 cascade(research D4) — `Delete=confirm` 이 승인 어노테이션(`argocd.argoproj.io/deletion-approved`,
+#   RFC 3339 UTC) 전까지 막는다. 승인 시각은 deletionTimestamp 이상이어야 인정된다(v3.5.2 types.go IsDeletionConfirmed) — 순서는 delete → 어노테이션(README ⑦).
+# manifest-generate-paths: 이 경로 밖의 커밋으로는 root 매니페스트를 다시 생성하지 않는다(research D12 — 폴링에서도 캐시 무효화 억제).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    argocd.argoproj.io/manifest-generate-paths: .
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/joshua92y/platform-gitops.git
+    targetRevision: main
+    path: clusters/oci-k3s/apps
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+      - CreateNamespace=false
+      - ApplyOutOfSyncOnly=true
+      - Prune=confirm
+      - Delete=confirm
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

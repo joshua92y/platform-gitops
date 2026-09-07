@@ -1,0 +1,20 @@
+# argocd-server(API/UI): research D10 req 128Mi / lim 512Mi, GOMEMLIMIT 460MiB(≈90%). CPU 50m(D10 범위 50–100m 하한 — UI 트래픽이 낮다).
+# metadata.namespace 를 적지 않는다(kustomization.yaml "패치 원칙").
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: argocd-server
+spec:
+  template:
+    spec:
+      containers:
+        - name: argocd-server
+          env:
+            - name: GOMEMLIMIT
+              value: 460MiB
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi

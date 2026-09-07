@@ -1,0 +1,21 @@
+# notifications-controller: research D10 req 64Mi / lim 256Mi, GOMEMLIMIT 230MiB(≈90%). CPU 50m.
+# 알림 서비스(Slack · Discord webhook)와 ESO Merge Secret 은 뒤 태스크(research D9) — 여기서는 리소스만.
+# metadata.namespace 를 적지 않는다(kustomization.yaml "패치 원칙").
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: argocd-notifications-controller
+spec:
+  template:
+    spec:
+      containers:
+        - name: argocd-notifications-controller
+          env:
+            - name: GOMEMLIMIT
+              value: 230MiB
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi

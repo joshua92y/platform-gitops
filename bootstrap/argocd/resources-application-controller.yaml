@@ -1,0 +1,21 @@
+# application-controller 는 StatefulSet(Deployment 아님 — research 함정). research D10: req 256Mi / lim 1Gi + GOMEMLIMIT.
+# GOMEMLIMIT 900MiB = limit 의 ~88% — Go GC 가 OOMKill 전에 회수하도록(HA 문서 권장 80–90%). CPU limit 없음(D10).
+# metadata.namespace 를 적지 않는다(kustomization.yaml "패치 원칙").
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: argocd-application-controller
+spec:
+  template:
+    spec:
+      containers:
+        - name: argocd-application-controller
+          env:
+            - name: GOMEMLIMIT
+              value: 900MiB
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 1Gi

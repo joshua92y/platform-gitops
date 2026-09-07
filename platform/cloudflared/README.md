@@ -147,7 +147,10 @@ Host ssh-a ssh-b
 - Windows에서 `cloudflared.exe`가 PATH에 없으면 ProxyCommand에 절대 경로를 적는다(공백 없는 경로 권장).
 - passphrase 키는 `ssh-add -c ~/.ssh/joshuatech-ops`로 올려 사용마다 확인 프롬프트를 받는다.
 - 첫 접속에서 브라우저가 열리고 Access 앱 `ssh`(GitHub IdP, `session_duration` 1h)를 통과해야 한다.
-- 확인: `ssh ssh-a hostname` · `ssh ssh-b hostname`.
+- **GitHub IdP 앱 권한(현행 = GitHub App `joshuatech-cf-access`)**: GitHub App이면 **Account permissions → Email addresses: Read-only가 필수**다.
+  없으면 Access가 `GET https://api.github.com/user/emails` **403**을 받아 "Authentication error — Failed to fetch user/group information"으로
+  로그인이 실패한다(2026-09-07 실측; Zero Trust → Settings → Authentication의 IdP "Test"로 재현된다).
+- 확인: `ssh ssh-a hostname` → `joshtech-api` · `ssh ssh-b hostname` → `joshtech-cache`(호스트 키 지문은 기존 known_hosts의 노드 항목과 같아야 한다).
 
 K8s API는 로컬 리스너로 받는다(`k8s` Access 앱):
 
@@ -158,6 +161,11 @@ cloudflared access tcp --hostname k8s.joshuatech.dev --url 127.0.0.1:6443    # �
 부트스트랩 창에서 쓰던 SSH 로컬 포워딩(`ssh -L 6443:127.0.0.1:6443`)을 **먼저 끊어야** 같은 포트를 쓸 수 있다.
 포트를 6443으로 맞추는 이유: T035에서 받아 둔 admin kubeconfig의 `server: https://127.0.0.1:6443`을 그대로 쓰기 위해서다
 (포트를 바꾸면 kubeconfig를 매번 고쳐야 한다).
+
+- 리스너가 실제로 떠 있는지 먼저 본다: `Test-NetConnection 127.0.0.1 -Port 6443`(True) + 6443을 잡은 프로세스가 `cloudflared`인지.
+  리스너 없이 `kubectl`을 치면 전부 connection refused다(2026-09-07 ②에서 실제로 겪음 — 적용 0건).
+- **새 창에서는 `$KC`(kubeconfig 경로 변수)를 다시 정의**한다 — PowerShell 세션 변수는 창마다 사라진다. `kubectl --kubeconfig $KC …`가
+  빈 값으로 실행되면 기본 kubeconfig로 떨어져 엉뚱한 컨텍스트를 볼 수 있다.
 
 kubeconfig의 cluster 항목(운영자 admin kubeconfig · 에이전트/tester/CI의 `agent-view` 토큰 kubeconfig 모두 같은 형태):
 
@@ -173,22 +181,32 @@ clusters:
 - 운영자 = admin kubeconfig(`/etc/rancher/k3s/k3s.yaml`, **비밀번호 관리자에만** 보관).
 - 에이전트·tester·CI = `kubectl create token agent-view -n kube-system --duration=8h`로 만든 단명 토큰 kubeconfig. admin kubeconfig를 이들에게 주지 않는다.
 
-## ⑥ 워크스테이션 cloudflared 클라이언트는 2026.5.1로 핀
+## ⑥ 워크스테이션 cloudflared 클라이언트는 2026.8.3 유지 (2026.5.1 핀은 VD)
 
-클러스터 안 daemon은 이 저장소의 2026.8.3(digest 핀)을 쓰지만, **워크스테이션·tester의 클라이언트는 2026.5.1**로 고정한다 —
-2026.6+에서 `cloudflared access tcp/ssh`가 Access 서비스 토큰을 무시하는 회귀가 있어 비대화형 접근(tester `tester-k8s`)이 깨진다(plan A12).
+운영자 워크스테이션의 클라이언트는 **설치된 2026.8.3(MSI, `C:\Program Files (x86)\cloudflared`)을 그대로 쓴다**(2026-09-07 결정).
+클러스터 안 daemon도 이 저장소의 2026.8.3(digest 핀)이다.
 
-- GitHub Releases의 2026.5.1 자산을 받아 sha256을 확인한 뒤 고정 경로에 두고, 자동 업데이트를 켜지 않는다.
-- 확인: `cloudflared --version` → `2026.5.1`.
-- 이 핀은 클라이언트에만 적용된다. `deployment.yaml`의 이미지 태그·digest를 이 버전으로 내리지 않는다.
+- 2026.5.1 핀(plan A12)은 **서비스 토큰(비대화형) 경로에만** 관련된 조치다 — 2026.6+에서 `cloudflared access tcp/ssh`가 Access
+  서비스 토큰을 무시하는 회귀 보고가 있어 tester의 `tester-k8s`가 깨질 수 있다는 것이지, 운영자의 **브라우저(GitHub IdP) 대화형 로그인**과는
+  무관하다. 운영자 경로는 2026.8.3으로 ⑤a·⑤b 모두 실측 통과했다.
+- **VD(검증 후 결정)**: 서비스 토큰이 2026.8.3에서 동작하는지 **T041/T049에서 tester 경로로 실측**한 뒤 핀을 유지할지 폐기할지 정한다.
+  실측 전까지 tester 워크스테이션에도 2026.5.1을 설치하지 않는다(2026.5.1 릴리스 자산에는 체크섬 파일이 없다 — exe 54,110,064 B).
+- 자동 업데이트는 켜지 않는다(daemon은 `--no-autoupdate`, 클라이언트는 MSI 수동 갱신). `deployment.yaml`의 이미지 태그·digest는
+  클라이언트 결정과 무관하게 유지한다.
 
 ## ⑦ 세션 종료
 
-```bash
-cloudflared access logout      # 캐시된 Access 토큰 제거(모든 운영자 세션 종료 시 필수)
+`cloudflared access tcp` 프로세스 종료 + `%USERPROFILE%\.cloudflared\`(Linux `~/.cloudflared/`)의 `*-token`·`*-org-token` 캐시 파일 삭제.
+`cloudflared access logout` 하위 명령은 **존재하지 않는다**(2026-09-07 확인 — 2026.8.3 `cloudflared access --help`의 하위 명령은
+login · curl · token · tcp/rdp/ssh/smb · ssh-config · ssh-gen 뿐).
+
+```powershell
+# 워크스테이션(PowerShell): 리스너 종료 → 토큰 캐시만 삭제(cert.pem 같은 터널 자격은 건드리지 않는다)
+Get-Process cloudflared -ErrorAction SilentlyContinue | Stop-Process
+Remove-Item "$env:USERPROFILE\.cloudflared\*-token*", "$env:USERPROFILE\.cloudflared\*-org-token*" -ErrorAction SilentlyContinue
 ```
 
-`cloudflared access tcp` 프로세스도 함께 종료한다. passphrase 키를 올렸으면 `ssh-add -D`.
+passphrase 키를 올렸으면 `ssh-add -D`.
 
 ## ⑧ 임시 22 NSG 규칙 제거 (T039의 마지막 단계)
 
