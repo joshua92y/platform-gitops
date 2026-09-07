@@ -10,7 +10,7 @@ system-upgrade-controller(SUC) v0.20.1과 Plan 2개(`k3s-server` = 노드 A, `k3
 | `kustomization.yaml` | `namespace: system-upgrade` + 아래 4개 + Deployment 패치 + CRD 삭제 보호 어노테이션. 레이아웃(복사 vs 원격 참조)·digest 조회·Plan 이미지 예외·이 디렉터리가 만들지 않는 것의 근거가 머리 주석에 있다 |
 | `crd.yaml` | SUC v0.20.1 릴리스 `crd.yaml` **원본 그대로**(sha256 `68a2e6b7…c656`) — `Plan` CRD |
 | `controller.yaml` | 릴리스 `system-upgrade-controller.yaml`에서 첫 문서(Namespace)를 빼고 이미지 2줄에 digest를 병기한 사본(SA·Role·ClusterRole 2·바인딩 3·ConfigMap `default-controller-env`·Deployment) |
-| `controller-patch.yaml` | Deployment 패치: requests 30Mi/10m · limit 128Mi · `nodeSelector role=platform` · pod securityContext · `readOnlyRootFilesystem`(이미지가 `FROM scratch` 단일 바이너리) |
+| `controller-patch.yaml` | Deployment 패치: requests 30Mi/10m · limit 128Mi · `nodeSelector role=platform` · pod securityContext · `readOnlyRootFilesystem`(이미지가 `FROM scratch` 단일 바이너리) · tolerations(업스트림 5개 + `node.kubernetes.io/unschedulable` — 노드 A가 cordon된 동안 컨트롤러 pod가 다시 만들어져도 Pending이 되지 않게) |
 | `plan-k3s-server.yaml` | 노드 A: prepare(백업 게이트, privileged chroot) → cordon → upgrade. `jobActiveDeadlineSecs 1800` |
 | `plan-k3s-agent.yaml` | 노드 B: prepare(`prepare k3s-server` = 서버 완료 대기) → cordon → upgrade. `jobActiveDeadlineSecs 3600` |
 
@@ -25,8 +25,12 @@ system-upgrade-controller(SUC) v0.20.1과 Plan 2개(`k3s-server` = 노드 A, `k3
 
 ## 업그레이드 창에서 일어나는 일(순서)
 
-1. **채널 해석**: 컨트롤러가 `https://update.k3s.io/v1-release/channels/v1.36`을 15분마다 조회(302 → `v1.36.N+k3s1`, 이미지 태그는 `v1.36.N-k3s1`). Plan `status.latestVersion`이 바뀌면
-   해시가 바뀌고, 라벨 `plan.upgrade.cattle.io/<plan>=<해시>`가 없는 노드가 대상이 된다.
+1. **채널 해석**: 컨트롤러가 `https://update.k3s.io/v1-release/channels/v1.36`을 15분마다 조회(302 → `v1.36.N+k3s1`). SUC는 `+`를 `-`로 바꿔 저장하므로 Plan `status.latestVersion`과
+   이미지 태그는 `v1.36.N-k3s1`이고 `kubectl get nodes`의 VERSION은 `v1.36.N+k3s1`이다 — **같은 버전이며 불일치가 아니다**. `status.latestVersion`이 바뀌면 해시가 바뀌고,
+   라벨 `plan.upgrade.cattle.io/<plan>=<해시>`가 없는 노드가 대상이 된다.
+   **수용 위험(창 안 채널 갱신)**: Job이 도는 중에 채널이 새 패치를 해석하면 SUC는 version 라벨 ≠ `status.latestVersion`인 **진행 중 Job도** 지우고(`handle_batch.go` 62–66행,
+   Background 전파 — upgrade 컨테이너가 바이너리를 복사 중이면 `/usr/local/bin/k3s`가 깨질 수 있다) 새 Job을 즉시 만든다. 일요일 2시간 창 안에 릴리스가 겹칠 확률이 낮아
+   수용한다(깨졌는지 확인은 §비상 정지 5). 피해야 하면 `version:` 고정(§수동 트리거 — 채널 조회 자체가 멈춘다).
 2. **창 판정**: 일요일 03:00–05:00 KST 안에서만 Job을 만든다. 두 Plan의 Job은 **동시에** 생긴다(순서는 아래 prepare가 맡는다). 창 밖에서는 Job을 만들지 않는다(이벤트 `Waiting`) —
    **단, `status.applying`이 비어 있을 때만 창을 본다**(§실패 시의 "창 우회"). 창 안에서 시작한 Job은 05:00을 넘겨도 끝까지 간다.
 3. **노드 A `apply-k3s-server-on-joshtech-api-with-<해시>`** (hostPID·hostIPC·hostNetwork, `/host` = 호스트 루트):
@@ -82,13 +86,19 @@ system-upgrade-controller(SUC) v0.20.1과 Plan 2개(`k3s-server` = 노드 A, `k3
 
 ## 비상 정지 · 즉시 uncordon(운영자, 라이브)
 
-순서가 중요하다 — Job을 먼저 지우면 Plan이 같은 Job을 다시 만들 수 있다.
+순서가 중요하다. (i) Job을 먼저 지우면 Plan이 같은 Job을 다시 만들 수 있다. (ii) disabled 라벨을 붙이면 `applying=nil`이 되고(`handle_upgrade.go` 179–186행), SUC는 applying에
+없는 노드의 **진행 중 Job을 다음 Job 이벤트에 스스로 지운다**(`handle_batch.go` 145–149행) — 라벨 뒤에는 운영자가 삭제 시점을 잡을 수 없으므로 **바이너리 교체 구간은
+라벨을 붙이기 전에** 넘긴다. **라이브 미검증 — VD: T041 첫 창 뒤 실측.**
 
-1. `kubectl label node <node> plan.upgrade.cattle.io/<plan>=disabled --overwrite` — 그 노드에 대한 Plan을 멈춘다(두 노드 모두 = Plan 전체 정지).
-2. 진행 중이면 `kubectl -n system-upgrade delete job <apply-…>` — pod가 종료된다. upgrade 컨테이너가 바이너리를 복사하는 몇 초 사이에 끊으면 k3s 바이너리가 깨질 수 있으니
-   `-c upgrade` 로그에 `Deploying new k3s binary`가 보이면 `K3s binary has been replaced successfully`까지 기다렸다가 지운다.
-3. `kubectl uncordon <node>`.
-4. 다시 켤 때는 §실패 시 복구 절차 4(라벨 제거). Plan 자체를 없애려면 kustomization `resources`에서 빼는 PR(Argo `Prune=confirm` — 운영자 confirm 필요).
+1. **먼저 로그**: `kubectl -n system-upgrade logs <apply-…> -c upgrade`. `Deploying new k3s binary`가 보이면 `K3s binary has been replaced successfully`(수 초)까지 기다린다 —
+   복사 중에 끊기면 `/usr/local/bin/k3s`가 깨질 수 있다. prepare/cordon 단계이거나 upgrade 컨테이너가 아직 시작 전이면 바로 2로.
+2. `kubectl label node <node> plan.upgrade.cattle.io/<plan>=disabled --overwrite` — 그 노드에 대한 Plan을 멈춘다(두 노드 모두 = Plan 전체 정지). 이 시점부터 SUC가 진행 중 Job을
+   스스로 지울 수 있다.
+3. Job이 남아 있으면 `kubectl -n system-upgrade delete job <apply-…>` — pod가 종료된다(SUC가 이미 지웠으면 NotFound — 정상).
+4. `kubectl uncordon <node>`.
+5. **사후 확인**(노드에서, cloudflared SSH): `/usr/local/bin/k3s -v`가 실행되고 버전이 기대값(교체 전 또는 교체 후)인지, `sha256sum /usr/local/bin/k3s`가 그 버전 릴리스의
+   `sha256sum-arm64.txt`(github.com/k3s-io/k3s/releases) 값과 같은지 대조한다. 다르면 bootstrap §7 번들 복원.
+6. 다시 켤 때는 §실패 시 복구 절차 4(라벨 제거). Plan 자체를 없애려면 kustomization `resources`에서 빼는 PR(Argo `Prune=confirm` — 운영자 confirm 필요).
 
 ## 수동 트리거 · 버전 고정 · 일시 정지
 
@@ -129,7 +139,8 @@ kubectl apply --server-side --field-manager=operator-bootstrap -f "$REPO/platfor
 kubectl wait --for=condition=Established crd/plans.upgrade.cattle.io --timeout=60s
 kubectl apply --server-side --field-manager=operator-bootstrap -k "$REPO/platform/system-upgrade"
 kubectl -n system-upgrade rollout status deploy/system-upgrade-controller --timeout=120s
-# 15분 안에 LATEST가 채널 버전, RESOLVED가 True. (-o wide의 VERSION 열은 .spec.version이라 채널 Plan에서는 늘 비어 있다 — 해석 버전은 .status.latestVersion)
+# 15분 안에 LATEST가 채널 버전, RESOLVED가 True. (-o wide의 VERSION 열은 .spec.version이라 `version:` 고정 모드에서만 채워지고 채널 Plan에서는 늘 비어 있다 — 해석 버전은 .status.latestVersion)
+# LATEST는 v1.36.N-k3s1 표기(SUC가 `+`를 `-`로 바꿔 저장) — `kubectl get nodes`의 v1.36.N+k3s1과 같은 버전이다(불일치 아님, §업그레이드 창 1).
 kubectl -n system-upgrade get plans -o custom-columns=NAME:.metadata.name,LATEST:.status.latestVersion,RESOLVED:'.status.conditions[?(@.type=="LatestResolved")].status'
 kubectl -n system-upgrade logs deploy/system-upgrade-controller --tail=50   # 'read-only file system' 없음(controller-patch.yaml)
 ```
@@ -145,7 +156,8 @@ kubectl -n system-upgrade get deploy,plans
 
 ```bash
 kubectl get nodes -o wide                                   # 2 Ready · VERSION 같음 · SchedulingDisabled 없음
-kubectl -n system-upgrade get plans -o wide                 # COMPLETE True, MESSAGE 비어 있음, APPLYING 비어 있음(남아 있으면 §실패 시 — 창 우회 상태)
+kubectl -n system-upgrade get plans -o wide                 # COMPLETE True, MESSAGE 비어 있음, APPLYING 비어 있음(남아 있으면 §실패 시 — 창 우회 상태). VERSION 열은 .spec.version이라 늘 비어 있다
+kubectl -n system-upgrade get plans -o custom-columns=NAME:.metadata.name,LATEST:.status.latestVersion,RESOLVED:'.status.conditions[?(@.type=="LatestResolved")].status'   # LATEST = 노드 VERSION의 -k3s1 표기(②)
 kubectl -n system-upgrade get jobs,pods                     # Failed 0(완료 15분 뒤에는 없어진다)
 kubectl -n system-upgrade get events --sort-by=.lastTimestamp | tail -n 20   # JobFailed 없음
 ```
@@ -157,4 +169,4 @@ kubectl -n system-upgrade get events --sort-by=.lastTimestamp | tail -n 20   # J
 | SUC 릴리스 | v0.20.1 (2026-07-22) | `sha256sum crd.yaml` = `68a2e6b7…c656`; `diff <(curl -sL …/system-upgrade-controller.yaml \| sed '1,7d') <(grep -v '^#' controller.yaml)` → 이미지 2줄만 |
 | `rancher/system-upgrade-controller:v0.20.1` | `@sha256:aaf4dbf6…153a` | Docker Hub registry v2 manifest list(OCI index) — 본문 sha256 = Docker-Content-Digest; amd64·arm64·arm/v7 |
 | `rancher/kubectl:v1.36.2` | `@sha256:06c7a7a9…5fbe` | 같은 방법 — amd64·arm64. 업스트림 기본 v1.30.3은 클러스터 1.36과 kubectl skew 밖이라 교체 |
-| `rancher/k3s-upgrade`(Plan) | 태그·digest 없음(채널이 정한다) | validate 4b WARN 4줄이 예상값. 참고: `v1.36.4-k3s1` = `@sha256:7c079385…2ef9`(amd64·arm64·arm/v7) |
+| `rancher/k3s-upgrade`(Plan) | 태그·digest 없음(채널이 정한다) | validate 4b WARN 4줄이 예상값 · Renovate digest 핀 PR 제외(renovate.json packageRule, VD T116). 참고: `v1.36.4-k3s1` = `@sha256:7c079385…2ef9`(amd64·arm64·arm/v7) |

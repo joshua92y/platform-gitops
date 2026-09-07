@@ -24,6 +24,7 @@
 #     금지하는 이유와 같다), 릴리스 다운로드 URL은 태그 기반이라 재업로드로 내용이 바뀔 수 있다.
 #   - Namespace 문서를 빼야 하는데 원격 참조로는 원본 파일 기준 검사(validate 5.0)를 통과할 수 없다.
 #   - 복사본이어야 Renovate(kubernetes 매니저, renovate.json)가 `image:` 줄의 태그·digest를 갱신하고, 리뷰어가 커밋에서 내용을 본다(계약 §이미지·승격의 취지).
+#     예외: Plan의 태그 없는 `rancher/k3s-upgrade` 4줄은 renovate.json packageRule로 digest 핀 PR에서 제외한다(아래 이미지 항목).
 #   출처·대조(2026-09-07): https://github.com/rancher/system-upgrade-controller/releases/download/v0.20.1/{crd.yaml,system-upgrade-controller.yaml}
 #     crd.yaml                       sha256 68a2e6b786dc3a3d47f0ac557b06833d2f773d801f482f43d37c7e819309c656 — **원본 그대로**(`sha256sum crd.yaml`이 이 값)
 #     system-upgrade-controller.yaml sha256 11ba712de8b887b937e521a7278bcd37ba06975c581646903fd8ae8e296f3bfc — controller.yaml = 첫 문서(Namespace, 1–7행) 제거
@@ -39,6 +40,10 @@
 #     (container.go WithLatestTag — 이름만 있을 때만 붙이므로 digest를 두면 채널이 무력화되고, `@sha256` 뒤에 태그를 붙일 수도 없다). validate 4b는 이 4줄
 #     (Plan 2개 × prepare·upgrade)에 **경고(WARN, FAIL 아님)**를 낸다 — 이 예외의 근거가 이 주석이다. 이미지 자체는 k3s-io/k3s-upgrade Dockerfile의 verify
 #     단계가 k3s 릴리스 sha256sum 파일로 바이너리를 검증해 만든다. digest 고정이 필요하면 `channel`을 빼고 `version: vX.Y.Z+k3s1`으로 바꾼다(README §수동 트리거).
+#     Renovate가 이 4줄에 digest 핀 PR을 내지 않도록 renovate.json packageRule(`rancher/k3s-upgrade` → pinDigests false)로 제외했다 — config:best-practices의
+#     docker:pinDigests가 `rancher/k3s-upgrade@sha256:<latest>` 핀 PR을 반복 내고, 머지되면 IsNameOnly가 false라 채널 태그가 붙지 않아 Plan이 채널과 무관한 latest
+#     이미지를 돌린다(VD: T116 Renovate dry-run). 계약 network-policy.md 139행("보완 통제: … 이미지 digest 핀")은 이 채널 Plan과 양립하지 않는다 — 구현은 tasks.md
+#     T037 문면(`channel` + `image: rancher/k3s-upgrade`)을 따르고, 계약 행 정정은 /speckit-converge 항목이다.
 #
 # CRD 삭제 보호: 계약 §Application 규약(삭제 보호 — 오퍼레이터 CRD에 `argocd.argoproj.io/sync-options: Delete=false,Prune=false`)을 SUC CRD에도 적용한다(아래 patches).
 apiVersion: kustomize.config.k8s.io/v1beta1
@@ -50,7 +55,7 @@ resources:
   - plan-k3s-server.yaml
   - plan-k3s-agent.yaml
 patches:
-  # 컨트롤러 Deployment: requests 30Mi · nodeSelector role=platform · securityContext — 근거는 controller-patch.yaml 머리 주석
+  # 컨트롤러 Deployment: requests 30Mi · nodeSelector role=platform · securityContext · tolerations(업스트림 5 + unschedulable) — 근거는 controller-patch.yaml 머리 주석
   - path: controller-patch.yaml
   # CRD 삭제 보호(위 주석). crd.yaml 원본은 건드리지 않고 어노테이션만 더한다.
   - target:

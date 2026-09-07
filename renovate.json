@@ -41,6 +41,12 @@
       "matchDatasources": ["docker"],
       "matchPackageNames": ["ghcr.io/joshua92y/**"],
       "enabled": false
+    },
+    {
+      "description": "Plan 이미지 rancher/k3s-upgrade(platform/system-upgrade/plan-*.yaml의 prepare·upgrade 4줄)는 태그·digest 없이 이름만 둔다 — SUC가 채널이 고른 버전을 태그로 붙인다(container.go IsNameOnly/WithLatestTag). config:best-practices의 docker:pinDigests가 여기에 rancher/k3s-upgrade@sha256:<latest> 핀 PR을 반복 내고, 머지되면 이름만이 아니게 되어 채널 태그가 붙지 않아 Plan이 채널과 무관한 latest 이미지를 돌린다. 그래서 이 패키지만 digest 핀을 끈다(태그가 없어 버전 갱신 PR도 나지 않는다). VD: T116 Renovate dry-run.",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["rancher/k3s-upgrade"],
+      "pinDigests": false
     }
   ]
 }
