@@ -27,8 +27,8 @@ system-upgrade-controller(SUC) v0.20.1과 Plan 2개(`k3s-server` = 노드 A, `k3
 
 1. **채널 해석**: 컨트롤러가 `https://update.k3s.io/v1-release/channels/v1.36`을 15분마다 조회(302 → `v1.36.N+k3s1`, 이미지 태그는 `v1.36.N-k3s1`). Plan `status.latestVersion`이 바뀌면
    해시가 바뀌고, 라벨 `plan.upgrade.cattle.io/<plan>=<해시>`가 없는 노드가 대상이 된다.
-2. **창 판정**: 일요일 03:00–05:00 KST 안에서만 Job을 만든다. 두 Plan의 Job은 **동시에** 생긴다(순서는 아래 prepare가 맡는다). 창 밖에서는 아무 일도 없다(이벤트 `Waiting`);
-   창 안에서 시작한 Job은 05:00을 넘겨도 끝까지 간다.
+2. **창 판정**: 일요일 03:00–05:00 KST 안에서만 Job을 만든다. 두 Plan의 Job은 **동시에** 생긴다(순서는 아래 prepare가 맡는다). 창 밖에서는 Job을 만들지 않는다(이벤트 `Waiting`) —
+   **단, `status.applying`이 비어 있을 때만 창을 본다**(§실패 시의 "창 우회"). 창 안에서 시작한 Job은 05:00을 넘겨도 끝까지 간다.
 3. **노드 A `apply-k3s-server-on-joshtech-api-with-<해시>`** (hostPID·hostIPC·hostNetwork, `/host` = 호스트 루트):
    - init `prepare` — `chroot /host /usr/local/bin/platform-backup.sh --pre-upgrade`: K3s SQLite 번들(+token·cred·tls) → age → OCI 버킷 `joshuatech-backup-platform` `k3s/`,
      Vault Raft 스냅샷 → `vault/`. **exit≠0이면 여기서 멈춘다**(cordon도 upgrade도 실행되지 않음). Job은 backoff로 pod를 다시 만들어 백업부터 재시도하고,
@@ -58,25 +58,52 @@ system-upgrade-controller(SUC) v0.20.1과 Plan 2개(`k3s-server` = 노드 A, `k3
 
 | 어디서 실패 | 노드 상태 | 보이는 것 | 복구 |
 |---|---|---|---|
-| `prepare`(백업) | cordon 전 — 스케줄 가능 그대로 | pod `Init:Error`, `kubectl -n system-upgrade logs <pod> -c prepare`에 `pre-upgrade gate: FAIL`; deadline 뒤 Job Failed, Plan `Complete=False` reason `JobFailed`, 이벤트 `JobFailed` | 백업 원인(age 공개키·instance principal·버킷·Vault 접근) 수정 → §수동 트리거로 재실행 |
-| `upgrade`(바이너리 교체·재시작) | **cordon 유지**(`SchedulingDisabled`) | `-c upgrade` 로그, 노드 A `journalctl -u k3s` | 원인 수정 → 재트리거(성공 Job이 uncordon). Plan을 지웠다면 `kubectl uncordon <node>` 직접 |
-| 다운그레이드 시도 | cordon 유지 | `Error: Current … is higher than …` | k3s-upgrade는 다운그레이드를 거부한다 — 되돌리기는 런북 `rollback`(T106)·bootstrap §7 번들 복원뿐 |
-| agent prepare 대기 초과(서버 실패) | 노드 B는 cordon 전 | 3600초 뒤 Job Failed | 서버 Plan을 먼저 고친다; 서버 Job 성공 뒤 agent Plan 재트리거 |
+| `prepare`(백업) | cordon 전 — 스케줄 가능 그대로 | pod `Init:Error`, `kubectl -n system-upgrade logs <pod> -c prepare`에 `pre-upgrade gate: FAIL`; deadline 뒤 Job Failed, Plan `Complete=False` reason `JobFailed`, 이벤트 `JobFailed` | 아래 **복구 절차** 1(disabled 라벨) → 3(백업 원인: age 공개키·instance principal·버킷·Vault 접근) → 4 |
+| `upgrade`(바이너리 교체·재시작) | **cordon 유지**(`SchedulingDisabled`) | `-c upgrade` 로그, 노드 A `journalctl -u k3s` | 복구 절차 1 → 2(uncordon) → 3 → 4 |
+| 다운그레이드 시도 | cordon 유지 | `Error: Current … is higher than …` | k3s-upgrade는 다운그레이드를 거부한다 — 복구 절차 1·2 뒤 채널/버전을 현재 이상으로 바꾸는 PR; 되돌리기는 런북 `rollback`(T106)·bootstrap §7 번들 복원뿐 |
+| agent prepare 대기 초과(서버 실패) | 노드 B는 cordon 전 | 3600초 뒤 Job Failed | 서버 Plan을 먼저 복구(1~4); 노드 B도 `k3s-agent`에 대해 같은 절차 |
 
-Job이 Failed로 끝난 Plan은 **갱신될 때까지 새 Job을 만들지 않는다**(SUC `jobActiveDeadlineSecs` 문서·K3s 문서 §Downgrade Prevention의 복구 방법). 갱신 = 아래 §수동 트리거.
+**실패한 Plan은 창(window)을 우회한다 — SUC v0.20.1 소스로 확인한 사실**: 실패 처리(`pkg/upgrade/handle_batch.go` 86–101행)는 `status.applying`을 비우지 않고, 노드에
+해시 라벨이 없어 같은 노드가 다시 선택되므로(`pkg/upgrade/plan.go` SelectConcurrentNodes 155–178행: applying 노드 우선) `applying=[노드]`가 남는다. 창 검사는
+`len(applying)==0`일 때만 한다(`pkg/upgrade/handle_upgrade.go` 158–167행). 따라서 실패 뒤에는 **Plan의 resourceVersion이 바뀌는 순간 — retrigger PR 머지, 채널이 새 패치를 해석,
+어떤 metadata 변경, 컨트롤러 pod 재시작 — 창 밖(Grafana mute 밖)에서 즉시** 백업→cordon→k3s 재시작 Job이 생긴다. 그 전까지(같은 resourceVersion)는 새 Job이 생기지 않는다
+(wrangler `UniqueApplyForResourceVersion`).
+
+**복구 절차 — (a) disabled 라벨로 확정**. 근거: 한 명령으로 즉시 실행 경로를 닫고, 노드 라벨은 gitops 관리 밖(`role=platform`처럼 설치 시 부여)이며 SUC README가 문서화한 수단이다.
+대안 (b) Plan을 kustomization에서 빼는 PR(`Prune=confirm`) → 재추가 PR은 status를 초기화해 창을 지키지만 PR 2회·confirm으로 느리고 그동안 cordon이 남는다.
+**라이브 미검증 — VD: T041 첫 창 뒤 실측**(런북 §6).
+
+1. **즉시**: `kubectl label node <node> plan.upgrade.cattle.io/<plan>=disabled --overwrite` → 선택 노드 0 → `applying=nil`(`handle_upgrade.go` 179–186행; 노드 이벤트가 Plan을
+   다시 평가한다 — `handle_core.go` 12행). 확인: `kubectl -n system-upgrade get plan <plan> -o jsonpath='{.status.applying}'`가 비어 있다.
+2. cordon이 남았으면 `kubectl uncordon <node>`(disabled 상태에서는 성공 Job이 없어 자동 해제되지 않는다).
+3. 원인 수정(로그는 15분 TTL 안에, 또는 Loki). 실패한 Job이 아직 있으면 `kubectl -n system-upgrade delete job <apply-…>`(같은 이름의 Job이 남아 있으면 재실행이 no-op이 된다).
+4. 준비되면 `kubectl label node <node> plan.upgrade.cattle.io/<plan>-`(라벨 제거) → 노드가 해시 라벨 없이 다시 대상이 되고, 이때는 `applying`이 비어 있으므로 **창 검사를 거쳐
+   다음 창에** 돈다. 같은 버전이면 `retrigger` PR은 필요 없다(해시 라벨이 없으므로).
+
+## 비상 정지 · 즉시 uncordon(운영자, 라이브)
+
+순서가 중요하다 — Job을 먼저 지우면 Plan이 같은 Job을 다시 만들 수 있다.
+
+1. `kubectl label node <node> plan.upgrade.cattle.io/<plan>=disabled --overwrite` — 그 노드에 대한 Plan을 멈춘다(두 노드 모두 = Plan 전체 정지).
+2. 진행 중이면 `kubectl -n system-upgrade delete job <apply-…>` — pod가 종료된다. upgrade 컨테이너가 바이너리를 복사하는 몇 초 사이에 끊으면 k3s 바이너리가 깨질 수 있으니
+   `-c upgrade` 로그에 `Deploying new k3s binary`가 보이면 `K3s binary has been replaced successfully`까지 기다렸다가 지운다.
+3. `kubectl uncordon <node>`.
+4. 다시 켤 때는 §실패 시 복구 절차 4(라벨 제거). Plan 자체를 없애려면 kustomization `resources`에서 빼는 PR(Argo `Prune=confirm` — 운영자 confirm 필요).
 
 ## 수동 트리거 · 버전 고정 · 일시 정지
 
 전부 **PR로만**(main = 클러스터 정본). 라이브 `kubectl edit plan`은 Argo selfHeal이 되돌린다. Plan 해시는 spec 전체가 아니라
 `latestVersion + serviceAccountName + upgrade.cattle.io/digest 어노테이션이 가리키는 경로 + secrets`이므로(plan-k3s-server.yaml 주석), spec의 다른 필드를 고쳐도 재실행되지 않는다.
+**어느 방법이든 실패한 Plan(applying 잔존)에 쓰면 창 밖에서 즉시 실행된다 — 먼저 §실패 시 복구 절차 1.**
 
-- **재트리거(같은 버전)**: 해당 Plan의 어노테이션 `retrigger` 값을 바꾸는 PR(`"0"` → `"1"` …) → 해시가 바뀌어 다음 창에 Job이 생긴다. **VD**: T041 첫 창 뒤 한 번 실측.
-  대체(라이브, 운영자만): `kubectl label node <node> plan.upgrade.cattle.io/<plan>-` — 라벨을 지우면 노드가 다시 대상이 된다.
+- **재실행(성공한 같은 버전을 다시)**: 해당 Plan의 어노테이션 `retrigger` 값을 바꾸는 PR(`"0"` → `"1"` …) → 해시가 바뀌어 **다음 창에** Job이 생긴다(applying이 비어 있을 때).
+  **VD**: T041 첫 창 뒤 한 번 실측. 실패한 노드는 해시 라벨이 없으므로 retrigger 없이 disabled 라벨 제거만으로 다시 대상이 된다(§실패 시 4).
 - **즉시 실행(창 밖)**: `window` 블록을 임시로 제거하는 PR → 머지 즉시 Job 생성. 끝나면 되돌리는 PR. Grafana mute 창 밖이므로 알림이 난다.
 - **버전 고정**: `channel`을 지우고 `version: v1.36.N+k3s1`을 두면 채널 조회가 멈추고 그 버전만 대상(Plan 이미지 digest 고정의 대안 — kustomization 머리 주석).
   마이너 승격은 `channel`을 `v1.37`로 바꾸는 PR(마이너 건너뛰기 금지).
-- **노드 하나 제외**: 노드 라벨 `plan.upgrade.cattle.io/<plan>=disabled`(라이브, 운영자) — 컨트롤러가 그 노드를 건너뛴다(SUC README).
-- **일시 정지**: 두 Plan 파일을 kustomization `resources`에서 빼는 PR(Application `Prune=confirm`이라 Argo가 자동 삭제하지 않는다 — Plan 삭제는 운영자 confirm).
+- **노드 하나 제외 / 일시 정지**: 노드 라벨 `plan.upgrade.cattle.io/<plan>=disabled`(라이브, 운영자 — §비상 정지) — 컨트롤러가 그 노드를 건너뛴다(SUC README). 두 노드 모두 붙이면 Plan 전체 정지.
+- **Plan 제거**: 두 Plan 파일을 kustomization `resources`에서 빼는 PR(Application `Prune=confirm`이라 Argo가 자동 삭제하지 않는다 — Plan 삭제는 운영자 confirm). 재추가 PR로
+  돌아오면 status가 초기화돼 창을 지킨다.
 
 ## ① 네임스페이스 수동 생성 + PSA 라벨 (T041 전)
 
@@ -102,7 +129,8 @@ kubectl apply --server-side --field-manager=operator-bootstrap -f "$REPO/platfor
 kubectl wait --for=condition=Established crd/plans.upgrade.cattle.io --timeout=60s
 kubectl apply --server-side --field-manager=operator-bootstrap -k "$REPO/platform/system-upgrade"
 kubectl -n system-upgrade rollout status deploy/system-upgrade-controller --timeout=120s
-kubectl -n system-upgrade get plans -o wide      # 15분 안에 VERSION 열이 채널 버전으로 채워진다(LatestResolved)
+# 15분 안에 LATEST가 채널 버전, RESOLVED가 True. (-o wide의 VERSION 열은 .spec.version이라 채널 Plan에서는 늘 비어 있다 — 해석 버전은 .status.latestVersion)
+kubectl -n system-upgrade get plans -o custom-columns=NAME:.metadata.name,LATEST:.status.latestVersion,RESOLVED:'.status.conditions[?(@.type=="LatestResolved")].status'
 kubectl -n system-upgrade logs deploy/system-upgrade-controller --tail=50   # 'read-only file system' 없음(controller-patch.yaml)
 ```
 
@@ -117,7 +145,7 @@ kubectl -n system-upgrade get deploy,plans
 
 ```bash
 kubectl get nodes -o wide                                   # 2 Ready · VERSION 같음 · SchedulingDisabled 없음
-kubectl -n system-upgrade get plans -o wide                 # COMPLETE True, MESSAGE 비어 있음
+kubectl -n system-upgrade get plans -o wide                 # COMPLETE True, MESSAGE 비어 있음, APPLYING 비어 있음(남아 있으면 §실패 시 — 창 우회 상태)
 kubectl -n system-upgrade get jobs,pods                     # Failed 0(완료 15분 뒤에는 없어진다)
 kubectl -n system-upgrade get events --sort-by=.lastTimestamp | tail -n 20   # JobFailed 없음
 ```
