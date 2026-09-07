@@ -1,0 +1,22 @@
+# repo-server: research D10 req 128Mi / lim 512Mi. GOMEMLIMIT 460MiB(≈90%)는 repo-server 프로세스의 Go 힙에만 걸린다 —
+# kustomize/helm 자식 프로세스는 cgroup limit(512Mi)에는 포함되지만 GOMEMLIMIT 밖이므로 한도를 넉넉히 쓰지 않는다.
+# CPU 100m: 매니페스트 렌더링(kustomize · helm)이 버스트성이라 controller 와 같은 값. initContainer `copyutil` 은 짧게 돌고 끝나므로 두지 않는다.
+# metadata.namespace 를 적지 않는다(kustomization.yaml "패치 원칙").
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: argocd-repo-server
+spec:
+  template:
+    spec:
+      containers:
+        - name: argocd-repo-server
+          env:
+            - name: GOMEMLIMIT
+              value: 460MiB
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 512Mi

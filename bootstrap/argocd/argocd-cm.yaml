@@ -1,0 +1,31 @@
+# argocd-cm 패치(strategic merge — `data` 맵은 키 단위로 병합된다).
+# install.yaml@e258ee23 의 argocd-cm 에 이미 들어 있는 기본값 `resource.exclusions`(Endpoints · EndpointSlice · Lease · TokenReview 류 ·
+# CertificateSigningRequest · cert-manager CertificateRequest · Cilium · Kyverno)와 `resource.customizations.ignoreResourceUpdates.*` 는
+# 여기서 건드리지 않으므로 그대로 남는다(계약 T040 문면 "resource.exclusions 유지" · research 함정 "덮어쓰지 말고 추가만").
+# 아직 넣지 않는 것: url · oidc.config · admin.enabled(SSO 검증 뒤) · kustomize.buildOptions — 뒤 태스크(T043 · SSO).
+# metadata.namespace 를 적지 않는다(kustomization.yaml 머리 주석 "패치 원칙").
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  # Git 폴링 주기 3분 — GitHub webhook 은 Cloudflare Access 뒤라 SP-2 검토(research D12). public repo · 저빈도 커밋이라 허용.
+  timeout.reconciliation: 180s
+  # 리소스 추적 = annotation. 3.0+ 기본값이지만 명시한다: 업스트림 기본값이 바뀌어도 Helm 차트 컴포넌트(Vault · Authentik · OpenFGA · Reloader)의
+  # `app.kubernetes.io/instance` 라벨과 충돌하는 label 추적으로 돌아가지 않게 고정(research 함정 "3.0부터 annotation 기반 기본값").
+  application.resourceTrackingMethod: annotation
+  # app-of-apps 헬스 전파 — Application CRD 의 내장 헬스 평가가 1.8에서 제거되어 이 Lua 가 없으면 root 의 sync-wave 가 child Application 의
+  # Healthy 를 기다리지 않는다(research D4 · Argo CD operator-manual/health 표준 스니펫). status.health 가 없으면 Progressing.
+  resource.customizations.health.argoproj.io_Application: |
+    hs = {}
+    hs.status = "Progressing"
+    hs.message = ""
+    if obj.status ~= nil then
+      if obj.status.health ~= nil then
+        hs.status = obj.status.health.status
+        if obj.status.health.message ~= nil then
+          hs.message = obj.status.health.message
+        end
+      end
+    end
+    return hs
