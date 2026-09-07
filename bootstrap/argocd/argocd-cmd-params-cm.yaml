@@ -1,0 +1,18 @@
+# argocd-cmd-params-cm 패치(strategic merge). install.yaml@e258ee23 의 이 ConfigMap 은 data 가 비어 있다.
+# 값은 전부 문자열(따옴표) — ConfigMap data 규칙. metadata.namespace 를 적지 않는다(kustomization.yaml "패치 원칙").
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cmd-params-cm
+data:
+  # TLS 종료는 Traefik(T043 Ingress `argo.joshuatech.dev`)이 한다 — 서버 TLS off(research D11). T043 전 접근은 port-forward http(README ⑥).
+  server.insecure: "true"
+  # Server-Side Diff 전역 — SSA(모든 Application 의 ServerSideApply=true, validate 2)와 짝. 다른 field manager 가 넣은 필드(ESO Merge 키 ·
+  # 컨트롤러 default)로 생기는 가짜 OutOfSync 를 없앤다(research D3 · plan A11). 3.1+ Stable.
+  controller.diff.server.side: "true"
+  # 2노드 소형 동시성(research D10): 업스트림 기본값보다 낮춰 메모리 스파이크를 시간축으로 분산한다(대신 sync 가 느려진다 — ≈20–30 Application 규모에서 허용).
+  # 운영 1주 뒤 `kubectl top` 으로 재조정.
+  controller.status.processors: "10"
+  controller.operation.processors: "5"
+  controller.kubectl.parallelism.limit: "5"
+  reposerver.parallelism.limit: "2"

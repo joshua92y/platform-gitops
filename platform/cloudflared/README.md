@@ -196,11 +196,17 @@ clusters:
 
 ## ⑦ 세션 종료
 
-```bash
-cloudflared access logout      # 캐시된 Access 토큰 제거(모든 운영자 세션 종료 시 필수)
+`cloudflared access tcp` 프로세스 종료 + `%USERPROFILE%\.cloudflared\`(Linux `~/.cloudflared/`)의 `*-token`·`*-org-token` 캐시 파일 삭제.
+`cloudflared access logout` 하위 명령은 **존재하지 않는다**(2026-09-07 확인 — 2026.8.3 `cloudflared access --help`의 하위 명령은
+login · curl · token · tcp/rdp/ssh/smb · ssh-config · ssh-gen 뿐).
+
+```powershell
+# 워크스테이션(PowerShell): 리스너 종료 → 토큰 캐시만 삭제(cert.pem 같은 터널 자격은 건드리지 않는다)
+Get-Process cloudflared -ErrorAction SilentlyContinue | Stop-Process
+Remove-Item "$env:USERPROFILE\.cloudflared\*-token*", "$env:USERPROFILE\.cloudflared\*-org-token*" -ErrorAction SilentlyContinue
 ```
 
-`cloudflared access tcp` 프로세스도 함께 종료한다. passphrase 키를 올렸으면 `ssh-add -D`.
+passphrase 키를 올렸으면 `ssh-add -D`.
 
 ## ⑧ 임시 22 NSG 규칙 제거 (T039의 마지막 단계)
 
