@@ -1,0 +1,63 @@
+# clusters/oci-k3s/apps/platform-argocd.yaml — Argo CD 자기 관리 Application (T041 PR-B1)
+#
+# 역할: root(app-of-apps)가 이 파일을 읽어 child Application `platform-argocd`를 만들고, 그 Application 이
+#   `bootstrap/argocd`(= Argo CD 본체 + AppProject 5종 + Argo CRD 어노테이션 패치)를 서버 사이드 적용으로 **인수**한다.
+#   운영자가 T040·T041 PR-A 에서 `kubectl apply --server-side --field-manager=operator-bootstrap -k bootstrap/argocd` 로
+#   이미 넣어 둔 객체들의 **필드 소유권만** `operator-bootstrap` → `argocd-controller` 로 넘어간다.
+#   워크로드를 새로 만들거나 다시 굴리지 않는다(렌더 결과가 같으면 no-op).
+#   근거: gitops-engine 의 SSA 경로는 항상 force conflicts 다 — `pkg/utils/kube/resource_ops.go:469`
+#   `o.ForceConflicts = serverSideApply`. 그래서 필드 소유권 충돌이 오류로 표면화되지 않고 그대로 이전된다.
+#   운영자 확인 기준값(절차는 ./README.md): ns argocd 파드의 AGE·RESTARTS 불변 · 이 Application Synced/Healthy ·
+#   port-forward admin 로그인 유지(런타임에 채워지는 Secret 이 보존됐다는 뜻).
+#
+# source.path = `bootstrap/argocd`(`platform/argocd` 가 아니다):
+#   Argo CD 본체 매니페스트의 정본은 bootstrap 쪽 kustomization 하나뿐이다. `platform/argocd/` 에 같은 원격 base 를
+#   한 번 더 두면 install.yaml 을 이중으로 빌드하고 두 정의가 갈라질 수 있다.
+#   validate 검사 7.1 은 컴포넌트 `argocd` 에 한해 `platform/argocd` 와 `bootstrap/argocd` 를 모두 인정한다
+#   (tests/validate.sh 의 7.1 WAVE-path 분기). `platform/argocd/` 는 계약 §디렉터리의 자리표시로 남는다.
+#
+# sync-wave: 값의 정본은 계약 contracts/gitops-repo.md §sync-wave 단일 표(코드 사본은 tests/validate.sh 의 WAVE_TABLE)다.
+#   아래 어노테이션 값은 그 표에서 기계적으로 읽어 넣었고, 이 저장소의 어떤 문서·주석에도 숫자를 다시 적지 않는다.
+#   destination.namespace 도 같은 표의 3열에서 읽었다. 대조는 사람이 아니라 검사 7.1 이 한다.
+#
+# manifest-generate-paths: PR-A 이후 `bootstrap/argocd` 는 `../../clusters/oci-k3s/projects` 를 base 로 포함한다.
+#   경로를 `.` 하나로 두면 AppProject 만 바뀐 커밋에서 매니페스트 캐시가 무효화되지 않아 변경이 반영되지 않는다.
+#   상대 경로는 source.path 기준으로 합쳐지므로 `.` = bootstrap/argocd, `../../clusters/oci-k3s/projects` = 그 디렉터리다.
+#
+# finalizer 없음(의도적 — 나머지 플랫폼 Application 과 다른 점):
+#   `resources-finalizer.argocd.argoproj.io` 를 달면 이 Application 을 지울 때 Argo CD 자신(Deployment·StatefulSet·
+#   Service·CRD)과 AppProject 5종이 cascade 로 함께 지워진다. 그러면 되돌릴 컨트롤러조차 남지 않는다.
+#   `Delete=confirm` 승인 한 겹만으로 비가역 사고가 되는 경로라 finalizer 를 두지 않는다
+#   (계약 §삭제 보호의 보강 — Argo CD CRD 3종에는 bootstrap/argocd/patch-crd-sync-options.yaml 이
+#   `Delete=false,Prune=false` 를 따로 붙인다). 되돌리기 절차는 ./README.md.
+#
+# syncPolicy: 계약 §Application 규약의 플랫폼 표준 그대로. `CreateNamespace=true` 는 ns argocd 가 이미 있어 실질 no-op 이고,
+#   Namespace 객체의 선언 정본은 T041 PR-B2 의 platform/policies/ 다(이 Application 은 ns 를 리소스로 추적하지 않는다).
+#   `SkipDryRunOnMissingResource=true` 는 이 소스가 Argo CD CRD 자체를 설치하기 때문에 필요하다.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-argocd
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-20"
+    argocd.argoproj.io/manifest-generate-paths: ".;../../clusters/oci-k3s/projects"
+spec:
+  project: platform
+  source:
+    repoURL: https://github.com/joshua92y/platform-gitops.git
+    targetRevision: main
+    path: bootstrap/argocd
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+      - CreateNamespace=true
+      - Prune=confirm
+      - Delete=confirm
+      - SkipDryRunOnMissingResource=true
