@@ -1,6 +1,17 @@
-# platform/argocd/ — Argo CD 자기 관리 Application(bootstrap/argocd/ 를 소스로)
-# sync-wave: 계약 gitops-repo.md §sync-wave 단일 표 참조(wave 번호는 표에만 기재 — 중복 금지).
-# 빈 뼈대(T003) — 실제 매니페스트는 T031+에서 작성한다.
+# platform/argocd/ — 계약 gitops-repo.md §디렉터리의 자리표시(리소스 0). **여기에 매니페스트를 두지 않는다.**
+#
+# 자기 관리 Application `platform-argocd`(../../clusters/oci-k3s/apps/platform-argocd.yaml, T041 PR-B1)의
+# source.path 는 이 디렉터리가 아니라 `bootstrap/argocd` 다:
+#   - Argo CD 본체 매니페스트의 정본은 bootstrap 쪽 kustomization 하나뿐이다. 여기에 같은 원격 base(install.yaml)를
+#     한 번 더 두면 렌더를 이중으로 돌리게 되고 두 정의가 갈라질 수 있다.
+#   - PR-A 이후 `bootstrap/argocd` 는 `../../clusters/oci-k3s/projects` 도 base 로 포함하므로, 그 소스를 그대로 인수해야
+#     Argo CD 본체와 AppProject 5종의 소유자가 하나로 모인다.
+#   - validate 검사 7.1 은 컴포넌트 `argocd` 에 한해 source.path 로 `platform/argocd` 와 `bootstrap/argocd` 를 모두
+#     인정한다(tests/validate.sh 의 7.1 WAVE-path 분기). 그래서 이 자리표시를 지우지 않아도 검사 7.2(§sync-wave 단일 표에
+#     없는 platform/<component>/ 금지)와 계약 §디렉터리를 동시에 만족한다.
+#
+# sync-wave 값의 정본은 계약 §sync-wave 단일 표뿐이다 — 이 파일에도, 다른 어떤 문서에도 숫자를 적지 않는다.
+# 이 디렉터리를 실제로 쓰게 되는 경우(예: Argo CD 부가 리소스 분리)에는 `platform-argocd` 의 source 를 함께 옮겨야 한다.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources: []
