@@ -1,0 +1,20 @@
+# platform/policies/tests/ — 자격이 필요한 검사를 클러스터 안에서 도는 Job 3종
+#
+# **독립 kustomization이다.** 상위 `platform/policies/kustomization.yaml`은 이 디렉터리를 참조하지 않고,
+# 이 디렉터리를 읽는 Argo CD Application도 아직 없다(설계 D3-A). 이유와 선행 조건은 README.md에 있다.
+#
+# 그래서 이 kustomization의 렌더 결과는 `platform-policies`(정책 123객체)에 섞이지 않는다 —
+# 정책 렌더 검산과 이 디렉터리의 검산은 서로 독립이다.
+#
+# `namespace: jt-dev` 트랜스포머를 두는 이유: 여기 객체는 전부 네임스페이스 객체이고 목적지가 하나뿐이다
+# (계약 hostnames-and-access.md :71 — dev scope 자격은 `vault-dev` store의 `conditions.namespaces`가
+#  `jt-dev` 하나라서 다른 ns에서는 받을 수 없다). 매니페스트에도 `metadata.namespace`를 함께 적어 두었다.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: jt-dev
+resources:
+  - configmap-assert-config.yaml
+  - externalsecret-assert-env.yaml
+  - job-data-assert.yaml
+  - job-kafka-assert.yaml
+  - job-authz-assert.yaml
