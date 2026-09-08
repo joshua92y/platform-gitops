@@ -7,7 +7,7 @@
 #     :110 vault · :112 argocd · :113 data · :114 monitoring · :116 system-upgrade
 #   allow-egress-dns-1111 1장 — :109 cert-manager → 1.1.1.1 53(UDP·TCP)
 #   allow-egress-kubelet   1장 — :115 monitoring → 노드 A·B 10250
-#   allow-egress-tunnel    1장 — :117 cloudflared → 외부 7844 · 443
+#   allow-egress-tunnel    1장 — :117 cloudflared → 외부 7844(UDP·TCP) · 443(TCP)
 #   allow-egress-ssh-nodes 1장 — :118 노드 A 22 + :119 노드 B 22(한 정책 두 목적지)
 #   = 9 + 1 + 1 + 1 + 1 = 13장.
 #
@@ -214,14 +214,17 @@ spec:
 # =============================================================================
 # allow-egress-tunnel × 1 — :117 cloudflared → 외부 7844 · 443(Cloudflare edge 터널)
 #
-#   § 계약 공백(converge 인계): 계약 :117의 포트 열은 `7844 · 443`만 적고 프로토콜을 적지 않는다.
-#     NetworkPolicy `ports[].protocol`의 기본값은 TCP이므로 문면 그대로 옮기면 TCP 7844 + TCP 443이 된다.
-#     그런데 T039 실측(platform/cloudflared/README.md:270-271, deployment.yaml:9)은 커넥터 기본 프로토콜이
-#     QUIC = **UDP 7844**이고, UDP가 막히면 조용히 http2(TCP 7844)로 폴백한다고 기록한다.
-#     즉 이 정책만으로 터널은 살아 있지만 QUIC은 쓰이지 않는다(연결 특성·성능 차이).
-#     UDP 7844 추가는 계약 행에 없는 프로토콜을 더하는 것이라 T041 범위 밖이다(계약 :152 추가 허용 규칙 금지).
-#     계약 :117을 "UDP 7844 + TCP 7844 + TCP 443"으로 정정하면 아래 ports에
-#     `{ protocol: UDP, port: 7844 }` 한 항목만 더한다(규칙·목적지는 그대로).
+#   § 프로토콜 판단(사용자 결정 2026-09-08, 옵션 A — 계약을 그대로 읽는다):
+#     이 매트릭스에는 **프로토콜 열이 없고**, 프로토콜은 용도 열에 적는 것이 이 계약의 관례다
+#     (바로 위 :109 행 "DNS-01 전파 확인(ipBlock 1.1.1.1/32, UDP·TCP)"가 같은 형식).
+#     :117의 용도 열은 "Cloudflare edge 터널(**QUIC**/HTTP2)"이고 QUIC은 정의상 UDP 위에서 돈다.
+#     따라서 UDP 7844 + TCP 7844 + TCP 443은 계약에 없는 경로를 더하는 것이 아니라 이 행을 구현한 것이다
+#     (계약 :152 "추가 허용 규칙 금지" 위반 아님). 설계 t041-design.md §5 매핑표도 같은 판독이다.
+#     반대 판독(프로토콜 미표기 → NetworkPolicy 기본값 TCP만)을 택하면 T039 실측
+#     (platform/cloudflared/README.md:270-271, deployment.yaml:9)대로 커넥터가 QUIC을 잃고 조용히
+#     http2(TCP 7844)로 폴백한다 — 터널은 살지만 유일한 접근 경로의 연결 특성이 바뀐다.
+#   converge(기말) 문서 개선 항목: 매트릭스에 프로토콜 열을 두거나 :117 포트 열을 `7844(UDP·TCP) · 443(TCP)`로 적어
+#     해석 여지를 없앤다(동작 변경 아님 — 이 파일과 동일한 규칙).
 #   443/TCP는 QUIC·http2가 모두 막힌 환경의 폴백 경로다(계약 용도 열 "QUIC/HTTP2").
 # =============================================================================
 ---
@@ -236,7 +239,7 @@ spec:
   policyTypes: [Egress]
   egress:
     - to: [{ ipBlock: { cidr: 0.0.0.0/0, except: [169.254.169.254/32, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16] } }]
-      ports: [{ protocol: TCP, port: 7844 }, { protocol: TCP, port: 443 }]
+      ports: [{ protocol: UDP, port: 7844 }, { protocol: TCP, port: 7844 }, { protocol: TCP, port: 443 }]
 # =============================================================================
 # allow-egress-ssh-nodes × 1 — :118 cloudflared → 노드 A 22 · :119 cloudflared → 노드 B 22
 #   `ssh-a.joshuatech.dev` · `ssh-b.joshuatech.dev` 터널의 도착 경로(운영자 유일 SSH 경로).
