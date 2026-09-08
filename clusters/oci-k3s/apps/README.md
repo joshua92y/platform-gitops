@@ -11,7 +11,29 @@ project: 플랫폼 컴포넌트 → `platform`, 앱 → `dev`·`prod`, `platform
 | `platform-argocd.yaml` | `platform-argocd` | `bootstrap/argocd` | T041 PR-B1. Argo CD 자기 관리 — **finalizer 없음** |
 | `platform-policies.yaml` | `platform-policies` | `platform/policies` | T041 PR-B2. **유일한 라이브 위험 구간**(argocd·cloudflared ns에 `default-deny`가 걸린다) · 적용은 운영자 수동 트리거 · **finalizer 없음** |
 
-나머지 플랫폼 Application과 앱 Application은 후속 PR에서 이 디렉터리에 추가된다.
+아래 17개는 T041 PR-C가 추가했다. wave·도착 네임스페이스는 계약 §sync-wave 단일 표에서 **읽어서** 넣으며 여기 옮겨 적지 않는다. 이 17개는 모두 finalizer(`resources-finalizer.argocd.argoproj.io`)를 갖는다 — finalizer를 빼는 것은 위 두 개뿐이다(cascade가 Argo CD 자신과 Namespace 14개를 지울 수 있어서).
+
+| 파일 | Application | source.path | 비고 |
+|---|---|---|---|
+| `platform-cert-manager.yaml` | `platform-cert-manager` | `platform/cert-manager` | 뼈대(`resources: []`) — 매니페스트는 T042 |
+| `platform-external-secrets.yaml` | `platform-external-secrets` | `platform/external-secrets` | 뼈대 — T045. ESO가 ExternalSecret CRD 제공자 |
+| `platform-vault.yaml` | `platform-vault` | `platform/vault` | 뼈대 — T044 |
+| `platform-cert-manager-issuers.yaml` | `platform-cert-manager-issuers` | `platform/cert-manager-issuers` | 뼈대 — T042. CRD 소비자라 `SkipDryRunOnMissingResource` 필수 |
+| `platform-cnpg.yaml` | `platform-cnpg` | `platform/cnpg` | 뼈대 — T052(오퍼레이터) |
+| `platform-system-upgrade.yaml` | `platform-system-upgrade` | `platform/system-upgrade` | **첫 배포**(T037 SUC 컨트롤러 + CRD + Plan 2) — 확인 기준값은 파일 머리 주석·VD-SUC |
+| `platform-cnpg-cluster.yaml` | `platform-cnpg-cluster` | `platform/cnpg-cluster` | 뼈대 — T053. `Cluster pg-main` = 삭제 보호 1순위 |
+| `platform-kafka.yaml` | `platform-kafka` | `platform/kafka` | 뼈대 — T055(Strimzi + `Kafka`/`KafkaNodePool`) |
+| `platform-dragonfly.yaml` | `platform-dragonfly` | `platform/dragonfly` | 뼈대 — T057(dev·prod) |
+| `platform-cnpg-databases.yaml` | `platform-cnpg-databases` | `platform/cnpg-databases` | 뼈대 — T054(`Database`·`DatabaseRole`) |
+| `platform-kafka-topics.yaml` | `platform-kafka-topics` | `platform/kafka-topics` | 뼈대 — T056(`KafkaTopic`·`KafkaUser`) |
+| `platform-authentik.yaml` | `platform-authentik` | `platform/authentik` | 뼈대 — T080 |
+| `platform-openfga.yaml` | `platform-openfga` | `platform/openfga` | 뼈대 — T082 |
+| `platform-monitoring.yaml` | `platform-monitoring` | `platform/monitoring` | 뼈대 — T098(Alloy). 이름은 `monitoring`(`observability` 금지) |
+| `platform-cloudflared.yaml` | `platform-cloudflared` | `platform/cloudflared` | T039 배포분 **인수**(소유권 이동) — 확인 기준값은 파일 머리 주석 |
+| `platform-reloader.yaml` | `platform-reloader` | `platform/reloader` | 뼈대 — T046(VD-9 scoped 모드) |
+| `platform-traefik.yaml` | `platform-traefik` | `platform/traefik` | 뼈대 — T042. Traefik 본체는 K3s 관리(HelmChartConfig, T038); 여기엔 Middleware·TLSOption·TLSStore만 |
+
+앱 Application(`<pod>-<env>`)은 후속 PR에서 이 디렉터리에 추가된다.
 
 ## `platform-argocd` — 자기 관리 Application이 하는 일
 
