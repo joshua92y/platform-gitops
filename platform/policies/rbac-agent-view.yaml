@@ -1,0 +1,209 @@
+# platform/policies/rbac-agent-view.yaml — 에이전트·tester·CI의 읽기 전용 신원 `agent-view`
+#
+# 정본: 모노레포 specs/003-platform-foundation/tasks.md:120 문면(1순위) ·
+#   contracts/hostnames-and-access.md §에이전트·tester·CI 자격(2순위, :51–:58).
+#   구성 12객체 = ServiceAccount 1 · ClusterRole 2 · ClusterRoleBinding 3 · Role 3 · RoleBinding 3.
+#
+# 권한 경계(계약 :51): **Secret get 없음 · pods/exec 없음.** 전부 읽기(get·list·watch)이고,
+#   유일한 쓰기 동사는 `pods/portforward` create다(port-forward는 create 동사로 인가된다).
+#   자격이 필요한 검사는 tester가 아니라 `platform/policies/tests/`의 Job이 실행한다.
+#
+# 토큰: `kubectl create token agent-view -n kube-system --duration=8h`로만 만든다.
+#   토큰·kubeconfig를 저장소나 파일에 남기지 않는다(유출 시 8시간 읽기 전권 — 설계 R15).
+#   admin kubeconfig(`k3s.yaml`)는 운영자 비밀번호 관리자에만 둔다.
+#
+# 문면과 계약의 차이(converge 인계 10번):
+#   계약 :52–:55는 `applications`를 `agent-view-extra` 안에 get·list·**watch**로 둔다.
+#   문면(tasks.md:120)은 별도 ClusterRole `argocd-applications-view`(applications get·list)로 분리한다.
+#   여기서는 문면을 따랐다 → `kubectl get applications -w`(watch)는 거부된다.
+#   tests/platform/cluster.tests.ps1은 `kubectl get`(list/get)만 쓰므로 현재 검사에는 영향이 없다.
+#
+# 라벨 `app.kubernetes.io/part-of: platform-policies`를 **붙이지 않는다**:
+#   그 라벨은 비상 되돌리기 선택자다(`kubectl delete networkpolicy -A -l …` — README §되돌리기).
+#   RBAC에 같은 라벨이 있으면 되돌리기·일괄 삭제가 tester·에이전트의 접근 경로까지 지운다.
+#   같은 이유로 되돌리기에 `argocd app sync --prune`을 쓰지 않는다(설계 E15).
+#   kustomize 공통 `labels:` 트랜스포머를 쓰지 않는 이유도 같다(kustomization.yaml 주석).
+#
+# 삭제 보호 어노테이션(`argocd.argoproj.io/sync-options: Delete=false,Prune=false`)은 두지 않는다.
+#   보호 대상은 Namespace 14 · AppProject 5 · Argo CD CRD 3종이다(설계 D6).
+#   RBAC는 재적용이 비파괴·즉시(`kubectl apply -k platform/policies`)라 절차로 보호한다.
+#
+# =============================================================================
+# ServiceAccount — 신원 하나
+# =============================================================================
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agent-view
+  namespace: kube-system
+# 파드에 자동 마운트하지 않는다. 이 SA는 파드가 쓰는 신원이 아니라
+#   `kubectl create token`으로 8시간 토큰을 발급받는 외부 신원이다.
+automountServiceAccountToken: false
+# =============================================================================
+# ClusterRole — 2종(기본 제공 `view`는 여기서 만들지 않는다)
+# =============================================================================
+---
+# Argo CD Application 조회 — 문면이 `agent-view-extra`와 분리한 역할.
+#   cluster.tests.ps1 argo-1(Application 전부 Synced/Healthy)이 쓰는 권한이다.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: argocd-applications-view
+rules:
+  - apiGroups: [argoproj.io]
+    resources: [applications]
+    verbs: [get, list]
+---
+# 기본 ClusterRole `view`가 덮지 못하는 읽기 권한. 전부 get·list·watch이며 Secret은 없다.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: agent-view-extra
+rules:
+  # core `nodes` — `view`에 없다(`nodes.metrics.k8s.io`는 집계되지만 core `nodes`는 아니라
+  #   `kubectl top nodes`가 실패했다, 계약 :53). cluster.tests.ps1 nodes-1..3이 쓴다.
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [get, list, watch]
+  # CRD 존재·삭제 보호 어노테이션 확인(cluster.tests.ps1 argo-4의 오퍼레이터 CRD 대조).
+  - apiGroups: [apiextensions.k8s.io]
+    resources: [customresourcedefinitions]
+    verbs: [get, list, watch]
+  # AppProject — 봉인된 `default`와 platform·dev·prod·tests 확인(argo-2·argo-3).
+  - apiGroups: [argoproj.io]
+    resources: [appprojects]
+    verbs: [get, list, watch]
+  # CNPG — Cluster·백업·선언적 DB/role(US3 검사).
+  - apiGroups: [postgresql.cnpg.io]
+    resources: [clusters, backups, scheduledbackups, databases, databaseroles]
+    verbs: [get, list, watch]
+  # Strimzi 전체 · External Secrets 전체. `*`는 그 API 그룹 안에서만 유효하므로
+  #   core Secret에는 닿지 않는다("Secret 제외" 유지).
+  - apiGroups: [kafka.strimzi.io]
+    resources: ["*"]
+    verbs: [get, list, watch]
+  - apiGroups: [external-secrets.io]
+    resources: ["*"]
+    verbs: [get, list, watch]
+# =============================================================================
+# ClusterRoleBinding — 3종(이름은 전부 `agent-view-` 접두 = 주체 기준, 감사·회수 용이)
+# =============================================================================
+---
+# 기본 제공 집계 ClusterRole `view`(K8s가 만든다 — 이 저장소는 바인딩만 소유한다).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: agent-view-view
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+subjects:
+  - kind: ServiceAccount
+    name: agent-view
+    namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: agent-view-argocd-applications
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: argocd-applications-view
+subjects:
+  - kind: ServiceAccount
+    name: agent-view
+    namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: agent-view-extra
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: agent-view-extra
+subjects:
+  - kind: ServiceAccount
+    name: agent-view
+    namespace: kube-system
+# =============================================================================
+# Role / RoleBinding `agent-view-portforward` — `vault` · `data` · `identity` 3 ns만
+#   `pods/portforward` **create**(port-forward는 create 동사). 파드 조회는 `view`가 준다.
+#   용도: Vault seal 상태(`GET /v1/sys/seal-status`, 계약 :57) · pg-main·Dragonfly·OpenFGA 확인.
+#   ns를 늘리는 변경은 계약을 먼저 고친다(approval-review `k8s-security` 경계).
+# =============================================================================
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: agent-view-portforward
+  namespace: vault
+rules:
+  - apiGroups: [""]
+    resources: [pods/portforward]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: agent-view-portforward
+  namespace: vault
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: agent-view-portforward
+subjects:
+  - kind: ServiceAccount
+    name: agent-view
+    namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: agent-view-portforward
+  namespace: data
+rules:
+  - apiGroups: [""]
+    resources: [pods/portforward]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: agent-view-portforward
+  namespace: data
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: agent-view-portforward
+subjects:
+  - kind: ServiceAccount
+    name: agent-view
+    namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: agent-view-portforward
+  namespace: identity
+rules:
+  - apiGroups: [""]
+    resources: [pods/portforward]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: agent-view-portforward
+  namespace: identity
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: agent-view-portforward
+subjects:
+  - kind: ServiceAccount
+    name: agent-view
+    namespace: kube-system

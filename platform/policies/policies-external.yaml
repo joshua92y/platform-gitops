@@ -1,0 +1,260 @@
+# platform/policies/policies-external.yaml — 클러스터 밖 · 노드 IP egress (13장)
+#
+# 정본: 모노레포 specs/003-platform-foundation/contracts/network-policy.md
+#   §허용 매트릭스 — 클러스터 밖 · 노드 IP(:104–:122) + §외부 egress 규칙 형식(:50–:69).
+#
+#   allow-egress-external-443 9장 — :106 identity · :107 jt-dev · :107 jt-prod · :108 cert-manager ·
+#     :110 vault · :112 argocd · :113 data · :114 monitoring · :116 system-upgrade
+#   allow-egress-dns-1111 1장 — :109 cert-manager → 1.1.1.1 53(UDP·TCP)
+#   allow-egress-kubelet   1장 — :115 monitoring → 노드 A·B 10250
+#   allow-egress-tunnel    1장 — :117 cloudflared → 외부 7844(UDP·TCP) · 443(TCP)
+#   allow-egress-ssh-nodes 1장 — :118 노드 A 22 + :119 노드 B 22(한 정책 두 목적지)
+#   = 9 + 1 + 1 + 1 + 1 = 13장.
+#
+#   같은 표의 나머지 행은 공통 정책이라 policies-common.yaml에 있다(여기서 중복 정의하지 않는다):
+#     :111 vault → IMDS 80 = `allow-imds` · :120 :121 노드 A → ns ingress = `allow-apiserver-webhook` ·
+#     :122 10 ns → 노드 A 6443 = `allow-kube-api`.
+#
+# 형식(계약 :52–:69):
+#   - 광역 ipBlock(0.0.0.0/0) 규칙은 `ports` 필수 + `except` 4개
+#     169.254.169.254/32(IMDS) · 10.0.0.0/8 · 172.16.0.0/12 · 192.168.0.0/16.
+#     except의 사설 대역이 "외부 443"을 클러스터 내부·노드로 새지 않게 한다(계약 :68).
+#     클러스터 안 목적지는 policies-matrix.yaml의 namespaceSelector 규칙으로만 표현한다.
+#   - `/32` 목적지(1.1.1.1 · 노드 A·B)는 단일 주소라 except를 두지 않고 `ports`만 둔다
+#     (validate 5.3도 prefix 32에는 except를 요구하지 않는다).
+#   - `ports` 없는 ipBlock 규칙은 금지(전 포트 개방, 계약 :69).
+#
+# 상수: 노드 A private IP `10.0.7.78` · 노드 B private IP `10.0.10.193`.
+#
+# 라벨: 모든 객체에 `app.kubernetes.io/part-of: platform-policies`를 직접 기재한다
+#   (되돌리기 선택자 — 근거·절차는 policies-common.yaml 머리 주석).
+#
+# 추가 허용 규칙 금지(계약 :152): 이 파일은 위 매트릭스 행을 그대로 옮긴 것이다.
+#   행에 없는 목적지·포트·프로토콜은 계약을 먼저 고친 뒤에 넣는다. 아래 § 표시는 그 대기 항목이다.
+#
+# =============================================================================
+# allow-egress-external-443 × 9 — 0.0.0.0/0 except 4 · TCP 443
+#   NetworkPolicy는 FQDN을 지원하지 않으므로 아래 "용도"의 호스트는 주석으로만 남는다(계약 :52).
+# =============================================================================
+# :106 identity → 외부 443 — 소셜 로그인(github · google)
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-external-443
+  namespace: identity
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ ipBlock: { cidr: 0.0.0.0/0, except: [169.254.169.254/32, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16] } }]
+      ports: [{ protocol: TCP, port: 443 }]
+# :107 jt-dev → 외부 443 — Cloudflare Access certs(`joshua-tech.cloudflareaccess.com/cdn-cgi/access/certs`) · Sentry ingest
+#   Authentik JWKS는 여기 들어가지 않는다: pod는 svc DNS
+#   `http://authentik-server.identity.svc:9000/application/o/<pod>/jwks/`를 쓰고 공개 URL은 `iss` 검증에만 쓴다(계약 :129).
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-external-443
+  namespace: jt-dev
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ ipBlock: { cidr: 0.0.0.0/0, except: [169.254.169.254/32, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16] } }]
+      ports: [{ protocol: TCP, port: 443 }]
+# :107 jt-prod → 외부 443 — 같은 용도(Cloudflare Access certs · Sentry ingest)
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-external-443
+  namespace: jt-prod
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ ipBlock: { cidr: 0.0.0.0/0, except: [169.254.169.254/32, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16] } }]
+      ports: [{ protocol: TCP, port: 443 }]
+# :108 cert-manager → 외부 443 — `api.cloudflare.com`(DNS-01) · Let's Encrypt ACME 디렉터리·주문
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-external-443
+  namespace: cert-manager
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ ipBlock: { cidr: 0.0.0.0/0, except: [169.254.169.254/32, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16] } }]
+      ports: [{ protocol: TCP, port: 443 }]
+# :110 vault → 외부 443 — OCI KMS(auto-unseal) · `auth.joshuatech.dev` OIDC discovery(FR-046 예외 2 · 계약 :128)
+#   IMDS 80은 이 규칙이 아니라 `allow-imds`(policies-common.yaml)가 담당한다 — 여기 except가 IMDS를 뺀다.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-external-443
+  namespace: vault
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ ipBlock: { cidr: 0.0.0.0/0, except: [169.254.169.254/32, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16] } }]
+      ports: [{ protocol: TCP, port: 443 }]
+# :112 argocd → 외부 443 — github.com(gitops 저장소) · ghcr.io/quay.io(OCI 차트) ·
+#   `auth.joshuatech.dev` OIDC discovery(FR-046 예외 2 · 계약 :128)
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-external-443
+  namespace: argocd
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ ipBlock: { cidr: 0.0.0.0/0, except: [169.254.169.254/32, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16] } }]
+      ports: [{ protocol: TCP, port: 443 }]
+# :113 data → 외부 443 — OCI Object Storage(barman-cloud 백업·WAL, 버킷 `jt-backup`)
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-external-443
+  namespace: data
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ ipBlock: { cidr: 0.0.0.0/0, except: [169.254.169.254/32, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16] } }]
+      ports: [{ protocol: TCP, port: 443 }]
+# :114 monitoring → 외부 443 — Grafana Cloud metrics · logs · traces 전송
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-external-443
+  namespace: monitoring
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ ipBlock: { cidr: 0.0.0.0/0, except: [169.254.169.254/32, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16] } }]
+      ports: [{ protocol: TCP, port: 443 }]
+# :116 system-upgrade → 외부 443 — `update.k3s.io` 채널 조회
+#   계약이 "컨트롤러만"이라고 적는 것과 `podSelector: {}`가 어긋나지 않는 이유: 같은 ns의 Plan Job pod는
+#   hostPID·hostIPC·hostNetwork가 SUC에 하드코딩되어 있어 NetworkPolicy 밖이다(계약 :139 예외표,
+#   platform/system-upgrade/kustomization.yaml 머리 주석). 즉 이 정책이 실제로 덮는 pod는 컨트롤러뿐이다.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-external-443
+  namespace: system-upgrade
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ ipBlock: { cidr: 0.0.0.0/0, except: [169.254.169.254/32, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16] } }]
+      ports: [{ protocol: TCP, port: 443 }]
+# =============================================================================
+# allow-egress-dns-1111 × 1 — :109 cert-manager → `1.1.1.1` 53
+#   DNS-01 전파 확인(`dns01RecursiveNameservers`). 계약이 `ipBlock 1.1.1.1/32`와 UDP·TCP 둘 다를 명시한다.
+#   `allow-dns`(kube-system kube-dns)와 목적이 다르다: 전파 확인은 클러스터 리졸버 캐시를 거치지 않고
+#   외부 리졸버에 직접 조회해야 하므로 kube-dns 경로로는 대체되지 않는다.
+#
+#   § 계약 공백(converge/T042 인계): T042 문면의 `dns01RecursiveNameservers`는 1.1.1.1과 8.8.8.8 둘을 적지만
+#     계약 매트릭스에는 1.1.1.1 행만 있다. 8.8.8.8은 계약에 없으므로 여기 넣지 않는다 —
+#     T042에서 values를 1.1.1.1만으로 두거나, 계약에 8.8.8.8 행을 먼저 추가한다.
+# =============================================================================
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-dns-1111
+  namespace: cert-manager
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ ipBlock: { cidr: 1.1.1.1/32 } }]
+      ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
+# =============================================================================
+# allow-egress-kubelet × 1 — :115 monitoring → 노드 A·B private IP 10250
+#   kubelet·cAdvisor 지표 스크레이프. 노드 IP는 사설 대역이라 외부 443 규칙의 except에 걸리므로
+#   계약 :68대로 별도 `/32` 규칙으로 명시한다.
+#   node-exporter(hostNetwork, 노드 IP:9100) 스크레이프 행은 계약에 없다 → T098 결정 뒤 추가(계약 공백).
+# =============================================================================
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-kubelet
+  namespace: monitoring
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ ipBlock: { cidr: 10.0.7.78/32 } }, { ipBlock: { cidr: 10.0.10.193/32 } }]
+      ports: [{ protocol: TCP, port: 10250 }]
+# =============================================================================
+# allow-egress-tunnel × 1 — :117 cloudflared → 외부 7844 · 443(Cloudflare edge 터널)
+#
+#   § 프로토콜 판단(사용자 결정 2026-09-08, 옵션 A — 계약을 그대로 읽는다):
+#     이 매트릭스에는 **프로토콜 열이 없고**, 프로토콜은 용도 열에 적는 것이 이 계약의 관례다
+#     (바로 위 :109 행 "DNS-01 전파 확인(ipBlock 1.1.1.1/32, UDP·TCP)"가 같은 형식).
+#     :117의 용도 열은 "Cloudflare edge 터널(**QUIC**/HTTP2)"이고 QUIC은 정의상 UDP 위에서 돈다.
+#     따라서 UDP 7844 + TCP 7844 + TCP 443은 계약에 없는 경로를 더하는 것이 아니라 이 행을 구현한 것이다
+#     (계약 :152 "추가 허용 규칙 금지" 위반 아님). 설계 t041-design.md §5 매핑표도 같은 판독이다.
+#     반대 판독(프로토콜 미표기 → NetworkPolicy 기본값 TCP만)을 택하면 T039 실측
+#     (platform/cloudflared/README.md:270-271, deployment.yaml:9)대로 커넥터가 QUIC을 잃고 조용히
+#     http2(TCP 7844)로 폴백한다 — 터널은 살지만 유일한 접근 경로의 연결 특성이 바뀐다.
+#   converge(기말) 문서 개선 항목: 매트릭스에 프로토콜 열을 두거나 :117 포트 열을 `7844(UDP·TCP) · 443(TCP)`로 적어
+#     해석 여지를 없앤다(동작 변경 아님 — 이 파일과 동일한 규칙).
+#   443/TCP는 QUIC·http2가 모두 막힌 환경의 폴백 경로다(계약 용도 열 "QUIC/HTTP2").
+# =============================================================================
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-tunnel
+  namespace: cloudflared
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ ipBlock: { cidr: 0.0.0.0/0, except: [169.254.169.254/32, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16] } }]
+      ports: [{ protocol: UDP, port: 7844 }, { protocol: TCP, port: 7844 }, { protocol: TCP, port: 443 }]
+# =============================================================================
+# allow-egress-ssh-nodes × 1 — :118 cloudflared → 노드 A 22 · :119 cloudflared → 노드 B 22
+#   `ssh-a.joshuatech.dev` · `ssh-b.joshuatech.dev` 터널의 도착 경로(운영자 유일 SSH 경로).
+#   노드 IP는 위 tunnel 규칙의 except(10.0.0.0/8)에 빠져 있으므로 이 `/32` 규칙이 유일한 통로다.
+# =============================================================================
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-ssh-nodes
+  namespace: cloudflared
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ ipBlock: { cidr: 10.0.7.78/32 } }, { ipBlock: { cidr: 10.0.10.193/32 } }]
+      ports: [{ protocol: TCP, port: 22 }]

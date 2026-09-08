@@ -1,0 +1,64 @@
+# platform/policies/quota.yaml — jt-dev·jt-prod의 ResourceQuota + LimitRange
+#
+# 정본: 모노레포 specs/003-platform-foundation/spec.md FR-039
+#   (dev requests 2Gi / limits 4Gi / pods 20 · prod 3Gi / 6Gi / 30),
+#   contracts/gitops-repo.md §네임스페이스(LimitRange는 `defaultRequest.cpu` + memory `default`만).
+#
+# CPU를 쿼터에 넣지 않는 이유: `requests.cpu`·`limits.cpu` 쿼터는 네임스페이스의 모든 파드에
+#   해당 항목을 강제한다. `limits.cpu`가 강제되면 FR-008("CPU limit은 두지 않는다")과 충돌하고
+#   버스트가 막힌다. 그래서 hard 항목은 pods·requests.memory·limits.memory 3개뿐이다.
+#
+# LimitRange가 `default.cpu`·`max.cpu`를 두지 않는 이유도 같다(defaulting이 CPU limit을 주입한다).
+#   validate 검사 5.5가 이 두 항목의 부재를 강제한다.
+#
+# 주의(R11): `defaultRequest.memory`를 적지 않으므로, requests를 명시하지 않은 컨테이너는
+#   `default.memory`(512Mi)를 요청값으로 승계해 쿼터를 그만큼 차지한다. 템플릿 pod와
+#   `platform/policies/tests/`의 검사 Job은 requests를 명시한다(FR-033).
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: quota
+  namespace: jt-dev
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  hard:
+    pods: "20"
+    requests.memory: 2Gi
+    limits.memory: 4Gi
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: quota
+  namespace: jt-prod
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  hard:
+    pods: "30"
+    requests.memory: 3Gi
+    limits.memory: 6Gi
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: defaults
+  namespace: jt-dev
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  limits:
+    - type: Container
+      defaultRequest: { cpu: 50m }
+      default: { memory: 512Mi }
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: defaults
+  namespace: jt-prod
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  limits:
+    - type: Container
+      defaultRequest: { cpu: 100m }
+      default: { memory: 512Mi }

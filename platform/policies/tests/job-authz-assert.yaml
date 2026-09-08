@@ -1,0 +1,149 @@
+# platform/policies/tests/job-authz-assert.yaml — OpenFGA 인가 검사 Job
+#
+# 계약 hostnames-and-access.md §자격이 필요한 검사: OpenFGA `check` 결과(다른 테넌트는 false)는 이 Job이
+# 확인하고 tester는 `kubectl -n jt-dev logs job/authz-assert`만 읽는다.
+#
+# 검사 id(quickstart §US3·§US4 5): check-allowed · cross-tenant-false — 로그 계약은 README.md §로그 계약.
+#
+# 클라이언트: `fga` CLI 대신 OpenFGA HTTP API를 curl로 호출한다. 이유는 (1) 검사가 write·check 두 호출뿐이고,
+#   (2) 이미지가 작아 arm64 digest 핀이 단순하며, (3) 응답 판정을 문자열 매칭 한 줄로 fail-closed 하게
+#   할 수 있어서다. 도달 경로는 매트릭스의 `jt-dev → identity 8080` 행(network-policy.md :83)뿐이다.
+#
+# 검사 데이터: **합성 식별자**(ConfigMap `assert-config`의 `ASSERT_*`)를 쓰고, Job이 자기가 쓴 튜플을
+#   마지막에 지운다. seed_tenant가 만든 실제 테넌트를 단언 대상으로 삼는 안은 README §후속 결정에 남겼다.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: authz-assert
+  namespace: jt-dev
+  labels:
+    app.kubernetes.io/name: authz-assert
+    app.kubernetes.io/component: assert-job
+    app.kubernetes.io/part-of: policies-tests
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 300
+  ttlSecondsAfterFinished: 604800
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: authz-assert
+        app.kubernetes.io/component: assert-job
+        app.kubernetes.io/part-of: policies-tests
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        # 이미지 config User가 이름(`curl_user`)이라 숫자 UID를 명시한다(kubelet의 비루트 판정).
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      containers:
+        - name: authz-assert
+          image: curlimages/curl:8.22.0@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777
+          workingDir: /tmp
+          command: [/bin/sh, -c]
+          args:
+            - |
+              set -u
+              export HOME=/tmp
+              pass=0
+              fail=0
+              ok() { pass=$((pass + 1)); printf 'RESULT: PASS %s\n' "$*"; }
+              ng() { fail=$((fail + 1)); printf 'RESULT: FAIL %s\n' "$*"; }
+
+              miss=''
+              for v in OPENFGA_URL OPENFGA_STORE_ID OPENFGA_TOKEN ASSERT_USER ASSERT_RELATION ASSERT_OBJECT_TYPE ASSERT_TENANT_A ASSERT_TENANT_B; do
+                eval "val=\${$v:-}"
+                [ -n "$val" ] || miss="$miss $v"
+              done
+              if [ -n "$miss" ]; then
+                ng "check-allowed 필수 값 없음:$miss"
+                ng "cross-tenant-false 필수 값 없음:$miss"
+                printf 'SUMMARY: pass=%d fail=%d\n' "$pass" "$fail"
+                exit 1
+              fi
+
+              API="$OPENFGA_URL/stores/$OPENFGA_STORE_ID"
+              # $1 = 경로, $2 = JSON 본문. 응답 본문은 /tmp/resp.json, 표준출력은 HTTP 상태 코드.
+              # 토큰은 헤더로만 쓰고 어디에도 출력하지 않는다.
+              call() {
+                curl -sS -o /tmp/resp.json -w '%{http_code}' --max-time 15 -X POST \
+                  -H "Authorization: Bearer $OPENFGA_TOKEN" \
+                  -H 'Content-Type: application/json' \
+                  --data "$2" "$API$1" 2>/tmp/curl.err
+              }
+              tuple() {
+                printf '{"user":"%s","relation":"%s","object":"%s:%s"}' \
+                  "$ASSERT_USER" "$ASSERT_RELATION" "$ASSERT_OBJECT_TYPE" "$1"
+              }
+
+              # 중첩 따옴표를 피하려고 튜플 JSON을 먼저 변수에 만든다.
+              ta=$(tuple "$ASSERT_TENANT_A")
+              tb=$(tuple "$ASSERT_TENANT_B")
+
+              # 0) 검사용 튜플을 dev store에 쓴다(이전 실행이 남긴 같은 튜플이면 그대로 진행).
+              w=$(call /write "{\"writes\":{\"tuple_keys\":[$ta]}}")
+              if [ "$w" = "200" ] || [ "$w" = "201" ]; then
+                wrote=1
+              elif [ "$w" = "400" ] && grep -q 'already exists' /tmp/resp.json; then
+                wrote=1
+              else
+                wrote=0
+                printf 'EVIDENCE: write HTTP %s %s\n' "$w" "$(head -c 160 /tmp/resp.json | tr '\n' ' ')"
+              fi
+
+              # ① check-allowed — 튜플이 있는 테넌트는 allowed=true
+              if [ "$wrote" -ne 1 ]; then
+                ng "check-allowed 검사 튜플 write 실패(HTTP $w) — 인증·모델·store id를 확인한다"
+              else
+                c=$(call /check "{\"tuple_key\":$ta}")
+                if [ "$c" = "200" ] && grep -qE '"allowed"[[:space:]]*:[[:space:]]*true' /tmp/resp.json; then
+                  ok "check-allowed ${ASSERT_USER} ${ASSERT_RELATION} ${ASSERT_OBJECT_TYPE}:${ASSERT_TENANT_A} -> allowed=true"
+                else
+                  ng "check-allowed HTTP $c 응답: $(head -c 160 /tmp/resp.json | tr '\n' ' ')"
+                fi
+              fi
+
+              # ② cross-tenant-false — 튜플이 없는 다른 테넌트는 allowed=true 가 아니어야 한다.
+              c=$(call /check "{\"tuple_key\":$tb}")
+              if [ "$c" != "200" ]; then
+                ng "cross-tenant-false check 호출 실패(HTTP $c): $(head -c 160 /tmp/resp.json | tr '\n' ' ')"
+              elif grep -qE '"allowed"[[:space:]]*:[[:space:]]*true' /tmp/resp.json; then
+                ng "cross-tenant-false 튜플이 없는 ${ASSERT_OBJECT_TYPE}:${ASSERT_TENANT_B} 에 allowed=true (테넌트 경계 회귀)"
+              else
+                ok "cross-tenant-false ${ASSERT_OBJECT_TYPE}:${ASSERT_TENANT_B} -> allowed 아님 ($(head -c 60 /tmp/resp.json | tr '\n' ' '))"
+              fi
+
+              # 정리 — 이 Job이 쓴 튜플을 지운다(판정에는 넣지 않고 기록만 남긴다).
+              if [ "$wrote" -eq 1 ]; then
+                d=$(call /write "{\"deletes\":{\"tuple_keys\":[$ta]}}")
+                printf 'NOTE: 검사 튜플 삭제 HTTP %s\n' "$d"
+              fi
+
+              printf 'SUMMARY: pass=%d fail=%d\n' "$pass" "$fail"
+              [ "$fail" -eq 0 ] || exit 1
+          envFrom:
+            - secretRef:
+                name: assert-env
+            - configMapRef:
+                name: assert-config
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]

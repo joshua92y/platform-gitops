@@ -1,0 +1,173 @@
+# platform/policies/tests/job-kafka-assert.yaml — Kafka 왕복·교차 env 거부 검사 Job
+#
+# 계약 hostnames-and-access.md §자격이 필요한 검사: `kcat` 같은 자격 필요 검사는 tester가 실행하지 않는다.
+# tester는 `kubectl -n jt-dev logs job/kafka-assert`만 읽는다.
+#
+# 검사 id(quickstart §US3): roundtrip · cross-env-denied — 로그 계약은 README.md §로그 계약.
+#
+# 클라이언트 선택: `edenhill/kcat:1.7.1`은 Docker Hub 매니페스트가 **단일 아키텍처(amd64)**라 arm64 노드
+#   2대에서 실행되지 않는다(registry v2 API 실측). 그래서 공식 `apache/kafka` 이미지의 콘솔 도구
+#   (`/opt/kafka/bin/kafka-console-{producer,consumer}.sh`, bash 포함 — 이미지 히스토리 실측)를 쓴다.
+#   이미지 버전은 브로커(T055 Kafka 4.3.1)와 같은 4.3.1이다.
+#
+# 자격: SASL_SSL / SCRAM-SHA-512(사용자 `dev-identity-admin`) + Strimzi 클러스터 CA(`jt-kafka-cluster-ca-cert`
+#   미러)를 PEM truststore로 쓴다. 비밀번호는 ExternalSecret `assert-env`에서만 오고, 런타임에 만드는
+#   client.properties는 emptyDir(`/tmp`)에만 쓰며 로그에 찍지 않는다(Kafka 클라이언트는 설정 덤프에서
+#   비밀번호를 [hidden]으로 마스킹한다).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kafka-assert
+  namespace: jt-dev
+  labels:
+    app.kubernetes.io/name: kafka-assert
+    app.kubernetes.io/component: assert-job
+    app.kubernetes.io/part-of: policies-tests
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 300
+  ttlSecondsAfterFinished: 604800
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kafka-assert
+        app.kubernetes.io/component: assert-job
+        app.kubernetes.io/part-of: policies-tests
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        # 이미지의 config User가 이름(`appuser`)이라 kubelet이 비루트 여부를 판정할 수 없다 — 숫자로 못박는다.
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: kafka-ca
+          secret:
+            # Strimzi 클러스터 CA 미러(ESO store `k8s-data-ca`, key `ca.crt`) — T056 산출물.
+            secretName: jt-kafka-cluster-ca-cert
+            items:
+              - key: ca.crt
+                path: ca.crt
+      containers:
+        - name: kafka-assert
+          image: apache/kafka:4.3.1@sha256:77e3df9054047a88b520d0cc46e16696d3b22022e1d580aeccd2632df6532837
+          workingDir: /tmp
+          command: [/bin/bash, -c]
+          args:
+            - |
+              set -u
+              # 읽기 전용 루트 파일시스템에서 도구가 쓰는 경로를 전부 emptyDir(/tmp)로 돌린다.
+              export LOG_DIR=/tmp/logs
+              export HOME=/tmp
+              export KAFKA_HEAP_OPTS="-Xms64m -Xmx256m"
+              mkdir -p "$LOG_DIR"
+              pass=0
+              fail=0
+              ok() { pass=$((pass + 1)); printf 'RESULT: PASS %s\n' "$*"; }
+              ng() { fail=$((fail + 1)); printf 'RESULT: FAIL %s\n' "$*"; }
+
+              miss=''
+              for v in KAFKA_BOOTSTRAP KAFKA_USERNAME KAFKA_PASSWORD KAFKA_DEV_TOPIC KAFKA_PROD_TOPIC KAFKA_GROUP KAFKA_CA KAFKA_CONSUME_TIMEOUT_MS KAFKA_ROUNDTRIP_DEADLINE_S; do
+                eval "val=\${$v:-}"
+                [ -n "$val" ] || miss="$miss $v"
+              done
+              if [ ! -r "${KAFKA_CA:-/nonexistent}" ]; then
+                miss="$miss ${KAFKA_CA:-KAFKA_CA}(파일 없음)"
+              fi
+              if [ -n "$miss" ]; then
+                ng "roundtrip 필수 값 없음:$miss"
+                ng "cross-env-denied 필수 값 없음:$miss"
+                printf 'SUMMARY: pass=%d fail=%d\n' "$pass" "$fail"
+                exit 1
+              fi
+
+              CFG=/tmp/kafka-client.properties
+              umask 077
+              {
+                echo "security.protocol=SASL_SSL"
+                echo "sasl.mechanism=SCRAM-SHA-512"
+                printf 'sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule required username="%s" password="%s";\n' "$KAFKA_USERNAME" "$KAFKA_PASSWORD"
+                echo "ssl.truststore.type=PEM"
+                echo "ssl.truststore.location=$KAFKA_CA"
+              } > "$CFG"
+
+              marker="policies-assert-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+
+              # ① roundtrip — dev 토픽에 produce → 같은 토픽에서 consume 하며 마커를 찾는다.
+              start=$(date +%s)
+              printf '%s\n' "$marker" | /opt/kafka/bin/kafka-console-producer.sh \
+                --bootstrap-server "$KAFKA_BOOTSTRAP" \
+                --producer.config "$CFG" \
+                --producer-property max.block.ms=20000 \
+                --producer-property delivery.timeout.ms=25000 \
+                --topic "$KAFKA_DEV_TOPIC" >/tmp/produce.log 2>&1
+              prc=$?
+              /opt/kafka/bin/kafka-console-consumer.sh \
+                --bootstrap-server "$KAFKA_BOOTSTRAP" \
+                --consumer.config "$CFG" \
+                --topic "$KAFKA_DEV_TOPIC" \
+                --group "$KAFKA_GROUP" \
+                --from-beginning \
+                --timeout-ms "$KAFKA_CONSUME_TIMEOUT_MS" >/tmp/consume.log 2>&1
+              elapsed=$(( $(date +%s) - start ))
+              if [ "$prc" -ne 0 ]; then
+                ng "roundtrip produce 실패(rc=$prc): $(tail -n 1 /tmp/produce.log | cut -c1-140)"
+              elif grep -qF "$marker" /tmp/consume.log; then
+                if [ "$elapsed" -le "$KAFKA_ROUNDTRIP_DEADLINE_S" ]; then
+                  ok "roundtrip ${KAFKA_DEV_TOPIC} produce→consume ${elapsed}s (상한 ${KAFKA_ROUNDTRIP_DEADLINE_S}s, JVM 기동 포함)"
+                else
+                  ng "roundtrip 마커는 수신했으나 ${elapsed}s > 상한 ${KAFKA_ROUNDTRIP_DEADLINE_S}s"
+                fi
+              else
+                printf 'EVIDENCE: consumer 마지막 줄: %s\n' "$(tail -n 1 /tmp/consume.log | cut -c1-140)"
+                ng "roundtrip ${KAFKA_DEV_TOPIC}에서 마커를 ${KAFKA_CONSUME_TIMEOUT_MS}ms 안에 받지 못함(${elapsed}s 경과)"
+              fi
+
+              # ② cross-env-denied — 같은 dev 자격으로 prod 토픽에 write 시도 → 인가 거부여야 한다.
+              #    (T055 `auto.create.topics.enable=false`이므로 토픽 자동 생성으로 통과하는 경로는 없다.)
+              printf '%s\n' "${marker}-cross" | /opt/kafka/bin/kafka-console-producer.sh \
+                --bootstrap-server "$KAFKA_BOOTSTRAP" \
+                --producer.config "$CFG" \
+                --producer-property max.block.ms=20000 \
+                --producer-property delivery.timeout.ms=25000 \
+                --topic "$KAFKA_PROD_TOPIC" >/tmp/cross.log 2>&1
+              crc=$?
+              if grep -qE 'TopicAuthorizationException|Not authorized to access topics|AuthorizationException' /tmp/cross.log; then
+                ok "cross-env-denied ${KAFKA_USERNAME} -> ${KAFKA_PROD_TOPIC}: $(grep -E 'TopicAuthorizationException|Not authorized to access topics' /tmp/cross.log | head -n 1 | cut -c1-140)"
+              elif [ "$crc" -eq 0 ] && ! grep -qiE 'error|exception' /tmp/cross.log; then
+                ng "cross-env-denied dev 자격으로 prod 토픽 ${KAFKA_PROD_TOPIC} write가 성공했다(ACL 회귀)"
+              else
+                ng "cross-env-denied 인가 거부가 아닌 실패(rc=$crc): $(tail -n 1 /tmp/cross.log | cut -c1-140)"
+              fi
+
+              rm -f "$CFG"
+              printf 'SUMMARY: pass=%d fail=%d\n' "$pass" "$fail"
+              [ "$fail" -eq 0 ] || exit 1
+          envFrom:
+            - secretRef:
+                name: assert-env
+            - configMapRef:
+                name: assert-config
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: kafka-ca
+              mountPath: /etc/kafka-ca
+              readOnly: true
+          resources:
+            # JVM 도구 2회 실행 — 힙 상한(-Xmx256m)에 맞춘 요청·제한. requests 명시(FR-033).
+            requests:
+              cpu: 100m
+              memory: 320Mi
+            limits:
+              memory: 640Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
