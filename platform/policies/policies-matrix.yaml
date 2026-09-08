@@ -1,0 +1,538 @@
+# platform/policies/policies-matrix.yaml — 클러스터 내부 허용 매트릭스 (31장 = ingress 21 + egress 10)
+#
+# 정본: 모노레포 specs/003-platform-foundation/contracts/network-policy.md
+#   §허용 매트릭스 — 클러스터 내부(출발 ns → 도착 ns:포트), 계약 :77–:96.
+#   이 표는 exhaustive다 — 표에 없는 허용 규칙을 추가하지 않는다. 새 경로가 필요하면
+#   계약을 먼저 고친다(`allow-all`로 푸는 것은 금지).
+#   :96(전 ns → kube-dns 53)은 `allow-dns`로 policies-common.yaml에 있다.
+#
+# 구현 규칙(계약 :73): 각 행은 "출발 ns의 egress 규칙 + 도착 ns의 ingress 규칙 한 쌍"이다.
+#   예외 = 출발이 `kube-system`(traefik)인 5행(:77 :78 :79 :80 :81). `kube-system`에는
+#   default-deny를 걸지 않으므로(계약 :33 :46) 그 ns의 egress는 애초에 제한되지 않고,
+#   정책은 `deny-imds` 한 장뿐이어야 한다(계약 :26 · tests/platform/cluster.tests.ps1 np-1
+#   "kube-system policies == {deny-imds}"). 따라서 그 5행은 **도착 ns의 ingress로만** 구현한다.
+#   계약 :73의 "한 쌍" 문언과의 차이는 converge 인계 항목이다(규칙 추가가 아니라 누락 쪽).
+#
+# 정책 이름 규약:
+#   도착 ns ingress — allow-from-traefik · allow-from-apps · allow-from-identity ·
+#     allow-from-external-secrets · allow-scrape-from-monitoring ·
+#     allow-otlp-from-traefik · allow-otlp-from-apps
+#   출발 ns egress  — allow-egress-to-<도착> · allow-egress-scrape
+#   공통 세트 이름(default-deny · allow-dns · allow-same-namespace · allow-kube-api ·
+#   allow-apiserver-webhook · deny-imds · allow-imds)은 policies-common.yaml 전용이다
+#   (같은 ns에 같은 이름을 또 만들면 kustomize 중복 ID + validate 5.2 EXCLUSIVE 위반).
+#
+# selector 규약: namespaceSelector는 `kubernetes.io/metadata.name` matchLabels만 쓴다.
+#   matchExpressions는 cluster.tests.ps1의 정적 파서(Get-IngressSources)가 평가하지 못해
+#   np-3·np-4가 unevaluable로 FAIL한다. traefik 출발은 kube-system namespaceSelector +
+#   **같은 peer 안의** podSelector `app.kubernetes.io/name=traefik`으로 좁힌다.
+#
+# 이 파일에는 ipBlock 규칙이 없다 — 클러스터 밖·노드 IP 목적지는 policies-external.yaml,
+#   노드 A /32(6443·webhook)는 policies-common.yaml이 맡는다.
+#
+# 되돌리기용 라벨: 모든 객체에 `app.kubernetes.io/part-of: platform-policies`를 직접 기재한다
+#   (Argo CD 추적은 어노테이션 방식이라 `argocd.argoproj.io/instance` 라벨은 존재하지 않는다).
+#
+# 검산:
+#   ingress 21 = argocd 2 · vault 3 · external-secrets 1 · cert-manager 1 · cnpg-system 1 ·
+#                data 3 · identity 2 · jt-dev 3 · jt-prod 3 · monitoring 2
+#   egress  10 = external-secrets 1 · identity 2 · jt-dev 3 · jt-prod 3 · monitoring 1
+#
+# =============================================================================
+# INGRESS — 도착 ns 21장
+# =============================================================================
+
+# --- argocd (2) --------------------------------------------------------------
+---
+# 계약 :77 — kube-system(traefik) → argocd 8080: Argo CD UI/API(Ingress `argo.`)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-from-traefik
+  namespace: argocd
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }, podSelector: { matchLabels: { app.kubernetes.io/name: traefik } } }]
+      ports: [{ protocol: TCP, port: 8080 }]
+---
+# 계약 :89 — monitoring → argocd 8082·8083·8084: metrics(application-controller·repo-server·server)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-scrape-from-monitoring
+  namespace: argocd
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: monitoring } } }]
+      ports: [{ protocol: TCP, port: 8082 }, { protocol: TCP, port: 8083 }, { protocol: TCP, port: 8084 }]
+
+# --- vault (3) ---------------------------------------------------------------
+---
+# 계약 :78 — kube-system(traefik) → vault 8200: Vault UI(Ingress `vault.`)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-from-traefik
+  namespace: vault
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }, podSelector: { matchLabels: { app.kubernetes.io/name: traefik } } }]
+      ports: [{ protocol: TCP, port: 8200 }]
+---
+# 계약 :88 — external-secrets → vault 8200: kv 읽기
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-from-external-secrets
+  namespace: vault
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: external-secrets } } }]
+      ports: [{ protocol: TCP, port: 8200 }]
+---
+# 계약 :90 — monitoring → vault 8200: `vault_core_unsealed` 등(telemetry unauthenticated_metrics_access)
+#   계약 :98 — scrape 도착 ns의 ingress는 namespaceSelector가 monitoring인 것만 허용한다.
+#   jt-* 등 다른 ns가 같은 8200으로 들어오는 경로는 열리지 않는다(cluster.tests np-4).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-scrape-from-monitoring
+  namespace: vault
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: monitoring } } }]
+      ports: [{ protocol: TCP, port: 8200 }]
+
+# --- external-secrets (1) ----------------------------------------------------
+---
+# 계약 :91 — monitoring → external-secrets 8080: ESO metrics
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-scrape-from-monitoring
+  namespace: external-secrets
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: monitoring } } }]
+      ports: [{ protocol: TCP, port: 8080 }]
+
+# --- cert-manager (1) --------------------------------------------------------
+---
+# 계약 :92 — monitoring → cert-manager 9402: cert-manager metrics(`CertExpiringSoon`)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-scrape-from-monitoring
+  namespace: cert-manager
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: monitoring } } }]
+      ports: [{ protocol: TCP, port: 9402 }]
+
+# --- cnpg-system (1) ---------------------------------------------------------
+---
+# 계약 :93 — monitoring → cnpg-system 8080: CNPG operator metrics
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-scrape-from-monitoring
+  namespace: cnpg-system
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: monitoring } } }]
+      ports: [{ protocol: TCP, port: 8080 }]
+
+# --- data (3) ----------------------------------------------------------------
+---
+# 계약 :82 — jt-dev·jt-prod → data 5432·9093·6379: pg-main · Kafka(SCRAM/TLS) · Dragonfly
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-from-apps
+  namespace: data
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: jt-dev } } }, { namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: jt-prod } } }]
+      ports: [{ protocol: TCP, port: 5432 }, { protocol: TCP, port: 9093 }, { protocol: TCP, port: 6379 }]
+---
+# 계약 :85 — identity → data 5432: Authentik·OpenFGA DB
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-from-identity
+  namespace: data
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: identity } } }]
+      ports: [{ protocol: TCP, port: 5432 }]
+---
+# 계약 :94 — monitoring → data 9187·9404: CNPG instance exporter · Strimzi kafka-exporter
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-scrape-from-monitoring
+  namespace: data
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: monitoring } } }]
+      ports: [{ protocol: TCP, port: 9187 }, { protocol: TCP, port: 9404 }]
+
+# --- identity (2) ------------------------------------------------------------
+---
+# 계약 :79 — kube-system(traefik) → identity 9000: Authentik(`auth.` Ingress, forward-auth outpost)
+#   계약 :99 — `traefik → identity 8080`(OpenFGA) 행은 삭제됐다. OpenFGA는 공개 호스트가 없고
+#   클러스터 안(jt-* → identity 8080)에서만 호출한다.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-from-traefik
+  namespace: identity
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }, podSelector: { matchLabels: { app.kubernetes.io/name: traefik } } }]
+      ports: [{ protocol: TCP, port: 9000 }]
+---
+# 계약 :83 — jt-dev·jt-prod → identity 9000·8080: Authentik(JWKS·revoke API, svc DNS) · OpenFGA
+#   계약 :129 — pod의 JWKS는 svc DNS(`http://authentik-server.identity.svc:9000/...`)를 쓴다.
+#   공개 호스트로 나가지 않으므로 jt-* 외부 443 규칙에 Authentik은 들어가지 않는다.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-from-apps
+  namespace: identity
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: jt-dev } } }, { namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: jt-prod } } }]
+      ports: [{ protocol: TCP, port: 9000 }, { protocol: TCP, port: 8080 }]
+
+# --- jt-dev (3) --------------------------------------------------------------
+---
+# 계약 :80 — kube-system(traefik) → jt-dev 8000: pod m2m·admin Ingress
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-from-traefik
+  namespace: jt-dev
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }, podSelector: { matchLabels: { app.kubernetes.io/name: traefik } } }]
+      ports: [{ protocol: TCP, port: 8000 }]
+---
+# 계약 :87 — identity → jt-dev 8000: Authentik → identity-admin dev 웹훅(dev NotificationTransport, svc DNS)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-from-identity
+  namespace: jt-dev
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: identity } } }]
+      ports: [{ protocol: TCP, port: 8000 }]
+---
+# 계약 :95 — monitoring → jt-dev 9100·9464: pod web metrics · relay outbox metrics
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-scrape-from-monitoring
+  namespace: jt-dev
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: monitoring } } }]
+      ports: [{ protocol: TCP, port: 9100 }, { protocol: TCP, port: 9464 }]
+
+# --- jt-prod (3) -------------------------------------------------------------
+---
+# 계약 :80 — kube-system(traefik) → jt-prod 8000: pod m2m·admin Ingress
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-from-traefik
+  namespace: jt-prod
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }, podSelector: { matchLabels: { app.kubernetes.io/name: traefik } } }]
+      ports: [{ protocol: TCP, port: 8000 }]
+---
+# 계약 :86 — identity → jt-prod 8000: Authentik → identity-admin prod 웹훅(`/webhooks/authentik`, svc DNS)
+#   jt-dev는 ingress에 identity만 허용한다(jt-prod는 출발 ns가 아니다) — cluster.tests np-3.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-from-identity
+  namespace: jt-prod
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: identity } } }]
+      ports: [{ protocol: TCP, port: 8000 }]
+---
+# 계약 :95 — monitoring → jt-prod 9100·9464: pod web metrics · relay outbox metrics
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-scrape-from-monitoring
+  namespace: jt-prod
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: monitoring } } }]
+      ports: [{ protocol: TCP, port: 9100 }, { protocol: TCP, port: 9464 }]
+
+# --- monitoring (2) ----------------------------------------------------------
+---
+# 계약 :81 — kube-system(traefik) → monitoring 4317: Traefik OTLP 트레이스 → Alloy(T038)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-otlp-from-traefik
+  namespace: monitoring
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }, podSelector: { matchLabels: { app.kubernetes.io/name: traefik } } }]
+      ports: [{ protocol: TCP, port: 4317 }]
+---
+# 계약 :84 — jt-dev·jt-prod → monitoring 4317·4318: OTLP(gRPC·HTTP) → Alloy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-otlp-from-apps
+  namespace: monitoring
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: jt-dev } } }, { namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: jt-prod } } }]
+      ports: [{ protocol: TCP, port: 4317 }, { protocol: TCP, port: 4318 }]
+
+# =============================================================================
+# EGRESS — 출발 ns 10장
+# =============================================================================
+
+# --- external-secrets (1) ----------------------------------------------------
+---
+# 계약 :88 — external-secrets → vault 8200: kv 읽기(도착 ingress = vault/allow-from-external-secrets)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-to-vault
+  namespace: external-secrets
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: vault } } }]
+      ports: [{ protocol: TCP, port: 8200 }]
+
+# --- identity (2) ------------------------------------------------------------
+---
+# 계약 :85 — identity → data 5432: Authentik·OpenFGA DB
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-to-data
+  namespace: identity
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: data } } }]
+      ports: [{ protocol: TCP, port: 5432 }]
+---
+# 계약 :86 :87 — identity → jt-prod 8000 · identity → jt-dev 8000: Authentik → identity-admin 웹훅
+#   두 행의 도착 포트가 같아 한 장으로 묶는다(도착 ingress는 ns마다 allow-from-identity로 따로 있다).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-to-apps
+  namespace: identity
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: jt-dev } } }, { namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: jt-prod } } }]
+      ports: [{ protocol: TCP, port: 8000 }]
+
+# --- jt-dev (3) --------------------------------------------------------------
+---
+# 계약 :82 — jt-dev → data 5432·9093·6379: pg-main · Kafka(SCRAM/TLS) · Dragonfly
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-to-data
+  namespace: jt-dev
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: data } } }]
+      ports: [{ protocol: TCP, port: 5432 }, { protocol: TCP, port: 9093 }, { protocol: TCP, port: 6379 }]
+---
+# 계약 :83 — jt-dev → identity 9000·8080: Authentik(JWKS·revoke API, svc DNS) · OpenFGA
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-to-identity
+  namespace: jt-dev
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: identity } } }]
+      ports: [{ protocol: TCP, port: 9000 }, { protocol: TCP, port: 8080 }]
+---
+# 계약 :84 — jt-dev → monitoring 4317·4318: OTLP(gRPC·HTTP) → Alloy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-to-monitoring
+  namespace: jt-dev
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: monitoring } } }]
+      ports: [{ protocol: TCP, port: 4317 }, { protocol: TCP, port: 4318 }]
+
+# --- jt-prod (3) -------------------------------------------------------------
+---
+# 계약 :82 — jt-prod → data 5432·9093·6379: pg-main · Kafka(SCRAM/TLS) · Dragonfly
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-to-data
+  namespace: jt-prod
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: data } } }]
+      ports: [{ protocol: TCP, port: 5432 }, { protocol: TCP, port: 9093 }, { protocol: TCP, port: 6379 }]
+---
+# 계약 :83 — jt-prod → identity 9000·8080: Authentik(JWKS·revoke API, svc DNS) · OpenFGA
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-to-identity
+  namespace: jt-prod
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: identity } } }]
+      ports: [{ protocol: TCP, port: 9000 }, { protocol: TCP, port: 8080 }]
+---
+# 계약 :84 — jt-prod → monitoring 4317·4318: OTLP(gRPC·HTTP) → Alloy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-to-monitoring
+  namespace: jt-prod
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: monitoring } } }]
+      ports: [{ protocol: TCP, port: 4317 }, { protocol: TCP, port: 4318 }]
+
+# --- monitoring (1) ----------------------------------------------------------
+---
+# 계약 :89–:95 — monitoring → scrape 대상 7 ns. 도착 ingress는 각 ns의
+#   allow-scrape-from-monitoring(계약 :98 "namespaceSelector가 monitoring인 것만")이다.
+#   :89 argocd 8082·8083·8084 / :90 vault 8200 / :91 external-secrets 8080 /
+#   :92 cert-manager 9402 / :93 cnpg-system 8080 / :94 data 9187·9404 /
+#   :95 jt-dev·jt-prod 9100·9464.
+#   계약 공백(규칙을 추가하지 않는다 — 설계 §5.1, T098 결정 대상): argocd notifications 9001 ·
+#   node-exporter 노드 IP 9100(hostNetwork) · traefik 9100(kube-system) · cloudflared 2000.
+#   kubelet 10250(계약 :115)은 노드 IP 목적지라 policies-external.yaml이 맡는다.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-scrape
+  namespace: monitoring
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: argocd } } }]
+      ports: [{ protocol: TCP, port: 8082 }, { protocol: TCP, port: 8083 }, { protocol: TCP, port: 8084 }]
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: vault } } }]
+      ports: [{ protocol: TCP, port: 8200 }]
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: external-secrets } } }]
+      ports: [{ protocol: TCP, port: 8080 }]
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: cert-manager } } }]
+      ports: [{ protocol: TCP, port: 9402 }]
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: cnpg-system } } }]
+      ports: [{ protocol: TCP, port: 8080 }]
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: data } } }]
+      ports: [{ protocol: TCP, port: 9187 }, { protocol: TCP, port: 9404 }]
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: jt-dev } } }, { namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: jt-prod } } }]
+      ports: [{ protocol: TCP, port: 9100 }, { protocol: TCP, port: 9464 }]

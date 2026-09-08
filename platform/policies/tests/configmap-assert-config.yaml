@@ -1,0 +1,71 @@
+# platform/policies/tests/configmap-assert-config.yaml — 검사 Job 3종이 공유하는 **비밀이 아닌** 값
+#
+# 계약 gitops-repo.md §공통 규칙: "비밀이 아닌 값은 ConfigMap". 엔드포인트·DB 이름·토픽 이름·role 이름은
+# 비밀이 아니므로 여기에 두고, 자격증명은 ExternalSecret `assert-env`(store `vault-dev`)에서만 온다.
+# 세 Job 모두 이 ConfigMap을 `envFrom`으로 통째로 읽는다(검사 스크립트가 값이 비면 fail-closed로 FAIL을 찍는다).
+#
+# 값의 출처(추측 금지 — 근거 없는 값은 README §계약 공백에 등재했다):
+#   - PG 호스트·SSL 형식        contracts/pod-template.md §DB 연결(`pg-main-rw.data.svc:5432`, `sslmode=verify-full`, `/etc/pg/ca.crt`)
+#   - DB·role 이름              data-model.md §7(prod `identity_admin`·`identity_admin_app`, dev `dev_` 접두, 공유 DB `authentik`·`openfga`)
+#   - Dragonfly ACL 사용자·패턴 tasks.md T057 · contracts/denylist.md(dev 전용 검사 계정 `sample-pod`, 읽기 전용 패턴 `%R~revoked:*`)
+#   - Kafka 토픽·사용자         tasks.md T056(`dev.identity-admin.session.revoked` · KafkaUser `dev-identity-admin`)
+#   - Kafka bootstrap 호스트    Strimzi 관례 `<cluster>-kafka-bootstrap`(T055 클러스터 이름 `jt-kafka`, listener `tls` 9093) — **계약 미기재, T055에서 확인**
+#   - Kafka 컨슈머 그룹         T056 ACL "그룹 접두 read"의 접두가 계약에 없다 — **T056에서 확인**
+#   - OpenFGA 주소              ns `identity`, 매트릭스 `jt-dev → identity 8080`(network-policy.md :83). Service 이름은 T082 helm 릴리스 이름 — **T082에서 확인**
+#
+# 값을 바꿀 때: 정책(NetworkPolicy)의 포트를 벗어나는 주소·포트를 넣지 않는다. 이 Job이 쓰는 경로는
+# 매트릭스에 이미 있는 행(`jt-dev → data 5432·9093·6379`, `jt-dev → identity 9000·8080`)뿐이며,
+# 새 목적지가 필요하면 **계약(contracts/network-policy.md)을 먼저 고친다**.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: assert-config
+  namespace: jt-dev
+  labels:
+    app.kubernetes.io/name: assert-config
+    app.kubernetes.io/component: assert-job
+    app.kubernetes.io/part-of: policies-tests
+data:
+  # --- PostgreSQL(pg-main, ns data) -------------------------------------------
+  PGHOST: "pg-main-rw.data.svc"
+  PGPORT: "5432"
+  # CA 미러 Secret `pg-main-ca`(ESO store `k8s-data-ca`, key `ca.crt`)를 마운트하는 경로.
+  PGSSLROOTCERT: "/etc/pg/ca.crt"
+  DEV_DB: "dev_identity_admin"
+  PROD_DB: "identity_admin"
+  # 공유 컴포넌트 DB(env 접두 없음 — data-model §7). 공백 구분 목록.
+  SHARED_DBS: "authentik openfga"
+  # 카탈로그 검사에서 "prod role은 dev·공유 DB에 CONNECT가 없다"를 확인할 때 쓰는 role 이름.
+  PROD_APP_ROLE: "identity_admin_app"
+
+  # --- Dragonfly(dragonfly-dev, ns data) --------------------------------------
+  # 읽기 전용 패턴(`%R~revoked:*`)을 가진 dev 전용 검사 계정. prod aclfile에는 없다(T057).
+  DRAGONFLY_ACL_USER: "sample-pod"
+  DRAGONFLY_ACL_PATTERN: "%R~revoked:*"
+  # NOPERM 프로브가 지우려고 시도하는 키(거부되므로 실제로 지워지지 않는다).
+  REVOKED_PROBE_KEY: "revoked:sub:assert-probe"
+
+  # --- Kafka(jt-kafka, ns data) -----------------------------------------------
+  KAFKA_BOOTSTRAP: "jt-kafka-kafka-bootstrap.data.svc:9093"
+  KAFKA_USERNAME: "dev-identity-admin"
+  KAFKA_DEV_TOPIC: "dev.identity-admin.session.revoked"
+  # 교차 env 거부 프로브의 대상(prod 토픽) — dev 자격으로는 write/describe가 없어야 한다.
+  KAFKA_PROD_TOPIC: "identity-admin.session.revoked"
+  KAFKA_GROUP: "dev-identity-admin-assert"
+  # CA 미러 Secret `jt-kafka-cluster-ca-cert`(key `ca.crt`) 마운트 경로 — PEM truststore로 쓴다.
+  # `/etc/kafka`가 아닌 별도 경로인 이유: apache/kafka 이미지의 `/etc/kafka`에는 런처 스크립트·기본 설정이
+  # 들어 있어 그 경로에 볼륨을 마운트하면 이미지 내용이 가려진다(이미지 히스토리 실측).
+  KAFKA_CA: "/etc/kafka-ca/ca.crt"
+  KAFKA_CONSUME_TIMEOUT_MS: "20000"
+  # 왕복 판정 상한(초). JVM 기동 시간을 포함한 벽시계 값이다(README §로그 계약 주석 참조).
+  KAFKA_ROUNDTRIP_DEADLINE_S: "30"
+
+  # --- OpenFGA(ns identity) ----------------------------------------------------
+  OPENFGA_URL: "http://openfga.identity.svc:8080"
+  # 검사 전용 합성 식별자 — 실제 테넌트·사용자가 아니다(README §authz-assert).
+  # dev store에만 쓰고, Job이 끝날 때 자기가 쓴 튜플을 지운다.
+  ASSERT_USER: "user:policies-assert"
+  ASSERT_RELATION: "member"
+  ASSERT_OBJECT_TYPE: "tenant"
+  ASSERT_TENANT_A: "eda6971d-c3a4-4dee-9c4e-02546c2383a4"
+  ASSERT_TENANT_B: "2b4b9caa-64ec-4d3f-b264-f0eb364cea37"

@@ -1,0 +1,92 @@
+# clusters/oci-k3s/apps/platform-policies.yaml — 네임스페이스·PSA·NetworkPolicy·쿼터·agent-view RBAC (T041 PR-B2)
+#
+# 역할: root(app-of-apps)가 이 파일을 읽어 child Application `platform-policies`를 만들고, 그 Application이
+#   `platform/policies`를 서버 사이드 적용한다. 소유 객체는 123개다 —
+#   Namespace 14 · NetworkPolicy 93 · ResourceQuota 2 · LimitRange 2 · ServiceAccount 1 ·
+#   ClusterRole 2 · ClusterRoleBinding 3 · Role 3 · RoleBinding 3.
+#   구성·대응표·기대 권한표는 ../../../platform/policies/README.md, 적용 절차는 ./README.md.
+#
+# ── 적용 순간의 성격: T041에서 라이브 위험이 있는 유일한 구간 ────────────────────────────────
+#   다른 Application은 워크로드를 바꾸지 않거나(`platform-argocd` = 필드 소유권만 이전) 정책이 깔린 뒤에
+#   배포된다. 이 Application만 **패킷 필터를 처음으로 켠다**. 첫 sync에서 `argocd`와 `cloudflared`
+#   네임스페이스에 `default-deny`(ingress+egress)가 걸리는데, 두 ns는 각각
+#     - `argocd`     = 이 정책을 되돌릴 컨트롤러·repo-server가 사는 곳,
+#     - `cloudflared` = 운영자의 **유일한** SSH·kubectl 경로(T039에서 NSG 22 임시 규칙을 제거했다)
+#   이므로, 허용 규칙이 실제 트래픽과 어긋나면 되돌릴 손이 함께 끊긴다. 알려진 두 경로:
+#     R2 `allow-kube-api`(노드 A private IP:6443)가 kube-proxy DNAT **뒤** 주소와 매칭되지 않으면
+#        Argo 컨트롤러와 터널의 k8s 경로가 API를 잃는다 → 적용 전 게이트 VD-P(일회성 프로브 ns)로 실측한다.
+#     R1 `deny-imds`(kube-system, ports 없음)는 CoreDNS 업스트림이 169.254.169.254이면 포트 53까지 막아
+#        외부 이름 해석을 전면 중단시킨다 → 적용 전 게이트 VD-DNS로 실측한다.
+#   그래서 **머지 = 적용이 아니다.** 운영자가 root의 `syncPolicy.automated`를 먼저 끄고, 두 게이트와
+#   노드 A 대화형 SSH 세션(1차 break-glass)을 확보한 뒤 `kubectl apply -f bootstrap/root-app.yaml`로
+#   적용 시각을 직접 쥔다(승인된 유일한 수동 진입점). 절차·기준값은 ./README.md.
+#
+# ── 정지 스위치(잠금 징후: 새 터널 세션 실패 · Argo CrashLoop · repo-server DNS 실패) ──────────
+#   kubectl -n argocd scale sts argocd-application-controller --replicas=0
+#   (터널이 죽었으면 노드 A 대화형 SSH 세션에서 `sudo k3s kubectl -n argocd scale ...`)
+#   **child만 `automated: null`로 패치하는 것은 무효다.** 이 Application 객체 자체를 root가 git에서
+#   관리하고 root는 `selfHeal: true`이므로, 라이브 패치는 다음 조정에서 되돌려지고 `default-deny`가
+#   재생성된다. freeze를 쓸 수 없으면 root와 child를 **둘 다** 패치한다.
+#
+# ── 되돌리기(prune 경로를 쓰지 않는다) ──────────────────────────────────────────────────────
+#   freeze 뒤: kubectl delete networkpolicy -A -l app.kubernetes.io/part-of=platform-policies
+#   - 이 라벨은 `platform/policies/`의 NetworkPolicy 93 · ResourceQuota 2 · LimitRange 2 = 97객체가
+#     매니페스트에 **직접** 갖고 있다. 통신을 되살리는 것은 NetworkPolicy 삭제이므로 비상 명령은
+#     networkpolicy만 지운다. 쿼터까지 걷어야 하면 같은 선택자에 resourcequota,limitrange를 더한다.
+#   - `-l argocd.argoproj.io/instance=platform-policies` 선택자는 **동작하지 않는다**: 이 클러스터의
+#     리소스 추적 방식이 어노테이션이라(`bootstrap/argocd/argocd-cm.yaml:16`
+#     `application.resourceTrackingMethod: annotation`) 그 라벨은 객체에 존재하지 않는다.
+#   - Namespace 14개와 `agent-view` RBAC에는 이 라벨이 없다 — 비상 삭제가 tester·에이전트의 접근
+#     경로(agent-view 토큰)와 네임스페이스를 함께 지우지 않게 하려는 의도다.
+#   - 금지: `argocd app sync --prune`(agent-view RBAC까지 prune) · `kubectl delete networkpolicy -A --all`
+#     (kube-system 포함) · 이 Application의 cascade 삭제.
+#
+# finalizer 없음(의도적 — 나머지 플랫폼 Application과 다른 점):
+#   `resources-finalizer.argocd.argoproj.io`를 달면 이 Application을 지울 때 소유 객체가 cascade로
+#   함께 삭제된다. 그 목록에는 **Namespace 14개(kube-system 포함)** 가 들어 있고, Namespace 삭제는
+#   그 안의 모든 워크로드를 함께 지우는 비가역 사고다. `Delete=confirm` 승인 한 겹만으로 그 경로가
+#   열리므로 finalizer를 두지 않는다. Namespace 객체에도 `Delete=false,Prune=false`가 있어 2중 차단이다.
+#
+# sync-wave·destination: 값의 정본은 계약 contracts/gitops-repo.md §sync-wave 단일 표(코드 사본은
+#   tests/validate.sh의 WAVE_TABLE)다. 아래 어노테이션 값과 destination.namespace는 그 표에서 기계적으로
+#   읽어 넣었고, 이 저장소의 어떤 문서·주석·PR 본문에도 숫자를 다시 적지 않는다. 대조는 사람이 아니라
+#   검사 7.1(WAVE-name/path/mismatch)이 한다. 표의 3열이 `-`인 것은 이 컴포넌트가 한 네임스페이스에
+#   살지 않고 14개 ns에 걸쳐 있다는 뜻이라, destination.namespace는 표 규칙대로 `kube-system`을 쓴다
+#   (긍정 픽스처 tests/fixtures/positive/.../platform-apps.yaml과 같은 값). 이 값은 ns가 없는 객체의
+#   기본값일 뿐이고, 이 소스의 객체는 모두 자기 ns를 명시하거나 클러스터 스코프다
+#   (platform/policies/kustomization.yaml에 `namespace:` 트랜스포머가 없다).
+#
+# syncPolicy: 계약 §Application 규약의 플랫폼 표준 그대로.
+#   `ServerSideApply=true`는 검사 2가 강제하며, `kube-system`을 "PSA 라벨 3개만" 패치하는 방식
+#   (부분 객체 적용, K3s가 만든 나머지 필드는 건드리지 않음)이 성립하는 전제다.
+#   `CreateNamespace=true`는 destination ns가 이미 있어 실질 no-op이고, Namespace의 선언 정본은
+#   이 소스 자신(platform/policies/namespaces.yaml)이다.
+#   `SkipDryRunOnMissingResource=true`는 계약 표준 항목으로 둔다(이 소스는 CRD를 만들지 않는다).
+#   `automated.prune: false`이므로 git에서 정책을 지워도 클러스터에서 사라지지 않는다 — 롤백은
+#   위 되돌리기 절차이고, `git revert`만으로는 되돌아가지 않는다.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-policies
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-10"
+spec:
+  project: platform
+  source:
+    repoURL: https://github.com/joshua92y/platform-gitops.git
+    targetRevision: main
+    path: platform/policies
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kube-system
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+      - CreateNamespace=true
+      - Prune=confirm
+      - Delete=confirm
+      - SkipDryRunOnMissingResource=true

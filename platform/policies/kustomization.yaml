@@ -1,6 +1,30 @@
-# platform/policies/ — Namespace 14개·PSA 라벨·NetworkPolicy·ResourceQuota/LimitRange·agent-view RBAC
+# platform/policies/ — Namespace 14개·PSA 라벨·NetworkPolicy 93장·ResourceQuota/LimitRange·agent-view RBAC
+#
+# Application `platform-policies`가 이 디렉터리를 source.path로 읽는다(destination ns는 kube-system).
 # sync-wave: 계약 gitops-repo.md §sync-wave 단일 표 참조(wave 번호는 표에만 기재 — 중복 금지).
-# 빈 뼈대(T003) — 실제 매니페스트는 T031+에서 작성한다.
+# 구성·대응표·되돌리기 절차는 같은 디렉터리의 README.md에 있다.
+#
+# 렌더 검산(README §검산과 같은 값): Namespace 14 · NetworkPolicy 93(공통 49 + 내부 매트릭스 31 +
+#   외부·노드 13) · ResourceQuota 2 · LimitRange 2 · ServiceAccount 1 · ClusterRole 2 ·
+#   ClusterRoleBinding 3 · Role 3 · RoleBinding 3 = 123객체.
+#
+# 트랜스포머를 두지 않는다:
+#   - 공통 `labels:`(구 `commonLabels`)는 **모든** 객체에 라벨을 붙인다. 그러면
+#     (1) `kube-system` Namespace가 "PSA 라벨만 SSA 패치"라는 계약(network-policy.md :26)을 벗어나고,
+#     (2) 되돌리기 선택자 `app.kubernetes.io/part-of=platform-policies`가 agent-view RBAC까지 걸려
+#         비상 삭제가 tester·에이전트의 접근 경로를 함께 지운다(설계 E11·E15).
+#     그래서 그 라벨은 policies-common·policies-matrix·policies-external·quota의 매니페스트에만
+#     직접 기재하고, namespaces.yaml·rbac-agent-view.yaml에는 두지 않는다.
+#   - `namespace:` 트랜스포머도 두지 않는다. 객체마다 ns가 다르고 클러스터 스코프 객체
+#     (Namespace·ClusterRole·ClusterRoleBinding)가 섞여 있다. ns는 매니페스트에 명시한다.
+#   - `platform/policies/tests/`(검사 Job)는 여기서 참조하지 않는다 — AppProject `tests` 소속의
+#     별도 kustomization이다(설계 D3).
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-resources: []
+resources:
+  - namespaces.yaml
+  - policies-common.yaml
+  - policies-matrix.yaml
+  - policies-external.yaml
+  - quota.yaml
+  - rbac-agent-view.yaml

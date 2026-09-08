@@ -1,0 +1,172 @@
+# platform/policies/namespaces.yaml — 네임스페이스 14개 + Pod Security Admission 라벨
+#
+# 정본: 모노레포 specs/003-platform-foundation/contracts/network-policy.md §네임스페이스 표.
+#   - 목록(14개)과 PSA 레벨(enforce = warn = audit)은 계약 표 그대로다. 여기서 더하거나 빼지 않는다.
+#   - `kube-system`은 K3s가 이미 만든 네임스페이스이므로 **PSA 라벨만 SSA로 패치**한다(계약 :26).
+#     그래서 kube-system 객체에는 PSA 라벨 3개와 삭제 보호 어노테이션 밖의 필드를 두지 않는다.
+#   - 삭제 보호: 14개 전부 `argocd.argoproj.io/sync-options: Delete=false,Prune=false`.
+#     Application `platform-policies`에 finalizer가 없는 것과 합쳐 2중 차단이다
+#     (`Delete=confirm` 승인 실수 한 번이 Namespace 14개를 지우는 경로를 막는다).
+#   - 정책 객체 공통 라벨 `app.kubernetes.io/part-of: platform-policies`는 **여기에 두지 않는다**.
+#     그 라벨은 되돌리기용 선택자이므로 NetworkPolicy·ResourceQuota·LimitRange에만 붙이고,
+#     Namespace·RBAC에 붙이면 "kube-system은 PSA 라벨만"이라는 계약 :26을 어긴다.
+#     같은 이유로 kustomize 공통 `labels:` 트랜스포머를 쓰지 않는다(전 객체에 붙는다).
+#   - PSA 레벨을 바꾸는 변경은 상향·하향 모두 approval-review `k8s-security` 경계 대상이다(계약 :25).
+---
+# privileged 사유: K3s 시스템 컴포넌트(traefik svclb hostPort · coredns · metrics-server)
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kube-system
+  annotations:
+    argocd.argoproj.io/sync-options: Delete=false,Prune=false
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/warn: privileged
+    pod-security.kubernetes.io/audit: privileged
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: argocd
+  annotations:
+    argocd.argoproj.io/sync-options: Delete=false,Prune=false
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: vault
+  annotations:
+    argocd.argoproj.io/sync-options: Delete=false,Prune=false
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: external-secrets
+  annotations:
+    argocd.argoproj.io/sync-options: Delete=false,Prune=false
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cert-manager
+  annotations:
+    argocd.argoproj.io/sync-options: Delete=false,Prune=false
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/warn: baseline
+    pod-security.kubernetes.io/audit: baseline
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cnpg-system
+  annotations:
+    argocd.argoproj.io/sync-options: Delete=false,Prune=false
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/warn: baseline
+    pod-security.kubernetes.io/audit: baseline
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: data
+  annotations:
+    argocd.argoproj.io/sync-options: Delete=false,Prune=false
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/warn: baseline
+    pod-security.kubernetes.io/audit: baseline
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: identity
+  annotations:
+    argocd.argoproj.io/sync-options: Delete=false,Prune=false
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: jt-dev
+  annotations:
+    argocd.argoproj.io/sync-options: Delete=false,Prune=false
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: jt-prod
+  annotations:
+    argocd.argoproj.io/sync-options: Delete=false,Prune=false
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
+---
+# privileged 사유: hostPath `/var/log`(alloy-logs) · node-exporter hostNetwork
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  annotations:
+    argocd.argoproj.io/sync-options: Delete=false,Prune=false
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/warn: privileged
+    pod-security.kubernetes.io/audit: privileged
+---
+# privileged 사유: hostPID · hostIPC · hostNetwork · `chroot /host`
+#   (K3s 업그레이드 Plan Job · `platform-backup.sh --pre-upgrade`; SUC에 하드코딩돼 비활성화 불가)
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: system-upgrade
+  annotations:
+    argocd.argoproj.io/sync-options: Delete=false,Prune=false
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/warn: privileged
+    pod-security.kubernetes.io/audit: privileged
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cloudflared
+  annotations:
+    argocd.argoproj.io/sync-options: Delete=false,Prune=false
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: reloader
+  annotations:
+    argocd.argoproj.io/sync-options: Delete=false,Prune=false
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted

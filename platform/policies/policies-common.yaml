@@ -1,0 +1,662 @@
+# platform/policies/policies-common.yaml — 공통 정책 세트 5종 + 조건부 2종 (49장)
+#
+# 정본: 모노레포 specs/003-platform-foundation/contracts/network-policy.md §정책 세트.
+#   default-deny 13 · allow-dns 13 · allow-same-namespace 7 · allow-kube-api 10 ·
+#   allow-apiserver-webhook 4 · deny-imds 1(kube-system 전용) · allow-imds 1(vault 전용) = 49장.
+#   13 = 계약 표 14개 - kube-system. `kube-system`에는 default-deny를 걸지 않는다(K3s 번들 컴포넌트).
+#
+# 상수: 노드 A private IP `10.0.7.78` — K8s API 6443(`allow-kube-api`)와
+#   admission webhook·`kubectl port-forward`의 출발 IP(`allow-apiserver-webhook`).
+#   노드 B private IP는 이 파일에 없다(노드 IP 목적지 규칙은 policies-external.yaml).
+#
+# 되돌리기용 라벨: 모든 객체에 `app.kubernetes.io/part-of: platform-policies`를 직접 기재한다.
+#   Argo CD의 추적 방식은 어노테이션이라 `argocd.argoproj.io/instance` 라벨은 존재하지 않는다.
+#   비상 되돌리기 = 컨트롤러 freeze(`kubectl -n argocd scale sts argocd-application-controller --replicas=0`)
+#   → `kubectl delete networkpolicy -A -l app.kubernetes.io/part-of=platform-policies`.
+#   `argocd app sync --prune`은 쓰지 않는다(agent-view RBAC까지 지운다).
+#
+# 추가 허용 규칙 금지: 계약의 허용 매트릭스가 exhaustive다. 새 경로가 필요하면 계약을 먼저 고친다.
+#
+# =============================================================================
+# default-deny × 13 (kube-system 제외) — policyTypes [Ingress, Egress], 규칙 없음
+# =============================================================================
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: argocd
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: vault
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: external-secrets
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: cert-manager
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: cnpg-system
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: data
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: identity
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: jt-dev
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: jt-prod
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: monitoring
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: system-upgrade
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: cloudflared
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: reloader
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+# =============================================================================
+# allow-dns × 13 (kube-system 제외) — egress → kube-system `k8s-app=kube-dns` 53/UDP·53/TCP
+# =============================================================================
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: argocd
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }, podSelector: { matchLabels: { k8s-app: kube-dns } } }]
+      ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: vault
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }, podSelector: { matchLabels: { k8s-app: kube-dns } } }]
+      ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: external-secrets
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }, podSelector: { matchLabels: { k8s-app: kube-dns } } }]
+      ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: cert-manager
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }, podSelector: { matchLabels: { k8s-app: kube-dns } } }]
+      ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: cnpg-system
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }, podSelector: { matchLabels: { k8s-app: kube-dns } } }]
+      ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: data
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }, podSelector: { matchLabels: { k8s-app: kube-dns } } }]
+      ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: identity
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }, podSelector: { matchLabels: { k8s-app: kube-dns } } }]
+      ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: jt-dev
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }, podSelector: { matchLabels: { k8s-app: kube-dns } } }]
+      ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: jt-prod
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }, podSelector: { matchLabels: { k8s-app: kube-dns } } }]
+      ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: monitoring
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }, podSelector: { matchLabels: { k8s-app: kube-dns } } }]
+      ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: system-upgrade
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }, podSelector: { matchLabels: { k8s-app: kube-dns } } }]
+      ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: cloudflared
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }, podSelector: { matchLabels: { k8s-app: kube-dns } } }]
+      ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: reloader
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }, podSelector: { matchLabels: { k8s-app: kube-dns } } }]
+      ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
+# =============================================================================
+# allow-same-namespace × 7 — ingress·egress 모두 자기 ns(namespaceSelector = 자기 ns 라벨)
+#   근거(계약 :47): Strimzi operator ↔ broker ↔ entity-operator · CNPG operator ↔ instance ·
+#   Argo server ↔ repo-server ↔ redis ↔ controller · Alloy 내부 · Authentik server ↔ worker.
+# =============================================================================
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-same-namespace
+  namespace: argocd
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: argocd } } }]
+  egress:
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: argocd } } }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-same-namespace
+  namespace: data
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: data } } }]
+  egress:
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: data } } }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-same-namespace
+  namespace: cnpg-system
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: cnpg-system } } }]
+  egress:
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: cnpg-system } } }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-same-namespace
+  namespace: external-secrets
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: external-secrets } } }]
+  egress:
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: external-secrets } } }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-same-namespace
+  namespace: cert-manager
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: cert-manager } } }]
+  egress:
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: cert-manager } } }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-same-namespace
+  namespace: monitoring
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: monitoring } } }]
+  egress:
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: monitoring } } }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-same-namespace
+  namespace: identity
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: identity } } }]
+  egress:
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: identity } } }]
+# =============================================================================
+# allow-kube-api × 10 — egress → 노드 A private IP 10.0.7.78/32 :6443
+#   `identity`는 이 목록에 없다(계약 §정책 세트). Authentik outpost가 in-cluster API를 시도하면
+#   오류 로그가 남을 수 있으며, 계약 공백으로 T080에서 관찰한다.
+#   ipBlock이 /32이므로 except 4개는 필요 없다(계약 §외부 egress 규칙 형식은 광역 대역 규칙의 형식이다).
+# =============================================================================
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-kube-api
+  namespace: argocd
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ ipBlock: { cidr: 10.0.7.78/32 } }]
+      ports: [{ protocol: TCP, port: 6443 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-kube-api
+  namespace: vault
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ ipBlock: { cidr: 10.0.7.78/32 } }]
+      ports: [{ protocol: TCP, port: 6443 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-kube-api
+  namespace: external-secrets
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ ipBlock: { cidr: 10.0.7.78/32 } }]
+      ports: [{ protocol: TCP, port: 6443 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-kube-api
+  namespace: cert-manager
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ ipBlock: { cidr: 10.0.7.78/32 } }]
+      ports: [{ protocol: TCP, port: 6443 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-kube-api
+  namespace: cnpg-system
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ ipBlock: { cidr: 10.0.7.78/32 } }]
+      ports: [{ protocol: TCP, port: 6443 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-kube-api
+  namespace: data
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ ipBlock: { cidr: 10.0.7.78/32 } }]
+      ports: [{ protocol: TCP, port: 6443 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-kube-api
+  namespace: monitoring
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ ipBlock: { cidr: 10.0.7.78/32 } }]
+      ports: [{ protocol: TCP, port: 6443 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-kube-api
+  namespace: system-upgrade
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ ipBlock: { cidr: 10.0.7.78/32 } }]
+      ports: [{ protocol: TCP, port: 6443 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-kube-api
+  namespace: reloader
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ ipBlock: { cidr: 10.0.7.78/32 } }]
+      ports: [{ protocol: TCP, port: 6443 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-kube-api
+  namespace: cloudflared
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ ipBlock: { cidr: 10.0.7.78/32 } }]
+      ports: [{ protocol: TCP, port: 6443 }]
+# =============================================================================
+# allow-apiserver-webhook × 4 — ingress ← 노드 A private IP 10.0.7.78/32, ns마다 포트
+#   cert-manager 10250 · external-secrets 10250 · cnpg-system 9443 = admission webhook.
+#   vault 8200은 webhook이 아니라 `kubectl port-forward svc/vault 8200`의 도착 경로다(계약 :48).
+# =============================================================================
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-apiserver-webhook
+  namespace: cert-manager
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ ipBlock: { cidr: 10.0.7.78/32 } }]
+      ports: [{ protocol: TCP, port: 10250 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-apiserver-webhook
+  namespace: external-secrets
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ ipBlock: { cidr: 10.0.7.78/32 } }]
+      ports: [{ protocol: TCP, port: 10250 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-apiserver-webhook
+  namespace: cnpg-system
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ ipBlock: { cidr: 10.0.7.78/32 } }]
+      ports: [{ protocol: TCP, port: 9443 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-apiserver-webhook
+  namespace: vault
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ ipBlock: { cidr: 10.0.7.78/32 } }]
+      ports: [{ protocol: TCP, port: 8200 }]
+# =============================================================================
+# 조건부 ① deny-imds — kube-system 전용
+#   kube-system에는 default-deny가 없으므로 이 한 장이 IMDS만 막는다:
+#   `ports`가 없는 것이 의도다(IMDS를 제외한 전 대역·전 포트를 허용하는 egress 규칙 한 장 =
+#   IMDS만 도달 불가). default-deny가 있는 나머지 13 ns의 IMDS 차단은 규칙마다 except로 표현한다.
+#
+#   [D5 미결 — VD-DNS 실측 대기] 노드 resolv.conf 업스트림이 169.254.169.254(OCI VCN 리졸버)이면
+#   이 규칙이 CoreDNS의 외부 이름 해석(53)까지 끊는다. 실측 결과가 IMDS면 D5-A를 채택해
+#   **바로 아래 자리**에 `allow-coredns-upstream`(kube-system, podSelector k8s-app=kube-dns →
+#   ipBlock 169.254.169.254/32, UDP 53 + TCP 53) 1장을 추가한다. 그 추가는 계약 §정책 세트 개정과
+#   validate 5.3 예외·부정 픽스처가 선행 조건이며, T041 S2 범위에서는 넣지 않는다(설계 기본형 유지).
+# =============================================================================
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-imds
+  namespace: kube-system
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ ipBlock: { cidr: 0.0.0.0/0, except: [169.254.169.254/32] } }]
+# --- [D5-A 채택 시 allow-coredns-upstream 1장이 들어갈 자리] ---
+# =============================================================================
+# 조건부 ② allow-imds — vault 전용(인스턴스 프린시펄, OCI KMS auto-unseal)
+#   클러스터에서 IMDS(169.254.169.254:80)에 도달할 수 있는 유일한 ns다.
+# =============================================================================
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-imds
+  namespace: vault
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ ipBlock: { cidr: 169.254.169.254/32 } }]
+      ports: [{ protocol: TCP, port: 80 }]
