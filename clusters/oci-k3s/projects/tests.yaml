@@ -1,0 +1,30 @@
+# AppProject `tests` — `platform/policies/tests/` 검사 Job 3종(data-assert · kafka-assert · authz-assert) 전용 (T041 PR-A)
+#
+# 정본: tasks.md T041 문면 "sourceRepos = gitops 만, destination `jt-dev` 만, cluster 리소스 금지" ·
+#   계약 gitops-repo.md §Application 규약 AppProject 행 · hostnames-and-access.md §자격이 필요한 검사.
+#
+# 왜 별도 프로젝트인가: Argo CD 에는 "destination 을 특정 Application 에만 한정"하는 개념이 없다. 검사 Job 은 `jt-dev` 에서
+#   dev scope 자격(ClusterSecretStore `vault-dev`)만으로 돌아야 하므로, 권한 상한이 훨씬 넓은 `platform` 이 아니라
+#   source·destination·cluster 권한이 모두 최소인 이 프로젝트로 배포한다.
+#
+# 문면에 없는 제약은 두지 않는다 — `namespaceResourceBlacklist` 없음. 세 항목(sourceRepos·destination·cluster 리소스 금지)이 전부다.
+#
+# 이 프로젝트를 쓰는 Application 은 T041 에서 만들지 않는다(설계 D3): 이름·wave 를 표현할 행이 계약 §Application 규약과
+#   §sync-wave 단일 표에 아직 없고(tests/validate.sh 검사 7.1 은 `root`·`platform-<component>`·`<pod>-<env>` 만 인정),
+#   검사 대상(pg-main·Kafka·OpenFGA·ClusterSecretStore `vault-dev`)이 US3/US4 산출물이라 지금 배포하면 즉시 실패한다.
+#   계약에 행을 추가하는 것은 converge 인계 9번, Application 생성은 그 뒤 태스크(T102 계열)다.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: tests
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-options: Delete=false,Prune=false
+spec:
+  description: platform/policies/tests 검사 Job 전용 — jt-dev 만, dev scope 자격만
+  sourceRepos:
+    - https://github.com/joshua92y/platform-gitops.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: jt-dev
+  clusterResourceWhitelist: []

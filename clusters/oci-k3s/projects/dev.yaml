@@ -1,0 +1,41 @@
+# AppProject `dev` — 앱 dev 배포(`<pod>-dev`, source `apps/<pod>/overlays/dev`) 전용 (T041 PR-A)
+#
+# 정본 계약: gitops-repo.md §Application 규약 AppProject 행
+#   "`dev`/`prod`: 자기 네임스페이스만, cluster 리소스 금지, `namespaceResourceBlacklist`: NetworkPolicy · ResourceQuota ·
+#    LimitRange · Role · RoleBinding · ServiceAccount(정책 객체는 `platform/policies/` 만 쓴다)".
+#
+# 금지 목록의 group 은 정확히 일치해야 한다(모노레포 tests/platform/cluster.tests.ps1 argo-3 이 group 까지 대조한다):
+#   networking.k8s.io/NetworkPolicy · ""/ResourceQuota · ""/LimitRange · ""/ServiceAccount ·
+#   rbac.authorization.k8s.io/Role · rbac.authorization.k8s.io/RoleBinding.
+#   ServiceAccount 를 막는 이유는 pod 워크로드가 `automountServiceAccountToken: false` 로 API 를 쓰지 않기 때문이다(계약 §워크로드 강화).
+#
+# 이 프로젝트를 쓰는 Application(`identity-admin-dev` 등)은 T041 에서 만들지 않는다 — tasks.md T075 가
+#   "Argo Application `identity-admin-dev`·`identity-admin-prod`" 를 자기 산출물로 명시한다(설계 D8).
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: dev
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-options: Delete=false,Prune=false
+spec:
+  description: 앱 dev 배포 — jt-dev 네임스페이스만. cluster 리소스·정책 객체 금지
+  sourceRepos:
+    - https://github.com/joshua92y/platform-gitops.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: jt-dev
+  clusterResourceWhitelist: []
+  namespaceResourceBlacklist:
+    - group: networking.k8s.io
+      kind: NetworkPolicy
+    - group: ""
+      kind: ResourceQuota
+    - group: ""
+      kind: LimitRange
+    - group: ""
+      kind: ServiceAccount
+    - group: rbac.authorization.k8s.io
+      kind: Role
+    - group: rbac.authorization.k8s.io
+      kind: RoleBinding

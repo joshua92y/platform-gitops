@@ -1,0 +1,25 @@
+# clusters/oci-k3s/projects/ — AppProject 5종(platform · dev · prod · tests + default 봉인) (T041 PR-A)
+#
+# 정본 계약: 모노레포 specs/003-platform-foundation/contracts/gitops-repo.md §Application 규약(AppProject 행) ·
+#   contracts/network-policy.md §네임스페이스 표(14개) · contracts/hostnames-and-access.md §자격이 필요한 검사(AppProject `tests`).
+#
+# 투입 경로 — 구조적 순환의 해소:
+#   root Application 은 `clusters/oci-k3s/apps` 만 읽는 비재귀 directory 소스라(bootstrap/root-app.yaml) 이 디렉터리를
+#   스스로 동기화하지 못한다. 그래서 `bootstrap/argocd/kustomization.yaml` 이 이 디렉터리를 base 로 포함한다.
+#     ① 첫 투입 = 운영자 `kubectl apply --server-side -k clusters/oci-k3s/projects` (5객체 — blast radius 최소)
+#     ② 이후 소유 = 자기 관리 Application `platform-argocd`(source `bootstrap/argocd`) — 절차는 ../../../bootstrap/README.md ⑧
+#   재부트스트랩(T114)에서는 ②의 `kubectl apply --server-side -k bootstrap/argocd` 한 번이 Argo CD + AppProject 를 함께 넣는다.
+#
+# `namespace: argocd` 는 이중 안전장치다 — 각 AppProject 파일에도 `metadata.namespace: argocd` 를 명시했다.
+#   AppProject 는 argocd ns 밖에 있으면 Argo CD 가 인식하지 못하는데, kubeconfig 의 기본 ns 로 떨어져도 apply 자체는
+#   성공해 조용히 어긋난다. 두 곳에 적어 두면 `-k` 없이 개별 파일을 apply 해도 목적지가 고정된다.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: argocd
+
+resources:
+  - default.yaml
+  - platform.yaml
+  - dev.yaml
+  - prod.yaml
+  - tests.yaml

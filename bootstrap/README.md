@@ -1,19 +1,21 @@
-# bootstrap/ — Argo CD 설치 · root app 운영자 절차 (T040)
+# bootstrap/ — Argo CD 설치 · root app 운영자 절차 (T040 · T041 PR-A)
 
 계약 gitops-repo.md §디렉터리: `argocd/` = remote base(install.yaml, 커밋 SHA 핀) + patches, `root-app.yaml` = Application "root" → `clusters/oci-k3s/apps`(유일한 수동 apply).
-이 디렉터리는 Argo CD **자체**와 root Application만 소유한다. 나머지(네임스페이스·PSA 라벨·AppProject·컴포넌트 Application·Ingress·SSO)는 T041 이후 태스크의 몫이며,
-그 경계는 `argocd/kustomization.yaml` 머리 주석에 있다.
+이 디렉터리는 Argo CD **자체**와 root Application, 그리고 T041 PR-A부터 **AppProject 5종**(base `../clusters/oci-k3s/projects`)을 소유한다.
+나머지(네임스페이스·PSA 라벨·컴포넌트 Application·Ingress·SSO)는 T041 이후 태스크의 몫이며, 그 경계는 `argocd/kustomization.yaml` 머리 주석에 있다.
 
 | 파일 | 내용 |
 |---|---|
-| `argocd/kustomization.yaml` | `namespace: argocd` + install.yaml@`e258ee23…`(v3.5.2 커밋) + 이미지 digest 2개 + 패치: dex 6·applicationset 8·upstream NetworkPolicy 5 삭제, requests/GOMEMLIMIT 5종, `argocd-cmd-params-cm`, `argocd-cm` |
+| `argocd/kustomization.yaml` | `namespace: argocd` + install.yaml@`e258ee23…`(v3.5.2 커밋) + **base `../../clusters/oci-k3s/projects`**(AppProject 5) + 이미지 digest 2개 + 패치: dex 6·applicationset 8·upstream NetworkPolicy 5 삭제, requests/GOMEMLIMIT 5종, `argocd-cmd-params-cm`, `argocd-cm`, CRD 삭제 보호 3 |
 | `argocd/argocd-cmd-params-cm.yaml` | `server.insecure` · `controller.diff.server.side` · processors/parallelism 4키 |
 | `argocd/argocd-cm.yaml` | `timeout.reconciliation 180s` · `application.resourceTrackingMethod annotation` · Application 헬스 Lua(`resource.exclusions` 기본 유지) |
 | `argocd/resources-*.yaml` | controller(StatefulSet) 256Mi/1Gi · repo-server 128Mi/512Mi · server 128Mi/512Mi · redis 32Mi/128Mi · notifications 64Mi/256Mi + GOMEMLIMIT(Go 4종) |
-| `root-app.yaml` | Application `root`(project `default` — 임시, T041에서 `platform`으로 이관; 절차는 파일 머리 주석) |
+| `argocd/patch-crd-sync-options.yaml` | Argo CD CRD 3종(applications·appprojects·applicationsets)에 `Delete=false,Prune=false` — strategic merge(install.yaml CRD에 annotations 맵이 없어 JSON6902 add는 빌드 실패) |
+| `root-app.yaml` | Application `root`(project **`platform`** — T041 PR-A에서 `default`에서 이관; 순서는 파일 머리 주석과 아래 ⑧) |
 
 - **이 저장소에 비밀은 없다.** 초기 admin 비밀번호는 클러스터가 만들고(④) 운영자 비밀번호 관리자에만 옮긴다.
-- 순서: ① ns 수동 생성 → ② `apply --server-side -k` → ③ 롤아웃 확인 → ④ admin 비밀번호 → ⑤ root 적용 → ⑥ 접근(port-forward) → (T041) 인수·이관. ⑦은 되돌리기.
+- 순서: ① ns 수동 생성 → ② `apply --server-side -k` → ③ 롤아웃 확인 → ④ admin 비밀번호 → ⑤ root 적용 → ⑥ 접근(port-forward) → **⑧ AppProject 투입·root 이관(T041 PR-A)**. ⑦은 되돌리기.
+  - **T040을 처음부터 다시 하는 경우(재부트스트랩·T114)**: ②의 `apply --server-side -k bootstrap/argocd` 한 번이 Argo CD 40객체와 AppProject 5를 함께 넣으므로 ⑧의 AppProject 투입은 생략하고 root 이관(⑧의 2단계)만 하면 된다.
 - **라이브 변경은 이 절차의 운영자만** 한다(admin kubeconfig). 에이전트·tester는 `agent-view` 토큰으로 읽기만 한다.
 - 모든 명령은 **이 브랜치가 PR로 main에 머지된 뒤**, main을 최신화한 로컬 클론에서 실행한다(브랜치 상태를 클러스터에 넣지 않는다). 아래 `$REPO`는 그 클론의 절대 경로.
 
@@ -48,8 +50,9 @@ T041의 자기 관리 Application도 SSA로 같은 객체를 다루므로 처음
 워크스테이션의 kubectl(내장 kustomize)이 `raw.githubusercontent.com`에 닿아야 한다(원격 base).
 
 ```bash
-# (선택) 렌더링 사전 확인 — 문서 40개(59 − 삭제 19), 삭제 대상 객체 이름 0, NetworkPolicy 0
-kubectl kustomize "$REPO/bootstrap/argocd" | grep -c '^kind:'                                   # 40
+# (선택) 렌더링 사전 확인 — 문서 45개(59 − 삭제 19 + AppProject 5), 삭제 대상 객체 이름 0, NetworkPolicy 0
+kubectl kustomize "$REPO/bootstrap/argocd" | grep -c '^kind:'                                   # 45 (T041 PR-A 전에는 40)
+kubectl kustomize "$REPO/bootstrap/argocd" | grep -c '^kind: AppProject'                        # 5 (default platform dev prod tests)
 kubectl kustomize "$REPO/bootstrap/argocd" | grep -c -E '^  name: argocd-(dex-server|applicationset-controller)(-network-policy)?$'   # 0
 kubectl kustomize "$REPO/bootstrap/argocd" | grep -c '^kind: NetworkPolicy'                     # 0 (upstream NP 5장 제거 — 정본은 T041 platform/policies)
 
@@ -112,10 +115,10 @@ kubectl -n argocd get applications
 kubectl -n argocd get app root -o jsonpath='{.status.sync.status} {.status.health.status}{"\n"}{.status.conditions}'; echo
 ```
 
-- **T041 전 기대값 = `Synced Healthy`, 리소스 0개.** `clusters/oci-k3s/apps/`는 main에 존재하지만 `README.md`뿐이라 directory 소스가 매니페스트
+- **T041 PR-B1 전 기대값 = `Synced Healthy`, 리소스 0개.** `clusters/oci-k3s/apps/`는 main에 존재하지만 `README.md`뿐이라 directory 소스가 매니페스트
   (`*.yaml|*.yml|*.json`)를 0개 찾는다 — 비교 대상이 없으니 Synced, 집계할 리소스가 없으니 Healthy. 이것이 "저장소 도달 + 조정 루프 동작"의 증명이다.
 - `app path does not exist`가 나오면 `clusters/oci-k3s/apps/`가 main에 없다는 뜻이다(저장소 상태를 본다). `project ... does not exist`가 나오면
-  `root-app.yaml`의 project가 `default`가 아니라는 뜻이다(T040 시점에는 `default`여야 한다 — 파일 머리 주석).
+  AppProject `platform`이 아직 클러스터에 없다는 뜻이다 — ⑧의 1단계를 먼저 실행한다(T041 PR-A 전 상태라면 `root-app.yaml`의 project가 `default`여야 한다).
 - root는 `Prune=confirm` · `Delete=confirm` — 삭제·prune은 승인 어노테이션 전까지 대기한다(⑦).
 - T041 뒤: child Application(platform-* 19개)이 wave 순서로 나타나고, `kubectl -n argocd get applications`가 root 포함 전부 Synced/Healthy여야 한다(quickstart §US2).
 
@@ -135,11 +138,15 @@ port-forward는 admin kubeconfig의 API 경로(`cloudflared access tcp` 6443 리
 `*-token` · `*-token.lock` · `*-token.url` · `*-org-token*` 파일(`<host>-<hash>-token` 형태; `cert.pem` 같은 터널 자격은 건드리지 않는다).
 `cloudflared access logout`이라는 하위 명령은 **없다** — 2026.8.3 `cloudflared access --help`의 하위 명령은 login · curl · token · tcp/rdp/ssh/smb · ssh-config · ssh-gen 뿐(실측).
 
-## ⑦ 되돌리기 — `kubectl delete -k`는 CRD까지 지운다
+## ⑦ 되돌리기 — `kubectl delete -k`는 CRD와 AppProject까지 지운다
 
 `kubectl delete -k "$REPO/bootstrap/argocd"`는 Application·AppProject·ApplicationSet **CRD를 함께 삭제**한다 → 모든 Application CR이 사라지고,
 `resources-finalizer`가 붙은 Application은 컨트롤러가 cascade(관리 리소스 삭제)를 끝내야 사라지는데 컨트롤러도 같이 지워지므로 Terminating에 갇히거나,
 컨트롤러가 살아 있는 동안이면 **플랫폼 리소스 전체가 삭제**된다. T041 이후에는 절대 쓰지 않는다(롤백 런북 T114).
+
+T041 PR-A부터 이 명령의 범위에 **AppProject 5종도 들어온다**(base `../clusters/oci-k3s/projects`). AppProject가 사라지면 CRD 삭제가 없어도 모든
+Application이 "project does not exist"로 멈춘다. 그래서 5개 모두에 `argocd.argoproj.io/sync-options: Delete=false,Prune=false`를 두었지만,
+그 어노테이션은 **Argo CD의 sync·cascade에만** 효과가 있고 운영자의 `kubectl delete`는 막지 못한다. 이 디렉터리에 `delete -k`를 쓰지 않는 것이 유일한 방어다.
 
 T040 단계(root만 있고 apps/가 비어 있을 때)의 완전 철회 순서:
 
@@ -160,13 +167,50 @@ kubectl delete namespace argocd
 
 부분 되돌리기(설정만): 이 디렉터리의 패치를 고쳐 PR → ②를 재실행한다(SSA라 재적용이 diff만 반영). T041 뒤에는 `platform-argocd` Application이 같은 일을 자동으로 한다.
 
+## ⑧ AppProject 투입 · root project 이관 (T041 PR-A)
+
+**전제**: T041 PR-A가 main에 머지되고 `$REPO`가 최신화된 상태. PR-A는 워크로드를 바꾸지 않는다 — `clusters/oci-k3s/apps/`에는 여전히 Application 파일이 없다.
+그래서 이 단계에서 새로 만들어지거나 재기동되는 파드는 없고, 바뀌는 것은 AppProject 5개(신규)와 root의 `spec.project` 한 줄뿐이다.
+
+**왜 운영자가 직접 넣는가**: root Application은 `clusters/oci-k3s/apps`만 읽는 비재귀 directory 소스라 `clusters/oci-k3s/projects/`를 스스로 동기화하지 못한다.
+AppProject가 없으면 root를 포함한 어떤 Application도 유효하지 않으므로(구조적 순환), AppProject는 Argo CD 자체와 함께 부트스트랩 묶음에 둔다.
+이후 관리는 `platform-argocd`(T041 PR-B1)가 이어받는다.
+
+```bash
+# 0) 사전 상태 — 봉인 전의 기준값
+kubectl -n argocd get appprojects                       # default 1개(전권)
+kubectl -n argocd get app root -o jsonpath='{.spec.project} {.status.sync.status} {.status.health.status}{"\n"}'
+                                                        # default Synced Healthy (관리 리소스 0)
+kubectl kustomize "$REPO/clusters/oci-k3s/projects" | grep -c '^kind: AppProject'   # 5
+
+# 1) AppProject 투입 — 5객체만(작은 blast radius). bootstrap/argocd 전체 대신 projects/ 만 적용한다
+kubectl apply --server-side --field-manager=operator-bootstrap -k "$REPO/clusters/oci-k3s/projects"
+kubectl -n argocd get appprojects                       # default platform dev prod tests
+kubectl -n argocd get appproject default -o jsonpath='{.spec.sourceRepos} {.spec.destinations}{"\n"}'   # 빈 값 = 봉인
+#    이 순간부터 다음 조정(≤180 s)까지 root(project default)는 InvalidSpecError·Unknown이 될 수 있다 — 관리 리소스 0이라 영향 없음.
+#    argocd-server는 default가 NotFound일 때만 전권으로 재생성하므로, 봉인본이 존재하는 한 그대로 유지된다.
+
+# 2) root 이관 — 같은 파일 재적용은 멱등이고, Application spec 변경은 즉시 refresh를 트리거한다
+kubectl apply -f "$REPO/bootstrap/root-app.yaml"
+kubectl -n argocd get app root -o jsonpath='{.spec.project} {.status.sync.status} {.status.health.status}{"\n"}'
+                                                        # platform Synced Healthy (≤60 s)
+kubectl -n argocd get app root -o jsonpath='{.status.conditions}{"\n"}'      # [] (InvalidSpecError 해소)
+```
+
+- **`default` 봉인은 되돌리지 않는다.** 봉인 뒤 root는 `platform`에서만 유효하므로 되돌리면 오히려 잠긴다.
+- root가 InvalidSpec에 머물면 원인은 `clusters/oci-k3s/projects/platform.yaml`의 `sourceRepos` 문자열(정규화 후 glob 매칭) 또는 `destinations` 누락이다 →
+  수정 PR 머지 → 1)을 다시 실행(SSA 멱등). 급하면 `kubectl -n argocd patch app root --type merge -p '{"spec":{"syncPolicy":{"automated":null}}}'`로 자동 sync를 끄고 원인을 분석한다.
+- **복구(자기 참조 잠금)**: PR-B1 이후 잘못된 AppProject 커밋으로 Application이 잠기면 Argo CD는 스스로 고치지 못한다. 수정 PR을 머지한 뒤
+  `kubectl apply --server-side --field-manager=operator-bootstrap -k "$REPO/clusters/oci-k3s/projects"` 한 번이 복구 경로다(비파괴·멱등).
+- **금지**: 이 단계에서 `kubectl delete -k "$REPO/bootstrap/argocd"`(⑦) · AppProject 개별 삭제 · `argocd app sync --prune`.
+
 ---
 
 ## T041·T043·이후로 넘기는 항목
 
 - **Namespace 인수**: `platform/policies/`가 `argocd` ns + PSA restricted 라벨을 선언 → Argo CD가 SSA로 ①의 수동 생성분을 인수(라벨 값이 같아야 conflict 없음 — cloudflared README ④와 같은 판정: managedFields).
-- **AppProject → root 이관**: `clusters/oci-k3s/projects/` 4종 + `default` 봉인, `root-app.yaml` `project: platform`, 재적용 순서는 `root-app.yaml` 머리 주석. root의 path가 `apps/`라 `projects/`는 root가 동기화하지 못한다 — T041이 투입 방법을 정한다(계약 트리의 구조적 순환).
-- **자기 관리**: Application `platform-argocd`(source `bootstrap/argocd`, wave는 계약 §sync-wave 단일 표, syncOptions 표준 + `Prune=confirm` · `Delete=confirm`). 이후 업그레이드는 `kustomization.yaml`의 SHA·digest 변경 PR = Argo가 자기 자신을 갱신(research D13). 첫 인수에서 field conflict 때문에 ②를 재실행할 필요는 없다 — Argo CD의 SSA는 항상 force(`gitops-engine/pkg/utils/kube/resource_ops.go:469` `o.ForceConflicts = serverSideApply`)라 conflict가 표면화되지 않고 필드 소유권이 Argo 컨트롤러로 넘어간다.
+- **AppProject → root 이관**: ~~T041이 투입 방법을 정한다~~ → **완료(T041 PR-A)**. `clusters/oci-k3s/projects/` 5종(`default` 봉인 포함) + `root-app.yaml` `project: platform`, 투입 경로 = `bootstrap/argocd`가 `projects/`를 base로 포함(첫 투입은 운영자 `apply -k`, 이후 `platform-argocd` 소유). 실행 순서는 ⑧.
+- **자기 관리**(T041 PR-B1): Application `platform-argocd`(source `bootstrap/argocd`, wave는 계약 §sync-wave 단일 표, syncOptions 표준 + `Prune=confirm` · `Delete=confirm`). PR-A 이후 그 소스에는 **AppProject 5종도 포함**되므로 이 Application이 프로젝트 정의까지 소유한다(자기 참조 — 복구는 ⑧). 이후 업그레이드는 `kustomization.yaml`의 SHA·digest 변경 PR = Argo가 자기 자신을 갱신(research D13). 첫 인수에서 field conflict 때문에 ②를 재실행할 필요는 없다 — Argo CD의 SSA는 항상 force(`gitops-engine/pkg/utils/kube/resource_ops.go:469` `o.ForceConflicts = serverSideApply`)라 conflict가 표면화되지 않고 필드 소유권이 Argo 컨트롤러로 넘어간다.
 - **NetworkPolicy**: T040이 install.yaml 동봉 upstream NP 5장을 제거했으므로(합집합 방지 — `argocd-server-network-policy`는 전 출발지 허용) **T041 `default-deny` 적용 전까지 argocd ns는 NetworkPolicy 없음**(다른 ns와 동일한 과도기). `default-deny` 뒤에는 repo-server → `github.com`/`raw.githubusercontent.com` 443(원격 base·저장소), 전 컴포넌트 → kube-api 6443(`allow-kube-api`), `allow-same-namespace`(server↔repo-server 8081↔redis 6379↔controller), `kube-system(traefik) → argocd 8080`, `monitoring → argocd 8082·8083·8084`가 계약 매트릭스대로 열려야 한다(대조 완료 — 전부 있음). 매트릭스에 없는 것: notifications-controller metrics **9001**(upstream NP는 전 ns에 열었음) — 스크레이프가 필요하면 T098/converge에서 행 추가.
 - **T043 Ingress·SSO**: `argocd-cm`에 `url` · `oidc.config`(Authentik PKCE public client, research D8) · `argocd-rbac-cm` · `admin.enabled: "false"`. 호스트 이름은 계약 hostnames-and-access.md(`argo.joshuatech.dev`)를 따른다 — research D8·D11의 `argocd.joshuatech.dev` 표기와 다르므로 계약이 우선.
 - **알림**: `argocd-notifications-cm` 서비스·트리거 + ESO Merge Secret(research D9).

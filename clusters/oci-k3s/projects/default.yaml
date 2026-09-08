@@ -1,0 +1,31 @@
+# AppProject `default` 봉인 — 계약 gitops-repo.md §Application 규약 "`default`: sourceRepos·destinations 비움" (T041 PR-A)
+#
+# 왜 삭제하지 않고 봉인하는가: argocd-server 는 `default` 가 NotFound 일 때 전권(sourceRepos `*` · destinations `*` ·
+#   clusterResourceWhitelist `*`)으로 다시 만든다. 삭제는 "다음 기동에서 전권 프로젝트 부활"이므로 빈 값으로 덮어쓴다.
+#   봉인본이 존재하는 한 argocd-server 는 그대로 둔다.
+# namespaceResourceBlacklist `*/*` 는 봉인의 명시적 표현이다 — destinations 가 비면 이미 아무것도 배포되지 않지만,
+#   "의도적으로 비웠다"와 "실수로 비었다"를 구분하지 못한다. 금지 목록을 함께 적어 의도를 코드로 남긴다.
+#
+# 봉인 시점의 부작용(정상): 이 파일이 적용되는 순간 root(project `default`)는 다음 조정에서 InvalidSpecError·Unknown 이
+#   된다. 그래서 투입 직후 `kubectl apply -f bootstrap/root-app.yaml`(project `platform`)로 곧바로 이관한다 —
+#   순서와 확인 명령은 ../../../bootstrap/README.md ⑧.
+#
+# 삭제 보호(argocd.argoproj.io/sync-options: Delete=false,Prune=false): AppProject 5개 공통.
+#   `platform-argocd` 가 이 디렉터리를 소유한 뒤 잘못된 커밋·cascade 로 프로젝트가 사라지면 모든 Application 이
+#   "project does not exist" 로 멈춘다(자기 참조 잠금). 계약 §삭제 보호 목록 밖 항목이므로 converge 인계 대상이다.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: default
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-options: Delete=false,Prune=false
+spec:
+  description: 봉인됨 — 사용 금지. 모든 Application 은 platform·dev·prod·tests 중 하나에 속한다
+  sourceRepos: []
+  sourceNamespaces: []
+  destinations: []
+  clusterResourceWhitelist: []
+  namespaceResourceBlacklist:
+    - group: "*"
+      kind: "*"
