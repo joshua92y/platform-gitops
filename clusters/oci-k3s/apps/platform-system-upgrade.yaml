@@ -1,0 +1,60 @@
+# clusters/oci-k3s/apps/platform-system-upgrade.yaml — system-upgrade-controller(SUC) + Plan 2개 Application (T041 PR-C)
+#
+# 역할: root(app-of-apps)가 이 파일을 읽어 child Application `platform-system-upgrade`를 만들고,
+#   그 Application이 `platform/system-upgrade`(T037)를 서버 사이드 적용한다.
+#
+# 성격 — PR-C의 17개 중 **유일하게 첫 배포**다(나머지 15개는 뼈대 0개, cloudflared는 인수).
+#   `platform/system-upgrade/`에는 SUC CRD(`plans.upgrade.cattle.io`) · 컨트롤러 Deployment · Plan 2개
+#   (`k3s-server`·`k3s-agent`, 채널 기반)가 실제로 들어 있고, 이 Application의 첫 sync가 그것들을 처음으로
+#   클러스터에 만든다. T037에서는 gitops 저장소에 매니페스트만 머지했고 클러스터에는 적용하지 않았다.
+#   CRD와 그 CR(Plan)이 같은 소스에 있으므로 `SkipDryRunOnMissingResource=true`가 첫 sync의 dry-run 실패를 막는다.
+#
+# 운영자 확인 기준값(설계 VD-SUC · 런북 bootstrap.md §6):
+#   - `kubectl -n system-upgrade logs deploy/system-upgrade-controller` 에 `read-only file system` **0건**
+#     (readOnlyRootFilesystem + emptyDir 조합이 맞는지의 판정 — 1건이라도 나오면 controller-patch.yaml 문제다).
+#   - Plan 2개의 `LatestResolved` 조건이 **15분 안에 True**(= 채널 URL로의 외부 443 egress가 실제로 열려 있다는 증명),
+#     `status.applying`은 빈 값.
+#   - Plan의 업그레이드 창은 일요일 03:00–05:00 Asia/Seoul이다. 그 창 밖에 머지하면 이 Application이 Synced가 되어도
+#     업그레이드 Job은 뜨지 않는다 — 창 안에서 머지하지 않는 것이 PR-C의 사전 조건이다.
+#   - 비상 정지는 노드 라벨(`plan.upgrade.cattle.io/k3s-server=disabled`)이다. 런북 §6의 순서를 지킨다: 로그 확인 → 라벨.
+#
+# sync-wave·destination.namespace: 값의 정본은 계약 contracts/gitops-repo.md §sync-wave 단일 표이고,
+#   코드 사본은 tests/validate.sh의 WAVE_TABLE 하나뿐이다. 아래 두 값은 그 표에서 기계적으로 읽어 넣었고
+#   저장소의 어떤 README·주석·PR 본문에도 숫자를 다시 적지 않는다. 대조는 사람이 아니라 검사 7.1이 한다.
+#
+# finalizer 있음(`resources-finalizer.argocd.argoproj.io`): 이 Application을 지우면 컨트롤러·Plan도 함께 정리된다.
+#   `Delete=confirm`이 있어 삭제에는 승인 어노테이션(`argocd.argoproj.io/deletion-approved`)이 한 겹 더 필요하다.
+#   CRD는 kustomization의 patch로 `Delete=false,Prune=false`가 붙어 cascade에서 빠진다(계약 §삭제 보호).
+#   finalizer를 빼는 것은 `platform-argocd`·`platform-policies` 둘뿐이다 — 그 둘의 cascade는 Argo CD 자신과
+#   Namespace 14개를 지울 수 있어 되돌릴 컨트롤러조차 남지 않는다.
+#
+# syncPolicy: 계약 §Application 규약의 플랫폼 표준 그대로. `CreateNamespace=true`는 PR-B2의 platform/policies가
+#   Namespace 14개(PSA privileged 사유 주석 포함)의 선언 정본이라 실질 no-op이다.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-system-upgrade
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "20"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: platform
+  source:
+    repoURL: https://github.com/joshua92y/platform-gitops.git
+    targetRevision: main
+    path: platform/system-upgrade
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: system-upgrade
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+      - CreateNamespace=true
+      - Prune=confirm
+      - Delete=confirm
+      - SkipDryRunOnMissingResource=true

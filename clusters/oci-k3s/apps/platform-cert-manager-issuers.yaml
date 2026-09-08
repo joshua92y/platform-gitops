@@ -1,0 +1,53 @@
+# clusters/oci-k3s/apps/platform-cert-manager-issuers.yaml — ClusterIssuer·와일드카드 인증서 Application (T041 PR-C)
+#
+# 역할: root(app-of-apps)가 이 파일을 읽어 child Application `platform-cert-manager-issuers`를 만들고,
+#   그 Application이 `platform/cert-manager-issuers`를 서버 사이드 적용한다.
+#
+# 현재 상태(T041 시점): `platform/cert-manager-issuers/kustomization.yaml`은 `resources: []` 뼈대다 → 렌더 결과 0개.
+#   리소스 0인 Application이 Synced/Healthy가 되는지는 설계 VD-E로 실측한다(아니면 이 Application을 컴포넌트
+#   태스크로 이월). 실제 매니페스트(ClusterIssuer 2종 · Certificate)는 T042가 채운다.
+#
+# 왜 cert-manager 본체와 다른 Application인가: 이 디렉터리의 객체는 전부 cert-manager가 제공하는 CRD의 **소비자**다.
+#   Argo CD는 wave N의 리소스가 Healthy가 된 뒤 다음 wave로 넘어가므로, 오퍼레이터와 그 CR을 다른 wave로 나눈다
+#   (계약 §sync-wave 단일 표 — 두 컴포넌트의 값은 표에서 읽는다). 이 Application은 CRD가 아직 없는 시점의
+#   첫 sync를 통과해야 해서 `SkipDryRunOnMissingResource=true`가 특히 필요하다(계약의 명시 예시).
+#
+# sync-wave·destination.namespace: 값의 정본은 계약 contracts/gitops-repo.md §sync-wave 단일 표이고,
+#   코드 사본은 tests/validate.sh의 WAVE_TABLE 하나뿐이다. 아래 두 값은 그 표에서 기계적으로 읽어 넣었고
+#   저장소의 어떤 README·주석·PR 본문에도 숫자를 다시 적지 않는다. 대조는 사람이 아니라 검사 7.1이 한다.
+#
+# finalizer 있음(`resources-finalizer.argocd.argoproj.io`): 이 Application을 지우면 컴포넌트 리소스도 함께 정리된다.
+#   `Delete=confirm`이 있어 삭제에는 승인 어노테이션(`argocd.argoproj.io/deletion-approved`)이 한 겹 더 필요하다.
+#   finalizer를 빼는 것은 `platform-argocd`·`platform-policies` 둘뿐이다 — 그 둘의 cascade는 Argo CD 자신과
+#   Namespace 14개를 지울 수 있어 되돌릴 컨트롤러조차 남지 않는다.
+#
+# syncPolicy: 계약 §Application 규약의 플랫폼 표준 그대로. `CreateNamespace=true`는 PR-B2의 platform/policies가
+#   Namespace 14개의 선언 정본이라 실질 no-op이다.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-cert-manager-issuers
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "20"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: platform
+  source:
+    repoURL: https://github.com/joshua92y/platform-gitops.git
+    targetRevision: main
+    path: platform/cert-manager-issuers
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cert-manager
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+      - CreateNamespace=true
+      - Prune=confirm
+      - Delete=confirm
+      - SkipDryRunOnMissingResource=true
