@@ -1,0 +1,2 @@
+# kustomize 의 `--enable-helm` 인플레이트가 렌더 시각에 차트를 `<kustomization 디렉터리>/charts/<name>-<version>/` 로 풀어 둔다 — 빌드 산출물이라 커밋 대상이 아니다(T042 PR-0).
+charts/
