@@ -192,7 +192,8 @@ kubectl top pods -n cert-manager                                # 요청 합계 
 
 **3개 중 하나라도 Ready가 안 되면 첫 가설은 차트가 아니라 default-deny다.** 렌더된 kubelet 프로브 포트는
 webhook `6080`(readiness+liveness) · controller `9403`(liveness)인데, `cert-manager` ns의 ingress 허용 규칙은
-`10.0.7.78/32:10250`(`allow-apiserver-webhook`) · `monitoring:9402` · same-namespace **뿐**이고 6080·9403은 어디에도 없다.
+`10.0.7.78/32`·`10.42.0.0/32`:10250(`allow-apiserver-webhook` — 후자는 T042 PR-A add-only, 노드 A flannel-wg 주소) ·
+`monitoring:9402` · same-namespace **뿐**이고 6080·9403은 어디에도 없다.
 통과 근거는 T041 VD-P(같은 노드 host→pod 통과) 하나이며 이 컴포넌트에서 재측정된 적이 없다. 검사 5.4b는 helm values의
 `.webhook.securePort`만 보므로 이 두 포트는 **어떤 자동 검사에도 걸리지 않는다.**
 

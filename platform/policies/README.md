@@ -76,9 +76,13 @@
 | :34 :96 | → `kube-system` kube-dns 53 UDP·TCP | `allow-dns` | 같은 13 | 13 |
 | :35 | 자기 ns 안 통신 | `allow-same-namespace` | `argocd` `data` `cnpg-system` `external-secrets` `cert-manager` `monitoring` `identity` | 7 |
 | :36 :122 | → 노드 A/32 6443(K8s API) | `allow-kube-api` | `argocd` `vault` `external-secrets` `cert-manager` `cnpg-system` `data` `monitoring` `system-upgrade` `reloader` `cloudflared` | 10 |
-| :37 :120 :121 | ← 노드 A/32(webhook · port-forward) | `allow-apiserver-webhook` | `cert-manager` 10250 · `external-secrets` 10250 · `cnpg-system` 9443 · `vault` 8200 | 4 |
+| :37 :120 :121 | ← 노드 A/32(webhook · port-forward) **+ 노드 A flannel-wg/32**(`cert-manager` · `cnpg-system`, T042 PR-A) ※ | `allow-apiserver-webhook` | `cert-manager` 10250 · `external-secrets` 10250 · `cnpg-system` 9443 · `vault` 8200 | 4 |
 | :43 | IMDS만 제외한 egress 허용 1장 | `deny-imds` | `kube-system` 전용 | 1 |
 | :44 :111 | → IMDS 169.254.169.254:80 | `allow-imds` | `vault` 전용 | 1 |
+
+※ `allow-apiserver-webhook` 행은 **매니페스트가 계약을 의도적으로 벗어난 유일한 행**이다 — 계약 `:37`·`:121`은
+아직 출발지를 "노드 A private IP/32"로만 적고 있고, 정정은 대기 중이다(§8 갭 표의 같은 행이 잔여 항목과 선행
+조건을 적는다). 실측 근거와 메커니즘은 `policies-common.yaml`의 `allow-apiserver-webhook` 절 머리 주석에 있다.
 
 ### 3.2 클러스터 내부 매트릭스 (M, 31장)
 
@@ -252,6 +256,11 @@ kubectl delete networkpolicy -A -l app.kubernetes.io/part-of=platform-policies
 
 발견된 공백은 매니페스트에 추가 허용 규칙으로 넣지 않고, 계약 개정(또는 해당 태스크)에서 처리한다.
 
+**예외 1건(2026-09-09 · T042 PR-A).** `allow-apiserver-webhook` 행은 실측으로 "계약에 적힌 출발지가
+원리적으로 매칭 불가"임이 드러나 **계약 정정보다 매니페스트가 먼저 갔다**(운영 중인 webhook이 502로
+죽어 있었다). 계약 정정은 취소가 아니라 **머지 선행 조건으로 남아 있다** — 아래 표의 해당 행을 볼 것.
+이것이 이 저장소 안에서 그 의도적 이탈을 기록하는 유일한 장치다.
+
 | 공백 | 영향 | 처리 |
 |---|---|---|
 | `argocd` notifications-controller metrics 9001이 매트릭스에 없음 | 알림 스크레이프 불가 | monitoring 태스크에서 결정 후 계약 행 추가 |
@@ -259,7 +268,7 @@ kubectl delete networkpolicy -A -l app.kubernetes.io/part-of=platform-policies
 | Traefik metrics 9100(`kube-system`) 스크레이프 egress 행 없음 | Traefik 지표 누락 | 같은 태스크 |
 | cloudflared metrics 2000 스크레이프 행 없음 | 터널 지표 없음 | 같은 태스크 |
 | `cnpg-system` → `data` 8000(operator → instance status, 추정) 행 없음 | CNPG 운영 영향 가능 | CNPG 태스크에서 실측 |
-| `allow-apiserver-webhook`의 ipBlock = 노드 A/32 — 노드 B 배치 webhook은 flannel-wg 주소로 도착할 수 있음 | cert-manager·CNPG webhook 거부 가능 | 노드 A에서 출발 IP 실측(VD-W) 후 계약 정정 |
+| ~~`allow-apiserver-webhook`의 ipBlock = 노드 A/32 — 노드 B 배치 webhook은 flannel-wg 주소로 도착할 수 있음~~ **해소(2026-09-09 · T042 PR-A)** — VD-W 실측: apiserver → 파드 IP 직접 dial의 출발 IP는 노드 A flannel-wg 주소 `10.42.0.0`(노드 A podCIDR의 네트워크 주소)이다 | (해소) cert-manager 10250 · cnpg-system 9443에 `10.42.0.0/32` **add-only** 추가 — 기존 `10.0.7.78/32`는 유지 | **잔여 ①** 계약 `:37`·`:121`(출발 열)·`:48`(port-forward 근거의 webhook 행 오적용) 정정 — 모노레포 단독 커밋, **이 정책 변경 머지의 선행 조건**(converge는 tasks.md append만 가능해 contracts/를 고칠 수 없다) · **잔여 ②** `external-secrets`(T045 계획상 노드 A, kube-router LOCAL 예외 추정·**미검증**)는 T045에서 실측 후 결정 |
 | cert-manager `dns01RecursiveNameservers`가 1.1.1.1**/8.8.8.8** — 매트릭스에는 1.1.1.1/32 행만 | 8.8.8.8 조회 차단 | cert-manager 태스크에서 values를 1.1.1.1만으로 두거나 계약 행 추가 |
 | `identity`에 `allow-kube-api` 없음(Authentik outpost의 in-cluster API 시도) | 오류 로그 가능(기능 영향 없음 추정) | Authentik 태스크에서 관찰 |
 | `agent-view`의 `applications` 권한: 문면은 `argocd-applications-view` get·list, 계약 :52–:55는 `agent-view-extra` 안 get·list·watch | `kubectl get app -w` 거부 | converge에서 문면·계약 통일(현재는 문면을 따름) |
@@ -273,6 +282,7 @@ kubectl delete networkpolicy -A -l app.kubernetes.io/part-of=platform-policies
 | 상수 | 값 | 쓰이는 곳 |
 |---|---|---|
 | 노드 A private IP | `10.0.7.78` | `allow-kube-api`(6443) · `allow-apiserver-webhook` · `allow-egress-kubelet` · `allow-egress-ssh-nodes` |
+| 노드 A flannel-wg 주소 | `10.42.0.0` (= 노드 A `.spec.podCIDR` `10.42.0.0/24`의 **네트워크 주소**) | `allow-apiserver-webhook`(`cert-manager` 10250 · `cnpg-system` 9443) — apiserver가 **파드 IP로 직접 dial**할 때의 출발 IP(VD-W 실측 2026-09-09). 노드 재조인·재이미지 시 `.spec.podCIDR`과 **재대조**할 것 — 리스가 바뀌면 이 규칙은 조용히 무력해진다 |
 | 노드 B private IP | `10.0.10.193` | `allow-egress-kubelet` · `allow-egress-ssh-nodes` |
 | IMDS | `169.254.169.254` | `deny-imds`(except) · `allow-imds`(:80) · 외부 규칙 except |
 | 광역 egress `except` 4개 | `169.254.169.254/32` · `10.0.0.0/8` · `172.16.0.0/12` · `192.168.0.0/16` | `0.0.0.0/0` 규칙 전부 |
