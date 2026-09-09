@@ -18,7 +18,9 @@
 #      (HelmChartConfig, T038)이다. `sniStrict`(D5, T042 단계 9)도 그 파일에 있다 — 여기서 켜지 않는다.
 #   2) **TLSOption `default`**: 위 HelmChartConfig 단독 소유. 여기 또 두면 이름 `default` 중복으로 Traefik이
 #      **양쪽을 다 버려** 내장 기본값으로 조용히 되돌아간다(설계 §6.4 · §8 R7 — 무증상 보안 회귀).
-#      계약 §디렉터리와의 의도적 편차이며 converge 인계 항목이다. 근거 전문은 tlsstore-default.yaml 머리 주석.
+#      계약 §디렉터리는 kind 화이트리스트이고 같은 줄이 HelmChartConfig를 Traefik 자체 설정의 정본으로 지목하므로
+#      이 배치는 계약과 충돌하지 않는다 — 다만 이름 `default` 중복(R7)이 무증상 보안 회귀이므로 소유권을 여기서 못박는다.
+#      근거 전문은 tlsstore-default.yaml 머리 주석.
 #   3) Certificate·ClusterIssuer와 Secret `wildcard-joshuatech-dev-tls`: `platform/cert-manager-issuers/`(PR-2·PR-3) 소유.
 #      **이 저장소에 비밀은 없다** — Secret은 cert-manager가 만들고 Argo CD는 만들지도 지우지도 않는다(`prune: false`).
 #   4) Namespace `kube-system`과 PSA 라벨·NetworkPolicy: `platform/policies/`(T041) 소유 — validate 검사 5.0·5.1.

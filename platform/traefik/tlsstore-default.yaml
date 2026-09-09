@@ -21,8 +21,9 @@
 #   `sniStrict`가 켜져 있으면 그 폴백에 도달하기 전에 `nil, nil`(핸드셰이크 거절)로 끝난다
 #   (공식 문서도 같다 — "The default certificate is never served if the option is enabled").
 #   → 와일드카드를 `defaultCertificate`로만 지정하면 **sniStrict를 켜는 순간 websecure 443 전체가 끊긴다.**
-#   spec FR-011 · plan A3 · research INGRESS-D3의 "`default.defaultCertificate`로만 지정" 문장에 대한
-#   의도적 편차이며, 정정 범위는 이 한 줄(`defaultCertificate:` → `certificates:`)뿐이다.
+#   research INGRESS-D3(research.md:901)의 "`TLSStore default.defaultCertificate.secretName`으로 지정" 문장에 대한
+#   의도적 편차다. spec FR-011("기본 인증서로 쓰고")은 이 형태로도 성립하고, plan A3("kube-system 1장 + TLSStore default")는
+#   편차가 아니다 — 정정 대상은 research 한 곳뿐이다.
 #   FR-011의 골격("kube-system Secret 1장 + 앱 Ingress `spec.tls` 생략")은 그대로 성립한다.
 #
 # ── 왜 둘을 **병기하지 않는가** (하이브리드 배제) ──────────────────────────────────────────────────────
@@ -45,8 +46,9 @@
 #     ns와 무관하게 전역 id로 승격되고 **두 개 이상 존재하면 Traefik이 양쪽을 다 버려** 내장 기본값으로 되돌아간다.
 #     오류가 나지 않으므로 minVersion TLS12·sniStrict가 조용히 사라지는 **무증상 보안 회귀**가 된다.
 #     TLSOption `default`의 정본은 모노레포 `infra/bootstrap/traefik-config.yaml`(HelmChartConfig, T038)이고,
-#     TLSStore `default`의 정본은 이 파일이다 — 각각 정확히 한 곳. 계약 `gitops-repo.md` §디렉터리
-#     ("platform/traefik/에 Middleware·TLSOption·TLSStore")와의 **의도적 편차**이며 converge 인계 항목이다.
+#     TLSStore `default`의 정본은 이 파일이다 — 각각 정확히 한 곳. 계약 `gitops-repo.md` §디렉터리는
+#     **kind 화이트리스트**이고 같은 줄이 HelmChartConfig를 Traefik 자체 설정의 정본으로 지목하므로 이 배치는 계약과
+#     **충돌하지 않는다** — 다만 이름 `default` 중복(R7)이 무증상 보안 회귀이므로 소유권을 여기서 못박는다.
 #     현재 차트 값이 `tlsStore: {}`(빈 맵)이라 경쟁 CR이 하나도 없어 깨끗하게 인수한다.
 #   · **`sniStrict`는 이 PR이 아니다**(D5 = T042 단계 9). 그 스위치는 모노레포 `traefik-config.yaml`의 `tlsOptions.default`에 있고,
 #     README §9의 판별 실험 ①②가 **둘 다 성립한 뒤에만** 켠다. 여기서 켤 수 있는 값도 아니다.
@@ -56,7 +58,8 @@ apiVersion: traefik.io/v1alpha1
 kind: TLSStore
 metadata:
   name: default
-  # 이름은 `default`여야 한다 — Traefik은 이 이름의 TLSStore만 기본 저장소로 승격한다(다른 이름은 라우터가 명시 참조해야 쓰인다).
+  # 이름은 `default`여야 한다 — Traefik v3는 라우터의 TLS 설정을 `tlsManager.Get(DefaultTLSStoreName, …)`로만 조회하므로
+  # `default` 외의 TLSStore는 참조할 수단이 없다(CRD 레퍼런스: "only `default` TLSStore can be used"). 이름 선택지가 아니라 유일값이다.
   namespace: kube-system
   # ⚠ ns **명시 필수**. 이 디렉터리에는 전역 `namespace:` 변환기가 없다(kustomization.yaml 머리 주석 · 설계 §8 R4).
   #   Application의 destination도 `kube-system`이라 지금은 생략해도 같은 결과지만, 명시가 위 §6.3 불변식의 근거다.

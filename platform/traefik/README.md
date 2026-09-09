@@ -20,9 +20,14 @@ Namespace·PSA·NetworkPolicy는 `platform/policies/`, Application `platform-tra
 ## 1. ⚠ 머지 순서 규율 — prod `Ready=True` 확인 **뒤에만** 머지한다
 
 **T042 전체에서 이 PR만이 "되돌리기가 곧 장애"인 구간이다**(설계 §8 R5 · §7 단계 7). PR 순서가 **유일한 방어선**이며,
-머지 버튼을 누르기 전에 아래 네 줄을 실제로 실행해 눈으로 확인한다. 하나라도 어긋나면 머지하지 않는다.
+머지 버튼을 누르기 전에 아래 다섯 줄을 실제로 실행해 눈으로 확인한다. 하나라도 어긋나면 머지하지 않는다.
 
 ```bash
+# ⓪ 머지 전 기준선 — 지금 auth가 무엇을 반환하는지 적어 둔다(§3 ④의 대조군)
+curl -sI https://auth.joshuatech.dev | head -1
+# 예상: HTTP/2 526 (오리진이 아직 자체 서명 = 이 PR이 고치려는 상태). 머지 뒤 404로 바뀌면 성공이다.
+#      머지 전에 이미 404라면 어딘가 다른 경로로 인증서가 실려 있다는 뜻이므로 머지하지 말고 원인을 찾는다.
+
 # ① Certificate가 prod로 발급 완료인가 (운영자 admin · certificates는 agent-view로도 읽힌다)
 kubectl -n kube-system get certificate wildcard-joshuatech-dev \
   -o jsonpath='{.spec.secretName}{"  ready="}{.status.conditions[?(@.type=="Ready")].status}{"  rev="}{.status.revision}{"\n"}'
@@ -65,13 +70,19 @@ edge는 오리진이 내미는 인증서의 **체인과 SAN을 검증**하고, �
 **영향 범위와 살아남는 것**: 526은 Traefik 443을 지나는 **v2 호스트 전부**(`argo`·`vault`·`traefik`·`auth`·`admin`·`*-m2m-{dev,prod}` 등)에 걸린다.
 다만 cloudflared 터널의 ingress는 `ssh://` 2건 + `tcp://kubernetes.default.svc:443`뿐이라 **Traefik을 경유하지 않는다**
 (`infra/cloudflare/tunnel.tf`) → **443이 완전히 끊겨도 SSH·kubectl 복구 경로는 살아 있다.**
-단 `argo.joshuatech.dev` UI는 함께 죽으므로 복구는 **UI가 아니라 git revert + kubectl**로 한다.
+단 `argo.joshuatech.dev`는 **T043 전까지 Ingress가 없어 애초에 Traefik 443으로 서빙되지 않는다** — 443이 완전히 끊겨도
+Argo CD UI는 `kubectl -n argocd port-forward svc/argocd-server 8080:80`으로 계속 쓸 수 있다(런북 §3 T040).
+그래도 복구의 정본은 UI가 아니라 **git revert + kubectl**이다 — `selfHeal: true` 때문에 순서가 고정돼 있다(§7).
+(T043 뒤에는 이 문장이 뒤집힌다: 그때부터 argo UI도 526과 함께 죽는다.)
 
 ---
 
 ## 3. 머지 뒤 확인
 
 ```bash
+# ⓪ 머지 직후 Argo가 main의 새 SHA를 아직 못 볼 수 있다(T041 실측 — 런북 §3 절차 메모)
+kubectl -n argocd annotate app root argocd.argoproj.io/refresh=hard --overwrite
+
 # ① Application 상태
 kubectl -n argocd get app platform-traefik -o jsonpath='{.status.sync.status} {.status.health.status}{"\n"}'
 # 합격: Synced Healthy
@@ -102,10 +113,14 @@ TLSStore CRD가 `spec.certificates`를 모르면 API 서버가 그 필드를 **�
 **라이브 설치본은 다를 수 있으므로** 머지 직후 왕복을 반드시 확인한다.
 
 ```bash
+# ⚠ 운영자 admin 전용 — traefik.io는 agent-view 권한 밖(§8)
 kubectl -n kube-system get tlsstore default -o jsonpath='{.spec.certificates[0].secretName}{"\n"}'
 # 합격: wildcard-joshuatech-dev-tls
-# 빈 값  : CRD가 필드를 프루닝했다 → **즉시 중단**. sniStrict로 진행하지 않는다(§7).
-#          이 경우 Traefik은 자체 서명으로 서빙 중이므로 이미 526일 수 있다 → §6 즉효 레버 + §7 되돌리기.
+# 빈 값  : **명령이 exit 0이고 stderr가 비었을 때만** CRD 프루닝으로 판정한다
+#          (Forbidden도 stdout이 비므로 stderr를 먼저 본다 — agent-view kubeconfig로 실행하면 오진한다)
+#          → **즉시 중단**. sniStrict로 진행하지 않는다(§7).
+#          이 경우 Traefik은 자체 서명으로 서빙 중이므로 이미 526일 수 있다 → §7 되돌리기 + forward-fix(§7 마지막 문단).
+#          (T043 전에는 §6 즉효 레버를 당기지 않는다 — 526 뒤에 사용자 트래픽이 없다, §6.)
 ```
 
 ---
@@ -134,6 +149,14 @@ sniStrict를 켠 뒤에도 와일드카드 SAN이 `auth.joshuatech.dev`를 덮�
 자체 서명·staging 체인이어도 트래픽이 통과한다.
 
 > ### ⚠ 이 레버는 **존 전역 설정**이다
+>
+> **⚠ 당기기 전 필수 판정 — T043 전에는 당기지 않는다.**
+> T042 시점 gitops 저장소에는 Ingress·IngressRoute가 **0개**이고(`grep -rn '^kind: Ingress' platform/ clusters/`),
+> Argo CD UI조차 `port-forward` 전용이다(런북 §3 T040 — 공개 접근은 T043부터).
+> 즉 이 구간의 526 뒤에는 **서비스 중인 사용자 트래픽이 없다.** 가용성 이득 0에 v1 존 전역 보안 저하만 남는다.
+> 판단 기준은 "526이 보이는가"가 아니라 **"526 뒤에 실제 사용자 트래픽이 있는가"**다.
+> T043(호스트별 Ingress + Access) 투입 전에는 이 레버를 **당기지 않는다** — 근본 복구(§7 + forward-fix)만 한다.
+>
 > 정본은 `infra/cloudflare/zone_settings.tf`의 `cloudflare_zone_setting.ssl`이고 값은 존 하나에 하나뿐이다.
 > 당기는 순간 v2 호스트만이 아니라 **v1 매출 경로(`api`·`mainapi`·`mcp`·`cache`·apex·`www`)의 오리진 검증까지 함께 꺼진다.**
 > **가용성 영향 0 · 보안 영향 ≠ 0**이며, 되돌림을 검출할 자동 경로가 **없다**
@@ -145,8 +168,9 @@ sniStrict를 켠 뒤에도 와일드카드 SAN이 `auth.joshuatech.dev`를 덮�
 > 3. 콘솔에서 손으로 바꿨다면 코드(`zone_settings.tf`)와의 드리프트가 생긴 것이다 — 복구 뒤 `tofu plan`이
 >    **No changes**인지 확인한다. (`ssl=strict` 드리프트 단언 추가는 T047/converge 인계 후보.)
 
-레버를 쓰지 않고 버티는 선택지도 있다: 526은 **v2 플랫폼 호스트에만** 걸리고 v1 매출 경로는 이 인증서를 쓰지 않는다.
-SSH·kubectl 복구 경로도 살아 있으므로(§2), 근본 복구가 수 분 내면 레버를 **당기지 않는 쪽이 낫다.**
+레버를 쓰지 않고 버티는 근거는 T043 뒤에도 남는다: 526은 **v2 플랫폼 호스트에만** 걸리고 v1 매출 경로는 이 인증서를 쓰지 않는다.
+SSH·kubectl 복구 경로도 살아 있으므로(§2), 근본 복구가 수 분 내면 그때도 **당기지 않는 쪽이 낫다.**
+(T043 전에는 "낫다"가 아니라 **당기지 않는다** — 위 판정 참조.)
 
 ---
 
@@ -154,17 +178,36 @@ SSH·kubectl 복구 경로도 살아 있으므로(§2), 근본 복구가 수 분
 
 ### ⚠ PR-3(prod 승격)을 revert 하지 마라
 
-PR-3은 `issuerRef`와 `secretName`을 **한 커밋으로** 바꿨다. 되돌리면 `secretName`이 `…-tls-staging`으로 함께 돌아가고,
-Certificate가 가리키는 서빙 Secret `wildcard-joshuatech-dev-tls`는 **쓰는 주체가 사라진 채 남거나(갱신 중단) 대상에서 빠진다.**
-그 상태에서 TLSStore는 계속 그 이름을 참조하므로 결과는 **자체 서명 복귀 = 전 호스트 526**이다.
-플랫폼 Application은 `selfHeal: true`라 이 변경이 자동으로 적용된다.
-(설계 §14.2 각색 D가 없앤 것이 바로 "staging 재발급이 서빙 Secret을 덮는" 경로다. `issuerRef`만 되돌리는 1줄 revert는 **PR-4 이후에는 존재하지 않는 선택지**다.)
+PR-3은 `issuerRef`와 `secretName`을 **한 커밋으로** 바꿨다. 되돌리면 Certificate의 쓰기 대상이 `…-tls-staging`으로
+돌아가고, 서빙 Secret `wildcard-joshuatech-dev-tls`는 **갱신 주체를 잃은 채 남는다**
+(`enableCertificateOwnerRef: false` 기본값 — Certificate가 대상을 바꿔도, 삭제돼도 발급된 Secret은 지워지지 않는다:
+`platform/cert-manager-issuers/README.md` §10).
+
+**즉시 526이 되지는 않는다.** Traefik은 그 Secret의 prod 인증서를 만료일까지 계속 서빙한다.
+위험은 반대 방향의 **조용한 만료 폭탄**이다:
+- 갱신 주체가 없으므로 남은 유효기간(최대 90일)이 지나면 아무 경고 없이 자체 서명으로 떨어져 전 호스트 526.
+- 만료 알림은 T098 전까지 존재하지 않는다(§10).
+- 유일한 자동 신호는 `cert-1`(`found 0`)·`cert-2`이고, 그 문면은 "cert-manager 고장"과 구별되지 않는다
+  (`platform/cert-manager-issuers/README.md` §6).
+
+그래서 **PR-4 이후의 되돌리기는 PR-4만 revert 한다.** 부득이 PR-3을 되돌린다면 만료일을 사람이 기록·감시하는
+조건에서만 하고 즉시 forward-fix(prod 재승격)를 계획한다 — prod 동일 SAN 중복 한도는 **5/7일이고 override가 없다**
+(`platform/cert-manager-issuers/README.md` §9).
+
+`issuerRef`만 되돌리는 1줄 revert는 다르다 — 그쪽은 **성공한 staging 재발급이 서빙 Secret을 덮어 즉시 전 호스트 526**이고
+`selfHeal: true`라 자동 적용된다. **PR-4 이후에는 존재하지 않는 선택지다**(설계 §14.2 각색 D가 없앤 경로).
 
 ### 되돌리기 2단 — 순서를 뒤집지 않는다
 
 ```bash
 # 1단: git revert 머지가 **먼저**다. 반대로 하면 selfHeal이 즉시 되살린다.
 #      (PR-4 revert PR을 만들어 머지한다 — 이 저장소에서 직접 push 하지 않는다.)
+#   ⚠ 머지가 즉시 반영되지 않으면 당긴다:
+#        kubectl -n argocd annotate app root argocd.argoproj.io/refresh=hard --overwrite
+#   ⚠ PR을 머지할 수 없는데(GitHub 장애·리뷰 대기) 지금 지워야 하면 selfHeal을 먼저 멈춘다:
+#        kubectl -n argocd scale sts argocd-application-controller --replicas=0
+#      복구 뒤 --replicas=1로 되돌리고, 그 전에 revert 머지를 반드시 끝낸다.
+#      (child Application만 `automated: null`로 패치하면 root의 selfHeal이 되돌린다 — 런북 §3.)
 
 # 2단: revert 머지가 Synced 된 것을 확인한 **뒤에** 운영자가 수동 삭제한다.
 #      revert만으로는 리소스가 사라지지 않는다 — Application이 `prune: false` + `Prune=confirm`/`Delete=confirm`이라
@@ -194,7 +237,8 @@ kubectl -n kube-system delete tlsstore default
 | TLSStore `default` | **이 디렉터리**(gitops) | 모노레포 `traefik-config.yaml`에 `tlsStore:` 블록 추가 금지 |
 | TLSOption `default` | 모노레포 `infra/bootstrap/traefik-config.yaml`(HelmChartConfig) | 이 디렉터리에 TLSOption 추가 금지 |
 
-계약 `gitops-repo.md` §디렉터리("platform/traefik/에 Middleware·TLSOption·TLSStore")와의 **의도적 편차**이며 converge 인계 항목이다.
+계약 `gitops-repo.md` §디렉터리는 **kind 화이트리스트**이고 같은 줄이 HelmChartConfig를 Traefik 자체 설정의 정본으로 지목하므로
+이 배치는 계약과 **충돌하지 않는다** — 다만 이름 `default` 중복(R7)이 무증상 보안 회귀이므로 소유권을 여기서 못박는다.
 확인은 §3 ②의 `kubectl get tlsstore,tlsoption -A`(각각 정확히 1개).
 
 ---
@@ -232,8 +276,19 @@ ssh … ubuntu@<노드 A> "curl -skv --resolve no-such.example.invalid:443:10.0.
 
 - **T098 관측** — 갱신 실패 감시가 없다. 단일 노드라 cert-manager가 2주 이상 죽으면 만료 → 526이다.
   `certmanager_certificate_expiration_timestamp_seconds` 기반 Grafana Cloud 알림이 반드시 들어가야 한다.
-- **T047 / converge** — ① `ssl=strict` 드리프트 단언(§6) ② 계약 §디렉터리의 TLSOption 소유권 문구 정정(§8)
+- **T047 / converge** — ① `ssl=strict` 드리프트 단언(§6)
+  ② 계약 §디렉터리 줄에 **소유권 한 문장 보강**(TLSOption 정본 = 모노레포 HelmChartConfig · TLSStore 정본 = `platform/traefik/`).
+     현재 문면은 kind 화이트리스트라 충돌은 없다 — 정정이 아니라 보강이다(§8).
   ③ 설계 §14.3-1의 edge 검증 호스트 교체(§5)를 문면에 반영.
+  ④ **`validate.sh` 교차 파일 단언** — `platform/traefik/`의 TLSStore는 `default`/`kube-system` 1개이고
+     `spec.certificates[].secretName`이 `platform/cert-manager-issuers/`의 Certificate `spec.secretName`과 **문자열 일치**할 것 ·
+     `spec.defaultCertificate` 키 존재 시 FAIL(하이브리드 금지) · `platform/traefik/`에 kind `TLSOption` 존재 시 FAIL(R7 소유권).
+     자격·라이브 접근이 필요 없는 순수 트리 검사이며, 현재 kubeconform이 CRD 스키마 부재로 이 파일을 통째로 skip 하므로
+     (실측: `default TLSStore skipped`) 이것이 **유일한 정적 방어선**이다.
+     (이 PR에서 `tests/validate.sh`를 고치지 않는다 — T033 산출물이고 게이트 PR의 범위를 넘는다.)
+  ⑤ **PR-3 Certificate 주석 48-50 정정** — `platform/cert-manager-issuers/certificate-wildcard-joshuatech-dev.yaml`의
+     "서빙 Secret이 사라지고 … 전 호스트 526"은 사실과 반대다(`enableCertificateOwnerRef: false`라 Secret은 남는다).
+     진짜 위험은 §7이 적은 **조용한 만료 폭탄**이다. 이미 머지된 파일이라 이 PR에서 고치지 않는다.
 - **cert-2 임계값** — `renewBeforePercentage: 33` + LE classic 90일이라 갱신 시작이 잔여 29.7일이고, cert-2 기준(30일)과
   약 60일마다 7.2시간 겹친다. **2027-02-10 LE classic이 64일로 바뀌면 43일 중 약 9일(≈21%) 상시 FAIL**이 되므로
   그때 값을 40으로 올린다(`platform/cert-manager-issuers/README.md` §9).
