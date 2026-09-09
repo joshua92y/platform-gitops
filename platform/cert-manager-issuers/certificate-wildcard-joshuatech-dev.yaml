@@ -16,11 +16,14 @@ metadata:
   #   (b) Traefik(kube-system)이 TLSStore가 가리키는 Secret을 찾지 못한다 — Secret은 Certificate와 같은 ns에 생기기 때문이다.
   #   cloudflared·system-upgrade 디렉터리에는 변환기가 있으므로 복사-붙여넣기 사고를 조심한다.
 spec:
-  secretName: wildcard-joshuatech-dev-tls-staging
-  # ⚠ **전이 구간 전용 이름**(설계 §14.2 각색 D). 종착값은 문면 그대로 `wildcard-joshuatech-dev-tls`이며 PR-3에서 바뀐다.
-  #   staging 인증서와 prod 인증서가 절대 같은 Secret에 쓰이지 않게 만드는 것이 목적이다 — 쓰기 대상이 이 한 줄로 유일하게 결정되므로
-  #   (a) staging 체인으로 cert-1이 거짓 PASS하는 일이 없고 (b) PR-4 이후 `issuerRef`만 되돌렸을 때 성공한 staging 재발급이
-  #   서빙 Secret을 덮어 전 호스트 526을 만드는 경로가 **구조적으로 존재하지 않는다**. README §5.
+  secretName: wildcard-joshuatech-dev-tls
+  # 종착값(tasks.md:121 문면 · tests/platform/ingress.tests.ps1:66 상수 · infra/bootstrap/traefik-config.yaml:61).
+  #   PR-2에서는 `…-tls-staging`이었다(설계 §14.2 각색 D의 전이 구간 전용 이름). staging 인증서와 prod 인증서가
+  #   같은 Secret을 절대 공유하지 않게 만드는 것이 목적이었고, 쓰기 대상이 이 한 줄로 유일하게 결정되므로
+  #   (a) staging 체인으로 cert-1이 거짓 PASS하는 일이 없었고 (b) PR-4 이후 `issuerRef`만 되돌렸을 때
+  #   성공한 staging 재발급이 서빙 Secret을 덮어 전 호스트 526을 만드는 경로가 **구조적으로 존재하지 않는다**. README §5.
+  # ⚠ 승격 뒤 남는 고아 Secret `wildcard-joshuatech-dev-tls-staging`(kube-system)은 git에 없어 Argo prune 대상이 아니다.
+  #   운영자가 안정화 확인 뒤 수동 삭제한다 — 삭제 전 반드시 `get`으로 대상 이름을 눈으로 확인할 것(README §6).
   dnsNames:
     - joshuatech.dev                       # ⚠ apex SAN 필수 — 와일드카드는 `*.joshuatech.dev`만 덮고 apex를 덮지 않는다.
     - "*.joshuatech.dev"                   #   빠지면 apex/www 경로에서 Cloudflare Full(strict)가 526을 낸다.
@@ -41,4 +44,7 @@ spec:
   issuerRef:
     kind: ClusterIssuer
     group: cert-manager.io
-    name: letsencrypt-staging              # → PR-3에서 `letsencrypt-prod`(위 secretName과 **같은 커밋**에서)
+    name: letsencrypt-prod                 # PR-3에서 위 secretName과 **같은 커밋**으로 전환했다(주문 2회 방지).
+    #   되돌리기 주의: PR-4(TLSStore) 머지 **이후에는 이 줄을 revert 하지 않는다** — Secret 이름이 함께 되돌아가
+    #   서빙 Secret이 사라지고 Traefik이 자체 서명으로 떨어져 Cloudflare Full(strict)에서 전 호스트 526이 된다.
+    #   PR-4 이후의 되돌리기는 PR-4만 revert 한다(README §5).
