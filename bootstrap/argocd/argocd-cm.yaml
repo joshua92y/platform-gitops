@@ -2,7 +2,30 @@
 # install.yaml@e258ee23 의 argocd-cm 에 이미 들어 있는 기본값 `resource.exclusions`(Endpoints · EndpointSlice · Lease · TokenReview 류 ·
 # CertificateSigningRequest · cert-manager CertificateRequest · Cilium · Kyverno)와 `resource.customizations.ignoreResourceUpdates.*` 는
 # 여기서 건드리지 않으므로 그대로 남는다(계약 T040 문면 "resource.exclusions 유지" · research 함정 "덮어쓰지 말고 추가만").
-# 아직 넣지 않는 것: url · oidc.config · admin.enabled(SSO 검증 뒤) · kustomize.buildOptions — 뒤 태스크(T043 · SSO).
+# 아직 넣지 않는 것: url · oidc.config · admin.enabled(SSO 검증 뒤) — 뒤 태스크(T043 · SSO).
+# 정정(T042 PR-0): 이 줄은 원래 kustomize.buildOptions 도 "뒤 태스크(T043 · SSO)"로 미뤄 두었으나, 그 값은 SSO 와 무관하고 T042 에서 들어왔다.
+#   이유 — 저장소의 첫 `helmCharts:` 사용자가 T042 cert-manager(kustomize helmCharts 로 OCI 차트를 인플레이트 · 설계 D1)다.
+#   이 값이 없으면 repo-server 가 helmCharts 를 인플레이트하지 못해 `platform-cert-manager` 가 렌더 실패로 굳는다
+#   (리소스 손실은 없다 — `prune: false` 이고 렌더 실패 시 Argo 는 삭제하지 않는다. 증상은 "새 sync 가 멈춤"이다).
+#   ⚠ 위험(권한 확대 · 설계 R10): 이 값은 repo-server 의 **모든** kustomize 빌드에 걸린다 — 이 저장소의 어떤 kustomization 이라도
+#   렌더 시각에 임의의 원격 차트를 pull 할 수 있게 된다(argocd ns 에는 `podSelector: {}` 로 전 파드에 걸리는 외부 443 egress 가 있다 —
+#   platform/policies/policies-external.yaml). 그래서 이 키만 단독 PR 로 넣는다.
+#   ⚠ 통제 현황(실측 2026-09-09 — 낙관적으로 적지 않는다): 실효 통제는 "PR 이 열린다"(main ruleset `bypass_actors: []`) + gitleaks + 사람 리뷰뿐이다.
+#     · required check `validate` 는 렌더를 **전혀** 검증하지 않는다 — .github/workflows/validate.yml 이 아직 T003 골격이라 검사 1–7 이 전부
+#       `run: echo "자리 — T033에서 작성"` 이고 실제로 도는 스텝은 checkout + gitleaks 둘뿐이다. T033 이 만든 tests/validate.sh 는
+#       워크플로에 배선돼 있지 않다(`grep -rn "validate.sh" .github/` → 0건).
+#     · .github/ruleset-main.json 은 `required_approving_review_count: 0` 이라 사람 승인도 강제되지 않는다.
+#     · tests/validate.sh 검사 1 은 kustomization 에 `helmCharts:` 가 있으면 **스스로** `--enable-helm` 을 붙이므로(:395-398) 이 키가
+#       사라져도 로컬·CI 렌더는 계속 통과하고 라이브 repo-server 만 조용히 멈춘다. → T047 이 검사 1 안에 "`helmCharts:` 를 쓰는
+#       kustomization 이 있으면 이 파일의 `kustomize.buildOptions` 에 `--enable-helm` 이 있어야 한다"는 단언을 넣는다.
+#     · 범위는 "pull" 에서 끝나지 않는다 — platform AppProject 의 clusterResourceWhitelist 에 ClusterRole·ClusterRoleBinding 이 열거돼 있어
+#       (clusters/oci-k3s/projects/platform.yaml) 인플레이트된 차트가 클러스터 권한 객체까지 만들 수 있다.
+#     · 보상 통제가 실제로 성립하는 시점은 **T047**(validate.yml 을 채우고 helm 을 설치)이다 — 이 키의 명시적 후속 의존이다(설계 R17).
+#   ⚠ 자원(D1 인플레이트 고유): kustomize 가 helm 바이너리를 직접 실행하는 경로라 Argo 자신의 가드
+#     (ARGOCD_REPO_SERVER_HELM_MANIFEST_MAX_EXTRACTED_SIZE · OCI_MANIFEST_MAX_EXTRACTED_SIZE · OCI_LAYER_MEDIA_TYPES — 렌더에서 실재 확인)를
+#     타지 않는다. repo-server 에는 ephemeral-storage 상한이 없고(limits 는 memory 512Mi 뿐) `/tmp` · `/helm-working-dir` 은 sizeLimit 없는
+#     emptyDir 이며 argocd ns 에는 ResourceQuota·LimitRange 도 없다(platform/policies/quota.yaml 은 jt-dev·jt-prod 만) — 과대·압축폭탄
+#     차트 한 장이 2노드 클러스터에 DiskPressure 를 부를 수 있다. 후속: T047/T097 에서 `limits.ephemeral-storage` + emptyDir `sizeLimit` 검토.
 # metadata.namespace 를 적지 않는다(kustomization.yaml 머리 주석 "패치 원칙").
 apiVersion: v1
 kind: ConfigMap
@@ -14,6 +37,9 @@ data:
   # 리소스 추적 = annotation. 3.0+ 기본값이지만 명시한다: 업스트림 기본값이 바뀌어도 Helm 차트 컴포넌트(Vault · Authentik · OpenFGA · Reloader)의
   # `app.kubernetes.io/instance` 라벨과 충돌하는 label 추적으로 돌아가지 않게 고정(research 함정 "3.0부터 annotation 기반 기본값").
   application.resourceTrackingMethod: annotation
+  # kustomize 빌드 옵션 — `--enable-helm` 이 kustomization 의 `helmCharts:` 인플레이트를 켠다(첫 사용자 = T042 cert-manager · 설계 D1).
+  # repo-server 의 모든 kustomize 빌드에 공통 적용되는 전역 값이다: 오타 하나면 전 Application 이 렌더 실패로 떨어진다(머리 주석의 ⚠ 위험 참조).
+  kustomize.buildOptions: "--enable-helm"
   # app-of-apps 헬스 전파 — Application CRD 의 내장 헬스 평가가 1.8에서 제거되어 이 Lua 가 없으면 root 의 sync-wave 가 child Application 의
   # Healthy 를 기다리지 않는다(research D4 · Argo CD operator-manual/health 표준 스니펫). status.health 가 없으면 Progressing.
   resource.customizations.health.argoproj.io_Application: |

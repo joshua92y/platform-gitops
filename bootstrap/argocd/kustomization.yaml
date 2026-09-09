@@ -211,7 +211,8 @@ patches:
 
   # ---------------------------------------------------------------------------
   # (3) argocd-cmd-params-cm: server.insecure · controller.diff.server.side · processors/parallelism (2노드 소형 값)
-  # (4) argocd-cm: timeout.reconciliation · Application 헬스 Lua · resourceTrackingMethod (resource.exclusions 기본 유지)
+  # (4) argocd-cm: timeout.reconciliation · Application 헬스 Lua · resourceTrackingMethod · kustomize.buildOptions(--enable-helm · T042 PR-0
+  #     — repo-server 의 모든 kustomize 빌드에 걸리는 전역 값 · ⚠ 근거·위험은 그 파일 머리 주석) (resource.exclusions 기본 유지)
   # ---------------------------------------------------------------------------
   - path: argocd-cmd-params-cm.yaml
   - path: argocd-cm.yaml
