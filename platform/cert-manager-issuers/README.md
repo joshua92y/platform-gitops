@@ -104,7 +104,7 @@ kubectl -n cert-manager get secret cloudflare-dns-token `
 **⚠ 이 상태에서 안전한 것은 레이트리밋뿐이다 — 신호는 함께 죽는다.** Certificate가 `Ready=True`가 될 때까지
 `platform-cert-manager-issuers`와 `root` Application이 `Progressing`이고(Argo CD 내장 `cert-manager.io/Certificate` health가
 발급 전까지 Progressing, argocd-cm의 Application health Lua가 그 상태를 root까지 전파한다 — 설계 §8 R13),
-그 결과 `tests/platform/cluster.tests.ps1`의 `argo-1`과 `tests/platform/reboot.tests.ps1`의 `reboot-3`이 FAIL한다(§6).
+그 결과 `tests/platform/cluster.tests.ps1`의 `argo-1`이 FAIL한다(`reboot.tests.ps1`의 `reboot-3`은 `-AfterReboot`로 돌릴 때만 같이 FAIL한다 — §6).
 또 이 구간에 `clusters/oci-k3s/apps/` 변경을 머지하면 root sync가 이 컴포넌트의 wave에서 health를 기다리며 멈춰
 **뒤 wave Application들의 변경이 적용되지 않는다**(wave 값의 정본은 계약 §sync-wave 단일 표 — 여기 숫자를 다시 적지 않는다).
 **발급 확인 전까지 이 PR을 뒤 컴포넌트 PR과 섞지 않는다.**
@@ -263,13 +263,16 @@ health(`cert-manager.io/Certificate`)가 `platform-cert-manager-issuers`를 Heal
 그 상태를 `root`까지 전파하기 때문이다(설계 §8 R13). 기대 출력:
 
 ```
-FAIL argo-1 -- not Synced/Healthy: platform-cert-manager-issuers=Synced/Progressing, root=Synced/Progressing
+FAIL argo-1: not Synced/Healthy: platform-cert-manager-issuers=Synced/Progressing, root=Synced/Progressing
 ```
 
 `cluster.tests.ps1`의 `$argoExcludedApps`는 **빈 배열**이고 `run-platform-tests.ps1`에는 기대 실패 allowlist가 없으므로,
-이 구간에는 **러너 전체가 exit 1**이다. `reboot.tests.ps1`의 `reboot-3`(argocd ns Application 전부 Healthy)도 같은 이유로 FAIL한다.
+이 구간에는 **러너 전체가 exit 1**이다(원인은 cert-1·cert-2·argo-1 셋).
+`reboot.tests.ps1`의 `reboot-3`(argocd ns Application 전부 Healthy)도 같은 조건을 보지만 **`-AfterReboot`로 돌릴 때만** 평가된다 —
+평상시 러너 실행에서는 `SKIP reboot-3: manual trigger only (-AfterReboot) -- argocd applications all Healthy`다.
+즉 이 구간에 재부팅 검증을 겹쳐 돌리면 `reboot-3`도 함께 FAIL하므로, **발급이 끝난 뒤로 미룬다.**
 
-- **정상 경로에서도** 발급이 끝나기 전 2–5분 동안 `argo-1`·`reboot-3`이 FAIL할 수 있다 — §2의
+- **정상 경로에서도** 발급이 끝나기 전 2–5분 동안 `argo-1`이 FAIL할 수 있다 — §2의
   `wait --for=condition=Ready`가 끝나면 곧 회복된다.
 - **해소되지 않으면 그것은 진짜 실패다.** §1의 Secret 미생성·DNS-01 오배선 상태에서는 이 둘이 **영구 FAIL**로 남는다
   (그때 볼 곳은 ClusterIssuer가 아니라 Challenge·이벤트·컨트롤러 로그 — §1).
