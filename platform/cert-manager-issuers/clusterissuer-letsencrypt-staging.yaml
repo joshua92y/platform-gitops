@@ -1,0 +1,37 @@
+# platform/cert-manager-issuers/clusterissuer-letsencrypt-staging.yaml — ACME staging 발급자 (T042 PR-2)
+#
+# 배선 검증 전용이다. staging 체인의 루트는 공개 신뢰 저장소에 없으므로, 이 발급자가 낸 인증서로 서빙하면
+# Cloudflare Full(strict)가 오리진을 신뢰하지 않아 **전 호스트 526**이 된다. 그래서 TLSStore(PR-4)는
+# prod 발급(PR-3)이 Ready=True가 된 뒤에만 들어간다(설계 §8 R5 — T042에서 유일하게 "되돌리기가 곧 장애"인 구간).
+#
+# 이 발급자로 먼저 도는 이유: DNS-01 배선(토큰 권한 · self-check 리졸버 · webhook 도달 · 정책) 중 하나만 틀려도
+# prod 한도(동일 SAN 중복 5/7일, override 불가 · 실패 검증 5/시간)를 갉아먹기 때문이다. README §8.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+  # ⚠ ClusterIssuer는 cluster-scoped다 — `metadata.namespace`가 **없는 것이 정답**이다.
+  #   이 디렉터리에는 전역 `namespace:` 변환기도 없다(kustomization.yaml 머리 주석 · 설계 §8 R4).
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    email: contact@joshuatech.dev          # 대표 메일(2026-09-07 사용자 결정) — **계정 연락처 기록일 뿐 알림 경로가 아니다.**
+                                           # LE는 2025-06-04부터 만료 알림 메일을 보내지 않으므로 메일 라우팅은 이 PR의 선행 조건이 아니다
+                                           # (prod 파일과 같은 주석 — README §9).
+    privateKeySecretRef:
+      name: letsencrypt-staging-account-key
+      # ⚠ **삭제 금지.** cert-manager가 스스로 만드는 ACME 계정 키이고 이 저장소에 없다(Argo prune 대상도 아니다).
+      #   지우면 계정을 다시 등록해야 하고 그 한도는 10회/3시간/IP다. README §3.
+    solvers:
+      - selector:
+          dnsZones:
+            - joshuatech.dev              # 이 존에 대해서만 이 솔버를 쓴다(다른 존이 생겨도 오배선되지 않는다)
+        dns01:
+          cloudflare:
+            apiTokenSecretRef:
+              name: cloudflare-dns-token  # ns는 컨트롤러의 `--cluster-resource-namespace`(= cert-manager) — README §1
+              key: api-token
+            # ⚠ 여기에 `email:`을 넣지 않는다 — Cloudflare 솔버의 `email`은 **Global API Key 방식 전용**이다.
+            #   API 토큰 방식에서는 무시되지만, 두 방식이 섞인 것처럼 보이는 오인 여지를 만든다.
+    # `profile:` 미지정 = Let's Encrypt classic(90일). `tlsserver` 프로필(45일)을 쓰면 잔여 기간이 짧아져
+    # tests/platform/ingress.tests.ps1의 cert-2(잔여 > 30일)가 주기의 2/3에서 상시 FAIL한다(설계 §1.5).

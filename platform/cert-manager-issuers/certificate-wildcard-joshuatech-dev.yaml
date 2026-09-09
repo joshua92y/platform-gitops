@@ -1,0 +1,44 @@
+# platform/cert-manager-issuers/certificate-wildcard-joshuatech-dev.yaml — 오리진 와일드카드 인증서 (T042 PR-2 → PR-3에서 2줄 전환)
+#
+# 이 클러스터의 **오리진 인증서 1장**이다. Traefik의 TLSStore `default`(PR-4)가 이 Secret을 서빙하고,
+# 그 앞단에서 Cloudflare가 Full(strict)로 오리진 체인을 검증한다.
+#
+# ⚠ **지금은 staging 단계다** — `issuerRef.name`이 `letsencrypt-staging`이고 `secretName`이 `…-tls-staging`이다.
+#   PR-3에서 **그 두 줄을 한 커밋·한 diff로** `letsencrypt-prod` / `wildcard-joshuatech-dev-tls`로 바꾼다(설계 §14.2 각색 D).
+#   두 줄을 쪼개지 않는 이유와 왜 staging 구간에 별도 Secret 이름을 쓰는지는 README §4·§5.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: wildcard-joshuatech-dev
+  namespace: kube-system
+  # ⚠ ns **명시 필수**. 이 디렉터리에는 전역 `namespace:` 변환기가 없고(설계 §8 R4), Application의 destination ns는
+  #   `cert-manager`다. 생략하면 Certificate가 cert-manager ns에 만들어져 (a) ingress.tests의 cert-1이 즉시 FAIL하고
+  #   (b) Traefik(kube-system)이 TLSStore가 가리키는 Secret을 찾지 못한다 — Secret은 Certificate와 같은 ns에 생기기 때문이다.
+  #   cloudflared·system-upgrade 디렉터리에는 변환기가 있으므로 복사-붙여넣기 사고를 조심한다.
+spec:
+  secretName: wildcard-joshuatech-dev-tls-staging
+  # ⚠ **전이 구간 전용 이름**(설계 §14.2 각색 D). 종착값은 문면 그대로 `wildcard-joshuatech-dev-tls`이며 PR-3에서 바뀐다.
+  #   staging 인증서와 prod 인증서가 절대 같은 Secret에 쓰이지 않게 만드는 것이 목적이다 — 쓰기 대상이 이 한 줄로 유일하게 결정되므로
+  #   (a) staging 체인으로 cert-1이 거짓 PASS하는 일이 없고 (b) PR-4 이후 `issuerRef`만 되돌렸을 때 성공한 staging 재발급이
+  #   서빙 Secret을 덮어 전 호스트 526을 만드는 경로가 **구조적으로 존재하지 않는다**. README §5.
+  dnsNames:
+    - joshuatech.dev                       # ⚠ apex SAN 필수 — 와일드카드는 `*.joshuatech.dev`만 덮고 apex를 덮지 않는다.
+    - "*.joshuatech.dev"                   #   빠지면 apex/www 경로에서 Cloudflare Full(strict)가 526을 낸다.
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Always
+    # 설계 §3 문면 그대로 명시한다. v1.21.1에서는 생략해도 결과가 같지만, 그 `Always`는 **cert-manager 컨트롤러의 코드 기본값**이지
+    # CRD 구조 기본값이 아니다(certificates.cert-manager.io v1 스키마의 `privateKey.rotationPolicy`에는 `default:` 키가 없고
+    # description에만 "The default was changed from `Never` to `Always` in cert-manager >=v1.18.0"이라 적혀 있다).
+    # 다운그레이드·타 클러스터 이관 시 의미가 달라지므로 명시를 유지한다.
+  renewBeforePercentage: 33
+  # 설계 D3 = A(문면 유지). 90일 수명에서 갱신 시작이 잔여 29.7일이라 cert-2 임계값(30일)과 약 60일마다 7.2시간 겹친다
+  # (주기의 ≈0.5%, 첫 발생은 prod 발급 +60일 ≈ 2026-11 — SP-1 검증 구간 밖). ⚠ 2027-02-10 LE classic이 64일로 바뀌면
+  # 33% = 잔여 21.1일이 되어 cert-2가 43일 중 약 9일(≈21%) 상시 FAIL한다 — 그때 이 값을 40으로 올린다(README §9).
+  revisionHistoryLimit: 1
+  # `commonName`을 두지 않는다(SAN만). CN은 64자 제한이 있고 최신 CA/브라우저 규약에서 무시된다.
+  issuerRef:
+    kind: ClusterIssuer
+    group: cert-manager.io
+    name: letsencrypt-staging              # → PR-3에서 `letsencrypt-prod`(위 secretName과 **같은 커밋**에서)

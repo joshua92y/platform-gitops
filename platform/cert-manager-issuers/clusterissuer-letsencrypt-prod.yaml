@@ -1,0 +1,35 @@
+# platform/cert-manager-issuers/clusterissuer-letsencrypt-prod.yaml — ACME 운영 발급자 (T042 PR-2에서 생성, 참조는 PR-3)
+#
+# **이 PR에서는 아무 Certificate도 이 발급자를 참조하지 않는다.** 그런데도 지금 만드는 이유는,
+# ClusterIssuer 하나를 두는 것만으로 (a) ACME 계정 등록(= 외부 443 egress + 대표 메일 수리)과
+# (b) 계정 키 Secret 생성이 미리 검증되는데, **발급 슬롯은 하나도 소비하지 않기** 때문이다.
+# 발급 한도를 쓰는 것은 Certificate가 이 발급자를 가리키는 순간(PR-3)뿐이다.
+#
+# PR-3에서 `certificate-wildcard-joshuatech-dev.yaml`의 `issuerRef.name`과 `secretName`을 **한 커밋·한 diff로**
+# 여기(그리고 문면값 Secret)로 옮긴다 — 쪼개면 in-flight CertificateRequest가 삭제·재생성되어 주문이 2회 나갈 수 있다. README §4.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+  # ⚠ cluster-scoped — `metadata.namespace` 없음(staging 파일과 같은 이유).
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: contact@joshuatech.dev          # 대표 메일(2026-09-07 사용자 결정) — **계정 연락처 기록일 뿐 알림 경로가 아니다.**
+                                           # LE는 2025-06-04부터 만료 알림 메일을 보내지 않는다("Ending Support for Expiration
+                                           # Notification Emails") → 발급·갱신은 이 주소의 메일 라우팅과 **무관하게** 동작한다.
+                                           # 갱신 실패를 알려 줄 자동 수단은 T098의 만료 메트릭 알림뿐이다 — README §9.
+    privateKeySecretRef:
+      name: letsencrypt-prod-account-key
+      # ⚠ **삭제 금지.** staging 쪽과 같은 이유 — cert-manager 생성분이고 git에 없으며 재등록 한도는 10회/3시간/IP다. README §3.
+    solvers:
+      - selector:
+          dnsZones:
+            - joshuatech.dev
+        dns01:
+          cloudflare:
+            apiTokenSecretRef:
+              name: cloudflare-dns-token   # staging과 **같은 Secret 한 장**을 공유한다(토큰은 존 단위 권한이라 분리할 이유가 없다)
+              key: api-token
+            # ⚠ `email:` 금지(Global API Key 방식 전용) — staging 파일과 같다.
+    # `profile:` 미지정 = classic 90일. staging 파일 마지막 주석과 같은 이유(cert-2 임계값 30일).

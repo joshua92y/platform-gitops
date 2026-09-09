@@ -1,6 +1,36 @@
-# platform/cert-manager-issuers/ — ClusterIssuer·와일드카드 인증서(ExternalSecret 소비)
-# sync-wave: 계약 gitops-repo.md §sync-wave 단일 표 참조(wave 번호는 표에만 기재 — 중복 금지).
-# 빈 뼈대(T003) — 실제 매니페스트는 T031+에서 작성한다.
+# platform/cert-manager-issuers/ — ClusterIssuer 2종(ACME/DNS-01) + 오리진 와일드카드 Certificate (T042 PR-2)
+#
+# 정본 계약(모노레포 specs/003-platform-foundation/contracts/):
+#   - gitops-repo.md §Application 규약 · §sync-wave 단일 표(wave 번호는 그 표에만 적는다 — 여기 중복 기재 금지)
+#   - hostnames-and-access.md §오리진 인증서(와일드카드 1장 · `kube-system` Secret · Traefik TLSStore `default`)
+#     ※ 이 계약은 Secret 이름 문자열을 적지 않는다. 이름 `wildcard-joshuatech-dev-tls`의 정본은 **tasks.md:121 문면**이고
+#       코드 사본은 `tests/platform/ingress.tests.ps1:66` 하나뿐이다(PR-3이 이 이름으로 승격하므로 정본 위치를 분명히 해 둔다).
+#   - network-policy.md §허용 매트릭스(cert-manager egress 53 → 1.1.1.1/32 · 443 · 6443, ingress 10250/9402)
+#
+# 선행 의존: `platform/cert-manager/`(T042 PR-1, wave 0)의 컨트롤러·CRD·webhook이 먼저 살아 있어야 한다.
+#   webhook은 `failurePolicy: Fail`이라 도달하지 못하면 아래 두 kind의 CREATE 자체가 admission에서 거부된다
+#   (그 도달성은 T042 PR-A로 `allow-apiserver-webhook`에 노드 A flannel-wg 주소를 add-only 하여 실측 통과했다).
+# 운영자 선행 작업: Secret `cloudflare-dns-token`(ns `cert-manager`, key `api-token`)이 **이 PR 머지 전에** 있어야 한다 — README §1.
+#
+# 이 디렉터리가 만들지 "않는" 것 — 경계(운영 절차는 README.md):
+#   1) cert-manager 컨트롤 플레인(CRD·Deployment·RBAC·webhook 설정): `platform/cert-manager/` 소유(PR-1).
+#   2) Namespace `cert-manager`·`kube-system`과 PSA 라벨·NetworkPolicy: 정본은 `platform/policies/`(T041) — validate 검사 5.0·5.1.
+#   3) Application `platform-cert-manager-issuers`: `clusters/oci-k3s/apps/` 소유(T041 PR-C가 이미 배포).
+#      이 PR은 그 파일을 **건드리지 않는다** — 검사 7.1이 `source.path: platform/cert-manager-issuers`를 강제한다.
+#      리소스별 `SkipDryRunOnMissingResource`도 여기 적지 않는다(Application이 이미 syncOption으로 갖고 있다).
+#   4) Secret `cloudflare-dns-token`(운영자 수동 → T045 ExternalSecret)과 ACME 계정 키 Secret 2장(cert-manager 생성분):
+#      **이 저장소에 비밀은 없다.** Argo CD는 셋 다 만들지도 지우지도 않는다(Application이 `prune: false`).
+#   5) TLSStore `default`: `platform/traefik/` 소유(PR-4). 그 PR은 **prod 발급 Ready=True 뒤에만** 머지한다(설계 §8 R5).
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-resources: []
+
+# ⚠ 전역 `namespace:` 변환기를 두지 않는다(설계 §8 R4 — 이 파일에서 가장 위험한 한 줄).
+#   Application의 destination ns는 `cert-manager`지만 Certificate는 **kube-system**에 있어야 한다(Traefik과 같은 ns).
+#   변환기를 두면 (a) ClusterIssuer는 cluster-scoped라 무시되지만 (b) Certificate가 cert-manager ns로 재작성돼
+#   ingress.tests의 cert-1이 즉시 FAIL하고 Traefik이 Secret을 찾지 못한다.
+#   네임스페이스는 Certificate의 `metadata.namespace`로만 준다.
+#   (`platform/cloudflared/`·`platform/system-upgrade/`에는 변환기가 있으니 복사-붙여넣기 사고를 조심한다.)
+resources:
+  - clusterissuer-letsencrypt-staging.yaml
+  - clusterissuer-letsencrypt-prod.yaml
+  - certificate-wildcard-joshuatech-dev.yaml
