@@ -5,8 +5,12 @@
 #   allow-apiserver-webhook 4 · deny-imds 1(kube-system 전용) · allow-imds 1(vault 전용) = 49장.
 #   13 = 계약 표 14개 - kube-system. `kube-system`에는 default-deny를 걸지 않는다(K3s 번들 컴포넌트).
 #
-# 상수: 노드 A private IP `10.0.7.78` — K8s API 6443(`allow-kube-api`)와
-#   admission webhook·`kubectl port-forward`의 출발 IP(`allow-apiserver-webhook`).
+# 상수 ①: 노드 A private IP `10.0.7.78` — K8s API 6443(`allow-kube-api`)의 목적지이자
+#   `allow-apiserver-webhook`의 원래 출발 IP 가정. 노드 A 호스트가 주 NIC로 나갈 때의 주소다.
+# 상수 ②: 노드 A flannel-wg 주소 `10.42.0.0` — apiserver가 **파드 IP로 직접 dial**할 때의 출발 IP.
+#   admission webhook ingress(`allow-apiserver-webhook`의 cert-manager·cnpg-system)에 add-only로
+#   추가했다(VD-W 실측 2026-09-09, 근거는 아래 allow-apiserver-webhook 절 머리 주석).
+#   노드 A 파드 CIDR `10.42.0.0/24`의 네트워크 주소라 어떤 파드에도 할당되지 않는다.
 #   노드 B private IP는 이 파일에 없다(노드 IP 목적지 규칙은 policies-external.yaml).
 #
 # 되돌리기용 라벨: 모든 객체에 `app.kubernetes.io/part-of: platform-policies`를 직접 기재한다.
@@ -562,9 +566,78 @@ spec:
     - to: [{ ipBlock: { cidr: 10.0.7.78/32 } }]
       ports: [{ protocol: TCP, port: 6443 }]
 # =============================================================================
-# allow-apiserver-webhook × 4 — ingress ← 노드 A private IP 10.0.7.78/32, ns마다 포트
+# allow-apiserver-webhook × 4 — ingress ← 노드 A 주소, ns마다 포트
 #   cert-manager 10250 · external-secrets 10250 · cnpg-system 9443 = admission webhook.
 #   vault 8200은 webhook이 아니라 `kubectl port-forward svc/vault 8200`의 도착 경로다(계약 :48).
+#
+# ── VD-W 실측 (2026-09-09, 운영자가 노드에서 직접 실행) ───────────────────────────
+#   목적지는 노드 B의 cert-manager-webhook 파드 `10.42.1.14:10250`으로 고정하고 출발지만 바꿨다.
+#
+#   1) 노드 A에서 그 파드로 가는 경로의 출발 주소 — 노드 private IP가 아니다:
+#        $ ssh ssh-a 'ip route get 10.42.1.14'
+#          10.42.1.14 dev flannel-wg src 10.42.0.0
+#   2) SNAT 없음 — 노드 A 리스 서브넷 → 클러스터 CIDR은 RETURN이라 파드가 보는 소스가 위 src 그대로다:
+#        $ ssh ssh-a 'sudo iptables-save -t nat | grep -F FLANNEL-POSTRTG'
+#          -A FLANNEL-POSTRTG -s 10.42.0.0/24 -d 10.42.0.0/16 -m comment --comment "flanneld masq" -j RETURN
+#   3) egress-selector 모드 = K3s 기본값:
+#        $ ssh ssh-a 'sudo journalctl -u k3s -b -o cat | grep "egress proxy mode"'
+#          Tunnel server egress proxy mode: agent
+#   4) 실패 원문(노드 A k3s 저널) — 타임아웃이 아니라 **즉시 능동 거부**다:
+#          Sending HTTP/1.1 502 response to 127.0.0.1:34976:
+#          dial tcp 10.42.1.14:10250: connect: connection refused
+#   5) A/B/C 대조 실험:
+#        A) 노드 A → webhook 10.42.1.14:10250 → exit 7, 0ms, Couldn't connect   ← 실패
+#        B) 노드 A → coredns 10.42.1.11:9153  → code=200, 2.6ms                 ← 성공
+#           A와 같은 출발지·같은 flannel-wg 경로다. 다른 변수는 목적지 ns의 ingress 격리 하나뿐이므로
+#           크로스노드 데이터패스는 건강하고 원인은 NetworkPolicy 매칭 실패다.
+#        C) 노드 B → webhook 10.42.1.14:10250 → code=404, 6.7ms                 ← 성공
+#           kube-router가 파드 방화벽 체인 앞머리에 넣는 LOCAL 예외(파드와 같은 노드에서 출발한
+#           트래픽은 무조건 ACCEPT) 때문이다. 결과를 가르는 것은 포트가 아니라 **출발 노드**다.
+#
+# ── 메커니즘: 왜 노드 private IP가 아닌가 ────────────────────────────────────────
+#   K3s 기본 `--egress-selector-mode: agent`에서 apiserver → **파드 IP** 연결은 에이전트 터널을
+#   타지 않는다. 터널 서버는 pod/cluster 모드에서만 파드 CIDR을 등록하므로 파드 IP는 터널 대상이
+#   아니고(useTunnel=false), 노드 A 호스트 netns에서 기본 dialer로 **직접 dial**된다.
+#   그 소켓의 출발 IP는 커널의 소스 선택 결과다: `flannel-backend: wireguard-native`가
+#   `10.42.0.0/16`을 `dev flannel-wg scope link` 라우트로 걸고, 그 장치의 유일한 주소가
+#   노드 A 리스 서브넷의 네트워크 주소 /32이므로 → `10.42.0.0`.
+#   (`kubectl logs`·`exec`·`port-forward`는 반대로 전부 kubelet(노드 IP:10250) 경유라 터널을 타고
+#    목적지가 노드 로컬 loopback으로 재작성된다 — 그래서 이 실패가 그쪽에서는 보이지 않았다.)
+#
+# ── 정책 작성자는 틀리지 않았다 · 그래서 교체가 아니라 add-only다 (D6 = A1) ──────
+#   flannel **host-gw** 백엔드(터널 장치 없이 주 NIC로 라우팅)였다면 출발 IP가 노드 private IP라
+#   `10.0.7.78/32`가 정확히 옳다. 깨지는 원인은 오직 wireguard 백엔드의 소스 선택이다.
+#   "노드 IP를 잘못 적었다"가 아니므로 기존 /32를 지우거나 교체하지 않고 같은 규칙 안에 **추가**한다.
+#   부수 이유: 모노레포 tests/platform/cluster.tests.ps1의 np-set-5가 "해당 포트 + `/32`로 끝나는
+#   ipBlock을 **한 규칙 안에서 함께** 가진 ingress 규칙이 최소 1개"를 요구한다 — 기존 /32를 비-/32로
+#   바꾸면 그 단언이 깨진다.
+#
+# ── 10.42.0.0/32의 허용 확대 = 실질 0 ──────────────────────────────────────────
+#   이 주소는 노드 A 파드 CIDR `10.42.0.0/24`의 **네트워크 주소**라 어떤 파드에도 할당될 수 없다.
+#   따라서 실질 허용 대상은 노드 A 호스트 네임스페이스 하나뿐이고, 그 노드는 이미 apiserver가 도는 곳이다.
+#   ⚠ 이 값은 노드 A의 flannel **리스 결과**다. 노드 재조인·재이미지 시
+#     `kubectl get node <노드 A> -o jsonpath='{.spec.podCIDR}'`의 네트워크 주소와 반드시 재대조할 것.
+#     리스가 예컨대 `10.42.2.0/24`로 바뀌면 이 규칙은 조용히 무력해지고 webhook이 다시 502로 죽는다.
+#     이 실패 유형은 Argo Healthy + 파드 Ready 아래에서 완전히 침묵한다(kubelet readiness는 위 LOCAL
+#     예외로 항상 통과한다) — 알림이 아니라 이 각주가 유일한 방어선이다.
+#
+# ── ns별 적용 범위 ─────────────────────────────────────────────────────────────
+#   cert-manager (노드 B, 10250)     : 적용. 실제로 깨져 있던 경로다.
+#   cnpg-system  (노드 B, 9443)      : **선제 적용**. T052가 같은 "apiserver → 파드 IP 직접 dial"
+#       경로를 쓰므로 지금 넣어 두면 T052에서 같은 사고가 재발하지 않는다.
+#   external-secrets (노드 A, 10250) : **지금 고치지 않는다.** 노드 A 배치(`nodeSelector platform`)라
+#       위 C)와 같은 kube-router LOCAL 예외로 통과할 것으로 보이나 **미검증**이다. 불필요한 허용을
+#       미리 넓히지 않고 T045에서 실측한 뒤 결정한다.
+#   vault (8200)                     : **고치지도 지우지도 않는다.** port-forward는 kubelet의 CRI
+#       스트리밍 서버가 파드 netns 안 loopback으로 붙는 구조라 이 NetworkPolicy를 아예 거치지 않는다
+#       — 어떤 값으로 고쳐도 무효다. 그래도 남기는 것은 np-set-5가 4개 ns의 정책 존재를 요구하기 때문이다.
+#
+# ── 계약 정정 인계 (이 PR 범위 밖) ─────────────────────────────────────────────
+#   모노레포 contracts/network-policy.md `:37`·`:121`이 출발지를 "<노드 A private IP>/32"로 적었고,
+#   `:48`이 그 근거로 "port-forward는 API 서버·kubelet을 거치므로 출발 IP가 노드 A private IP다"라고
+#   썼다. 그 추론은 그 문장이 놓인 **vault 행(port-forward)** 의 문맥에서 나온 것이고,
+#   **webhook 행(파드 IP 직접 dial)에는 틀리다** — 위 실측이 그것을 보인다.
+#   feature 디렉터리는 불변이므로 이 PR에서 건드리지 않는다. 계약 정정은 feature 종료 시 converge로 인계.
 # =============================================================================
 ---
 apiVersion: networking.k8s.io/v1
@@ -577,7 +650,10 @@ spec:
   podSelector: {}
   policyTypes: [Ingress]
   ingress:
-    - from: [{ ipBlock: { cidr: 10.0.7.78/32 } }]
+    # add-only(D6 = A1). 실측 근거·메커니즘·범위는 이 절 머리 주석 참조.
+    - from:
+        - ipBlock: { cidr: 10.0.7.78/32 }    # 유지: 계약 :121 문면 · np-set-5의 /32 요건
+        - ipBlock: { cidr: 10.42.0.0/32 }    # 추가: 노드 A flannel-wg 주소 = 파드 IP 직접 dial의 실제 출발 IP
       ports: [{ protocol: TCP, port: 10250 }]
 ---
 apiVersion: networking.k8s.io/v1
@@ -603,7 +679,11 @@ spec:
   podSelector: {}
   policyTypes: [Ingress]
   ingress:
-    - from: [{ ipBlock: { cidr: 10.0.7.78/32 } }]
+    # 선제 적용 — T052가 같은 "apiserver → 파드 IP 직접 dial" 경로를 쓴다(이 절 머리 주석 참조).
+    #   지금 넣어 두면 T052 배포 시 cert-manager와 같은 502 사고가 재발하지 않는다.
+    - from:
+        - ipBlock: { cidr: 10.0.7.78/32 }    # 유지: 계약 :121 문면 · np-set-5의 /32 요건
+        - ipBlock: { cidr: 10.42.0.0/32 }    # 추가: 노드 A flannel-wg 주소(VD-W 실측)
       ports: [{ protocol: TCP, port: 9443 }]
 ---
 apiVersion: networking.k8s.io/v1
