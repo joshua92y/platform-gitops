@@ -1,0 +1,71 @@
+# platform/traefik/tlsstore-default.yaml — 와일드카드 오리진 인증서를 Traefik의 **동적 인증서**로 적재한다 (T042 PR-4)
+#
+# 이 한 장이 "Cloudflare Full(strict) ← Traefik 443"의 오리진 체인을 확정한다.
+# 앞 단계에서 cert-manager가 발급해 둔 Secret `kube-system/wildcard-joshuatech-dev-tls`
+# (`platform/cert-manager-issuers/certificate-wildcard-joshuatech-dev.yaml` 소유, PR-3에서 prod 승격)를
+# Traefik이 SNI 매칭 대상으로 삼게 만드는 것이 전부다.
+#
+# ⚠ **머지 전제 — 되돌리기가 곧 장애인 유일한 구간**(설계 §8 R5 · §7 단계 7):
+#   prod Certificate가 `Ready=True`가 된 **뒤에만** 머지한다. staging 체인이 실린 상태로 적용하면 Cloudflare가
+#   오리진을 신뢰하지 않아 전 호스트 526이고, TLSStore를 지워 되돌려도 Traefik 자체 서명으로 복귀 = 여전히 526이다.
+#   PR 순서가 유일한 방어선이다. 운영 절차·되돌리기·즉효 레버는 README.md.
+#
+# ── 왜 `defaultCertificate`가 아니라 `certificates:`인가 (설계 §6.1·§6.2, 문면 편차 ⑥) ────────────────────
+#   Traefik v3.7.8 소스 대조 결과 두 필드는 **완전히 다른 저장소로 간다**.
+#     · `spec.certificates[]`      → CRD provider가 `getTLS()`로 읽어 `CertAndStores{Stores:["default"]}`를 만들고
+#                                     TLS Manager가 `appendCertificate` → `st.DynamicCerts.Set(...)` — **DynamicCerts**.
+#     · `spec.defaultCertificate`  → `tls.Store.DefaultCertificate` 필드로만 가서 `st.DefaultCertificate`에 저장 —
+#                                     **DynamicCerts에 들어가지 않는다**.
+#   그런데 `CertificateStore.GetBestCertificate`는 CertCache → DynamicCerts 순으로만 찾고 없으면 `nil`을 반환한다.
+#   DefaultCertificate를 **한 번도 참조하지 않는다**. 폴백은 그 바깥의 `Manager.Get()` 클로저가 하는데,
+#   `sniStrict`가 켜져 있으면 그 폴백에 도달하기 전에 `nil, nil`(핸드셰이크 거절)로 끝난다
+#   (공식 문서도 같다 — "The default certificate is never served if the option is enabled").
+#   → 와일드카드를 `defaultCertificate`로만 지정하면 **sniStrict를 켜는 순간 websecure 443 전체가 끊긴다.**
+#   spec FR-011 · plan A3 · research INGRESS-D3의 "`default.defaultCertificate`로만 지정" 문장에 대한
+#   의도적 편차이며, 정정 범위는 이 한 줄(`defaultCertificate:` → `certificates:`)뿐이다.
+#   FR-011의 골격("kube-system Secret 1장 + 앱 Ingress `spec.tls` 생략")은 그대로 성립한다.
+#
+# ── 왜 둘을 **병기하지 않는가** (하이브리드 배제) ──────────────────────────────────────────────────────
+#   "안전하게 둘 다 적어 두자"가 가장 위험하다. CRD provider의 TLSStore 처리 루프는 `defaultCertificate`의 Secret을
+#   읽지 못하면 `continue`로 **그 TLSStore 항목 전체를 건너뛴다** — `buildCertificates` 호출까지 통째로 지나간다.
+#   즉 defaultCertificate로 적어 둔 Secret 한 장이 없거나 오타가 나면 `certificates:`에 적은 **동적 인증서까지 전부 사라진다.**
+#   오류 한 줄 없이 자체 서명으로 되돌아가므로 증상은 "전 호스트 526"뿐이다. 그래서 이 파일에는 `certificates:` **하나만** 둔다.
+#
+# ── 왜 ns가 `kube-system`인가 (설계 §6.3) ─────────────────────────────────────────────────────────────
+#   Traefik의 세 인증서 경로(TLSStore·Ingress `spec.tls`·IngressRoute `spec.tls`)는 모두 **참조하는 객체 자신의 ns**에서만
+#   Secret을 읽는다 — **교차 ns 참조 구문이 아예 없다.** 따라서 TLSStore는 Secret과 같은 ns에 있어야 하고,
+#   그 Secret은 Certificate와 같은 ns(= `kube-system`)에 생긴다. K3s 번들 Traefik도 `kube-system`에 있다.
+#   `traefik` 네임스페이스는 **존재하지 않고** AppProject `platform`의 destinations에도 없다(적었다면 Argo가 sync를 거부한다).
+#   ns를 바꾸면 앱 ns마다 Secret을 복제해야 해서 FR-011의 "와일드카드 1장" 설계가 깨진다.
+#   Secret 읽기 권한은 충분하다: 차트 40.1.x 기본값 `rbac.namespaced: false` + `providers.*.namespaces: []`라
+#   ClusterRole `traefik-kube-system`에 전 ns `secrets get/list/watch`가 붙는다.
+#
+# ── 이 파일이 만들지 "않는" 것 ────────────────────────────────────────────────────────────────────────
+#   · **TLSOption `default`를 여기에 두지 않는다**(설계 §6.4 소유권 단일화 · §8 R7). 이름이 `default`인 TLSStore/TLSOption은
+#     ns와 무관하게 전역 id로 승격되고 **두 개 이상 존재하면 Traefik이 양쪽을 다 버려** 내장 기본값으로 되돌아간다.
+#     오류가 나지 않으므로 minVersion TLS12·sniStrict가 조용히 사라지는 **무증상 보안 회귀**가 된다.
+#     TLSOption `default`의 정본은 모노레포 `infra/bootstrap/traefik-config.yaml`(HelmChartConfig, T038)이고,
+#     TLSStore `default`의 정본은 이 파일이다 — 각각 정확히 한 곳. 계약 `gitops-repo.md` §디렉터리
+#     ("platform/traefik/에 Middleware·TLSOption·TLSStore")와의 **의도적 편차**이며 converge 인계 항목이다.
+#     현재 차트 값이 `tlsStore: {}`(빈 맵)이라 경쟁 CR이 하나도 없어 깨끗하게 인수한다.
+#   · **`sniStrict`는 이 PR이 아니다**(D5 = T042 단계 9). 그 스위치는 모노레포 `traefik-config.yaml`의 `tlsOptions.default`에 있고,
+#     README §9의 판별 실험 ①②가 **둘 다 성립한 뒤에만** 켠다. 여기서 켤 수 있는 값도 아니다.
+#   · Secret 자체와 Certificate: `platform/cert-manager-issuers/` 소유. Namespace·PSA·NetworkPolicy: `platform/policies/` 소유.
+#     Application `platform-traefik`: `clusters/oci-k3s/apps/` 소유(T041 PR-C가 이미 배포 — 이 PR은 건드리지 않는다).
+apiVersion: traefik.io/v1alpha1
+kind: TLSStore
+metadata:
+  name: default
+  # 이름은 `default`여야 한다 — Traefik은 이 이름의 TLSStore만 기본 저장소로 승격한다(다른 이름은 라우터가 명시 참조해야 쓰인다).
+  namespace: kube-system
+  # ⚠ ns **명시 필수**. 이 디렉터리에는 전역 `namespace:` 변환기가 없다(kustomization.yaml 머리 주석 · 설계 §8 R4).
+  #   Application의 destination도 `kube-system`이라 지금은 생략해도 같은 결과지만, 명시가 위 §6.3 불변식의 근거다.
+spec:
+  certificates:
+    - secretName: wildcard-joshuatech-dev-tls
+      # 정본은 모노레포 `tasks.md:121` 문면이고 코드 사본은 `tests/platform/ingress.tests.ps1:66`($WildcardSecretName) 하나뿐이다.
+      # PR-3이 이 이름으로 승격을 마쳤다(전이 구간 이름 `…-tls-staging`은 승격 뒤 운영자가 수동 삭제 — 그 README §10).
+      # ⚠ **CRD 프루닝 확인**: 머지 뒤 아래가 빈 값이면 설치된 CRD가 이 필드를 잘라낸 것이므로 즉시 중단한다(README §4).
+      #     kubectl -n kube-system get tlsstore default -o jsonpath='{.spec.certificates[0].secretName}'
+      #   차트 40.1.0의 `crds/traefik.io_tlsstores.yaml`에는 `spec.certificates`(array of `{secretName}`, required)가
+      #   실재함을 2026-09-09에 확인했다 — `defaultCertificate`·`defaultGeneratedCert`와 나란히 있는 별개 필드다.
