@@ -8,7 +8,7 @@
 |---|---|
 | `argocd/kustomization.yaml` | `namespace: argocd` + install.yaml@`e258ee23…`(v3.5.2 커밋) + **base `../../clusters/oci-k3s/projects`**(AppProject 5) + 이미지 digest 2개 + 패치: dex 6·applicationset 8·upstream NetworkPolicy 5 삭제, requests/GOMEMLIMIT 5종, `argocd-cmd-params-cm`, `argocd-cm`, CRD 삭제 보호 3 |
 | `argocd/argocd-cmd-params-cm.yaml` | `server.insecure` · `controller.diff.server.side` · processors/parallelism 4키 |
-| `argocd/argocd-cm.yaml` | `timeout.reconciliation 180s` · `application.resourceTrackingMethod annotation` · Application 헬스 Lua(`resource.exclusions` 기본 유지) |
+| `argocd/argocd-cm.yaml` | `timeout.reconciliation 180s` · `application.resourceTrackingMethod annotation` · Application 헬스 Lua(`resource.exclusions` 기본 유지) · **`kustomize.buildOptions: --enable-helm`**(T042 PR-0 — repo-server의 **모든** kustomize 빌드에 걸리는 전역 값이라 저장소의 어떤 kustomization이라도 원격 차트를 pull 할 수 있게 된다. 실효 통제·후속 의존 T047은 그 파일 머리 주석의 ⚠ 블록) |
 | `argocd/resources-*.yaml` | controller(StatefulSet) 256Mi/1Gi · repo-server 128Mi/512Mi · server 128Mi/512Mi · redis 32Mi/128Mi · notifications 64Mi/256Mi + GOMEMLIMIT(Go 4종) |
 | `argocd/patch-crd-sync-options.yaml` | Argo CD CRD 3종(applications·appprojects·applicationsets)에 `Delete=false,Prune=false` — strategic merge(install.yaml CRD에 annotations 맵이 없어 JSON6902 add는 빌드 실패) |
 | `root-app.yaml` | Application `root`(project **`platform`** — T041 PR-A에서 `default`에서 이관; 순서는 파일 머리 주석과 아래 ⑧) |
