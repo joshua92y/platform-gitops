@@ -249,7 +249,7 @@ staging 구간에는 `wildcard-joshuatech-dev-tls`라는 이름의 Secret이 아
 
 ---
 
-## 6. ⚠ staging 구간(PR-2 ~ PR-3)의 기대 실패 — `cert-1`·`cert-2` **그리고** `argo-1`·`reboot-3`
+## 6. ⚠ staging 구간(PR-2 ~ PR-3)의 기대 실패 — `cert-1`·`cert-2` **그리고** `argo-1`
 
 `tests/platform/ingress.tests.ps1`을 이 구간에 돌리면 다음 두 줄이 나온다(**출력 전문** — 운영자가 그대로 대조할 수 있게 `--` 구분자까지 옮긴다). **정상이다.**
 
@@ -274,7 +274,7 @@ FAIL argo-1: not Synced/Healthy: platform-cert-manager-issuers=Synced/Progressin
 
 - **정상 경로에서도** 발급이 끝나기 전 2–5분 동안 `argo-1`이 FAIL할 수 있다 — §2의
   `wait --for=condition=Ready`가 끝나면 곧 회복된다.
-- **해소되지 않으면 그것은 진짜 실패다.** §1의 Secret 미생성·DNS-01 오배선 상태에서는 이 둘이 **영구 FAIL**로 남는다
+- **해소되지 않으면 그것은 진짜 실패다.** §1의 Secret 미생성·DNS-01 오배선 상태에서는 `argo-1`이 **영구 FAIL**로 남는다
   (그때 볼 곳은 ClusterIssuer가 아니라 Challenge·이벤트·컨트롤러 로그 — §1).
 
 > **왜 사전에 적어 두는가 — 문면이 고장과 구별되지 않기 때문이다.**
