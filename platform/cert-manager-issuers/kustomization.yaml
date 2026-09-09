@@ -2,7 +2,9 @@
 #
 # 정본 계약(모노레포 specs/003-platform-foundation/contracts/):
 #   - gitops-repo.md §Application 규약 · §sync-wave 단일 표(wave 번호는 그 표에만 적는다 — 여기 중복 기재 금지)
-#   - hostnames-and-access.md §오리진 인증서(와일드카드 1장 · kube-system Secret `wildcard-joshuatech-dev-tls` · Traefik TLSStore `default`)
+#   - hostnames-and-access.md §오리진 인증서(와일드카드 1장 · `kube-system` Secret · Traefik TLSStore `default`)
+#     ※ 이 계약은 Secret 이름 문자열을 적지 않는다. 이름 `wildcard-joshuatech-dev-tls`의 정본은 **tasks.md:121 문면**이고
+#       코드 사본은 `tests/platform/ingress.tests.ps1:66` 하나뿐이다(PR-3이 이 이름으로 승격하므로 정본 위치를 분명히 해 둔다).
 #   - network-policy.md §허용 매트릭스(cert-manager egress 53 → 1.1.1.1/32 · 443 · 6443, ingress 10250/9402)
 #
 # 선행 의존: `platform/cert-manager/`(T042 PR-1, wave 0)의 컨트롤러·CRD·webhook이 먼저 살아 있어야 한다.

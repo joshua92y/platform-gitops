@@ -18,6 +18,13 @@ Traefik의 TLSStore `default`는 `platform/traefik/`(PR-4), Application은 `clus
 PR-3(prod 승격) → PR-4(TLSStore). PR-4를 prod 발급 전에 넣으면 전 호스트 526이고 **되돌리기(TLSStore 삭제)도 자체 서명 복귀 = 여전히 526**이다 —
 T042에서 유일하게 "되돌리기가 곧 장애"인 구간이며, PR 순서가 유일한 방어선이다.
 
+**머지 시각 조건**: 노드 B(`joshtech-cache`, `role=data`)가 Ready이고 **SUC 업그레이드 창 밖**일 것
+(창의 정본은 `platform/system-upgrade/plan-k3s-agent.yaml`의 `window` — 현재 일요일 03:00–05:00 KST).
+cert-manager 3종이 노드 B 단독 배치이고 webhook이 `failurePolicy: Fail`이라, 그 창의 drain 중(또는 노드 B 장애 중)에는
+ClusterIssuer·Certificate의 **CREATE가 admission에서 거부**되어 첫 sync가 SyncFailed로 떨어진다.
+창이 끝나면 `selfHeal: true`가 재시도해 저절로 회복되지만, 그 사이의 SyncFailed를 진짜 고장으로 오독하게 된다.
+(같은 규칙이 `platform/cert-manager/README.md`에도 있다 — "SUC 업그레이드 창 동안 issuers를 sync 하지 않는다".)
+
 ---
 
 ## 1. 선행 — 운영자 수동 Secret `cloudflare-dns-token` (이 PR 머지 **전**)
@@ -46,6 +53,11 @@ Global API Key 금지, `joshuatech-tofu-deploy` 재사용 금지(스코프가 �
 **금지**: `--from-literal=`(토큰이 명령줄 → 셸 히스토리·`ps` 출력에 남는다) ·
 `--dry-run=client -o yaml > secret.yaml`(평문 파일 → 커밋 사고) · 값 끝 개행(Cloudflare 인증 실패).
 **Git Bash에서 실행하지 않는다** — MSYS가 `/dev/stdin`을 재작성해 네이티브 `kubectl.exe`가 열지 못한다(cloudflared README에 재현 기록).
+
+**`--server-side`는 선택이 아니다** — client-side apply는 `kubectl.kubernetes.io/last-applied-configuration` 어노테이션에
+**토큰 base64 사본**을 남기고, 그 사본은 `kubectl get secret -o yaml`·etcd 스냅샷·야간 백업까지 그대로 따라간다
+(선례: `platform/cloudflared/README.md` ② "`apply --server-side`라 회전 시 재실행해도 되고, `last-applied-configuration` 어노테이션(토큰 사본)이 생기지 않는다").
+회전으로 이 절차를 재실행할 때도 이 플래그를 빼지 않는다.
 
 ```powershell
 Set-PSReadLineOption -HistorySaveStyle SaveNothing      # 이 세션 히스토리 저장 끄기
@@ -79,9 +91,23 @@ kubectl -n cert-manager get secret cloudflare-dns-token `
 
 되돌리기: `kubectl -n cert-manager delete secret cloudflare-dns-token`. Argo는 이 Secret을 추적하지 않는다.
 
-**Secret이 없으면 어떻게 되나 — 안전한 실패다.** ClusterIssuer가 `Ready=False`가 되고 Certificate는 pending에 머문다.
-**이 상태에서는 ACME 호출 자체가 일어나지 않으므로 레이트리밋은 한 슬롯도 소비되지 않는다.** 그래도 진단 노이즈를 없애기 위해
-순서를 지켜 Secret을 먼저 만든다.
+**Secret이 없으면 어떻게 되나 — prod 한도는 안전하지만 증상은 다르다(진단 지점 주의).**
+**ClusterIssuer 2개는 그대로 `Ready=True`가 된다.** ACME 계정 등록은 솔버 Secret과 무관하기 때문이다 — §8이 바로 그 성질에 기대어
+"참조되지 않는 prod ClusterIssuer"만으로 계정 등록·외부 443을 미리 검증한다. 솔버의 `apiTokenSecretRef`는 Challenge의 `Present` 단계에서 처음 읽힌다.
+실제 시퀀스는 이렇다: 두 ClusterIssuer `Ready=True` → Certificate `Issuing=True`·`Ready=False` → CertificateRequest·Order까지 생성되어
+**staging 엔드포인트로 newOrder 호출이 실제로 나가고** → Challenge가 `secret "cloudflare-dns-token" not found`로 `pending`에 정체한다.
+따라서 이 상태의 진단 지점은 ClusterIssuer가 **아니라** `kubectl -n kube-system get certificate,certificaterequest,order,challenge`와 cert-manager 로그다.
+§2의 첫 확인("둘 다 True = 정상")은 이 고장 상태에서도 True를 돌려주므로 그것만으로 판단하지 않는다.
+**prod 한도(중복 5/7일 · 실패 검증 5/시간)는 소비되지 않는다** — Certificate가 staging만 가리키기 때문이다(§9).
+그래도 순서를 지켜 Secret을 먼저 만든다.
+
+**⚠ 이 상태에서 안전한 것은 레이트리밋뿐이다 — 신호는 함께 죽는다.** Certificate가 `Ready=True`가 될 때까지
+`platform-cert-manager-issuers`와 `root` Application이 `Progressing`이고(Argo CD 내장 `cert-manager.io/Certificate` health가
+발급 전까지 Progressing, argocd-cm의 Application health Lua가 그 상태를 root까지 전파한다 — 설계 §8 R13),
+그 결과 `tests/platform/cluster.tests.ps1`의 `argo-1`과 `tests/platform/reboot.tests.ps1`의 `reboot-3`이 FAIL한다(§6).
+또 이 구간에 `clusters/oci-k3s/apps/` 변경을 머지하면 root sync가 이 컴포넌트의 wave에서 health를 기다리며 멈춰
+**뒤 wave Application들의 변경이 적용되지 않는다**(wave 값의 정본은 계약 §sync-wave 단일 표 — 여기 숫자를 다시 적지 않는다).
+**발급 확인 전까지 이 PR을 뒤 컴포넌트 PR과 섞지 않는다.**
 
 ---
 
@@ -96,6 +122,9 @@ kubectl -n cert-manager get secret | grep letsencrypt     # 계정 키 2장 생�
 kubectl -n kube-system get certificate,certificaterequest,order,challenge
 kubectl -n kube-system wait --for=condition=Ready certificate/wildcard-joshuatech-dev --timeout=600s
 ```
+
+⚠ **ClusterIssuer 두 개가 `True`인 것은 계정 등록까지만 증명한다.** DNS-01 토큰 Secret이 없거나 권한이 틀려도 이 줄은 `True`다 —
+솔버의 `apiTokenSecretRef`는 Challenge의 `Present` 단계에서 처음 읽히기 때문이다(§1). 배선 판정은 아래 Certificate·Challenge 확인으로 한다.
 
 **DNS-01 self-check 실패는 오류가 아니라 침묵으로 온다** — Challenge가 `pending`에 머물고 컨트롤러 로그에
 `Waiting for DNS-01 challenge propagation`이 반복된다. 그때 **가장 먼저** 확인할 것은 values의 리졸버 값이다
@@ -164,7 +193,9 @@ kubectl -n kube-system get certificate wildcard-joshuatech-dev -o jsonpath='{"ge
 3. `Issuing != True` — **`== False`를 요구하지 말 것.** 발급이 끝나면 `Issuing` condition 자체가 사라질 수 있어
    `False`를 요구하면 정상 완료 상태에서 FAIL한다.
 
-`notAfter`가 약 +90일이고 `revision`이 증가했는지도 함께 본다(VD-P: prod 발급이 **정확히 1회**인가).
+`notAfter`가 약 +90일인지, 그리고 `revision`이 **정확히 1만 증가**했는지를 함께 본다 — 이것이 VD-P("prod 발급이 **정확히 1회**인가")의 유일한 판정 신호다.
+**승격 PR을 머지하기 직전에 이 명령을 한 번 돌려 `rev=` 값을 기록해 둔다**(전이가 순조로웠다면 staging 발급이 rev 1이므로 승격 뒤 값은 **2**다).
+2 이상 증가했으면 prod 슬롯을 추가로 소비한 것이므로 **즉시 멈춘다**(한도 5/7일, override 불가).
 
 **C. CertificateRequest — 실제로 prod 발급자가 서명했는가**
 
@@ -175,7 +206,12 @@ kubectl -n kube-system get certificaterequest \
 ```
 
 ⚠ **CertificateRequest에는 `observedGeneration`이 없다** — 게이트 B와 달리 여기서는 요구하지 않는다.
-CertificateRequest 개수가 예상보다 늘었으면 즉시 멈추고 원인을 규명한다(한도 5/7일).
+
+⚠ **개수는 중복 발급의 신호가 되지 못한다.** 이 Certificate는 `revisionHistoryLimit: 1`이라 cert-manager의 revision manager가
+`status.revision - 1` 이하의 CertificateRequest를 GC한다 — 승격 뒤 staging rev 1은 사라지고 어느 시점에나 최신 1건만 남는다.
+중복 주문이 나가 rev가 3이 되어도 개수는 여전히 1이고, 반대로 발급 직후 짧은 구간에는 정상 상태에서도 2건이 보여 오경보가 난다.
+**중복 발급 판정은 게이트 B의 `.status.revision`으로 한다**(위: 승격 직전 값 대비 정확히 +1). 이 명령은 최신 revision 행의
+`ISSUER`·`READY` 확인용으로만 쓴다.
 
 **D. 실물 인증서 — 운영자 admin 전용**
 
@@ -213,14 +249,30 @@ staging 구간에는 `wildcard-joshuatech-dev-tls`라는 이름의 Secret이 아
 
 ---
 
-## 6. ⚠ staging 구간(PR-2 ~ PR-3)에서 `cert-1`·`cert-2` FAIL은 **기대 상태**다
+## 6. ⚠ staging 구간(PR-2 ~ PR-3)의 기대 실패 — `cert-1`·`cert-2` **그리고** `argo-1`·`reboot-3`
 
-`tests/platform/ingress.tests.ps1`을 이 구간에 돌리면 다음 두 줄이 나온다. **정상이다.**
+`tests/platform/ingress.tests.ps1`을 이 구간에 돌리면 다음 두 줄이 나온다(**출력 전문** — 운영자가 그대로 대조할 수 있게 `--` 구분자까지 옮긴다). **정상이다.**
 
 ```
-FAIL cert-1: ... expected exactly 1 cert-manager Certificate in kube-system with spec.secretName=wildcard-joshuatech-dev-tls, found 0
-FAIL cert-2: ... no certificate source
+FAIL cert-1: Secret kube-system/wildcard-joshuatech-dev-tls exists (cert-manager Certificate spec.secretName match, Ready=True) -- expected exactly 1 cert-manager Certificate in kube-system with spec.secretName=wildcard-joshuatech-dev-tls, found 0
+FAIL cert-2: wildcard certificate status.notAfter is more than 30 days away (TotalDays > 30) -- no certificate source
 ```
+
+**같은 구간에 `tests/platform/cluster.tests.ps1`의 `argo-1`도 FAIL한다.** Certificate가 `Ready=True`가 되기 전까지 Argo CD 내장
+health(`cert-manager.io/Certificate`)가 `platform-cert-manager-issuers`를 Healthy로 보지 않고, `argocd-cm`의 Application health Lua가
+그 상태를 `root`까지 전파하기 때문이다(설계 §8 R13). 기대 출력:
+
+```
+FAIL argo-1 -- not Synced/Healthy: platform-cert-manager-issuers=Synced/Progressing, root=Synced/Progressing
+```
+
+`cluster.tests.ps1`의 `$argoExcludedApps`는 **빈 배열**이고 `run-platform-tests.ps1`에는 기대 실패 allowlist가 없으므로,
+이 구간에는 **러너 전체가 exit 1**이다. `reboot.tests.ps1`의 `reboot-3`(argocd ns Application 전부 Healthy)도 같은 이유로 FAIL한다.
+
+- **정상 경로에서도** 발급이 끝나기 전 2–5분 동안 `argo-1`·`reboot-3`이 FAIL할 수 있다 — §2의
+  `wait --for=condition=Ready`가 끝나면 곧 회복된다.
+- **해소되지 않으면 그것은 진짜 실패다.** §1의 Secret 미생성·DNS-01 오배선 상태에서는 이 둘이 **영구 FAIL**로 남는다
+  (그때 볼 곳은 ClusterIssuer가 아니라 Challenge·이벤트·컨트롤러 로그 — §1).
 
 > **왜 사전에 적어 두는가 — 문면이 고장과 구별되지 않기 때문이다.**
 > - cert-1의 `found 0`은 (a) 지금처럼 `secretName`이 아직 `-staging`인 정상 전이 상태와
@@ -229,7 +281,15 @@ FAIL cert-2: ... no certificate source
 >
 > 즉 이 두 줄만으로는 "정상 전이"와 "진짜 고장"을 구별할 수 없다. tester·T049는 이 구간의 FAIL을
 > **알려진 기대 실패**로 보고하되, 근거로 §2의 확인 명령 출력(staging Certificate가 `Ready=True`인가)을 함께 남긴다.
-> PR-3 머지 뒤에는 둘 다 PASS로 돌아와야 하며, 그때도 FAIL이면 그것은 진짜 실패다.
+> **승격 직후 발급이 끝나기 전의 과도 상태는 또 다른(세 번째) 문면으로 나온다** — `secretName`이 문면값으로 바뀌는 순간
+> 필터는 통과하지만 아직 `Ready=True`가 아니기 때문이다(`secretName` 변경은 재발급을 유발하므로 반드시 한 번 거친다):
+>
+> ```
+> FAIL cert-1: Secret kube-system/wildcard-joshuatech-dev-tls exists (cert-manager Certificate spec.secretName match, Ready=True) -- Certificate wildcard-joshuatech-dev Ready != True (reason=[...]) -- cert-manager sets Ready=True only when the Secret exists and is valid
+> FAIL cert-2: wildcard certificate status.notAfter is more than 30 days away (TotalDays > 30) -- certificate not Ready
+> ```
+>
+> PR-3 머지 **뒤 §4 게이트 B(`Ready=True`)까지 통과하면** 둘 다 PASS로 돌아와야 하며, 그때도 FAIL이면 그것은 진짜 실패다.
 > (`ingress.tests.ps1:26`이 vault-2에 대해 같은 방식으로 사전 문서화해 둔 선례가 있다.)
 
 이 구간에는 `traefik.joshuatech.dev` 등 edge 확인으로 오리진 인증서를 판단할 수 없다는 점도 함께 기억한다 —
@@ -272,7 +332,12 @@ Access 앱이 edge에서 302를 돌려주므로 오리진에 닿지 않는다. �
 | ACME 계정 재등록 | 10 / 3시간 / IP | §3의 계정 키 Secret 2장을 지우면 안 되는 이유 |
 | staging | 훨씬 넉넉하다 | **배선 검증은 전부 staging에서 끝낸다** |
 
-**Secret이 없어 ClusterIssuer가 `Ready=False`인 상태는 한도를 소비하지 않는다**(ACME 호출 자체가 없다 — §1).
+⚠ **갱신 실패를 알려 줄 메일은 없다.** Let's Encrypt는 2025-06-04부로 만료 알림 메일 발송을 중단했다("Ending Support for Expiration Notification Emails") —
+ClusterIssuer의 `email:`은 **계정 연락처 기록일 뿐 알림 경로가 아니다**(발급·갱신은 그 주소의 메일 라우팅과 무관하게 동작한다).
+`certmanager_certificate_expiration_timestamp_seconds` 기반 알림(T098)이 유일한 자동 감지 수단이고, 그 전까지는 **만료일을 사람이 본다**(설계 §8 R19).
+
+**Secret이 없는 상태도 prod 한도는 소비하지 않는다** — 단 이유는 "ACME 호출이 없어서"가 아니다.
+ClusterIssuer는 그대로 `Ready=True`이고 staging newOrder는 실제로 나간다. prod가 안전한 것은 Certificate가 staging만 가리키기 때문이다(§1).
 `renewBeforePercentage: 33`의 첫 갱신은 prod 발급 +60일쯤이며, cert-2 임계값(30일)과 겹치는 7.2시간 창이 60일마다 생긴다.
 ⚠ **2027-02-10 LE classic이 64일로 바뀌면 33% = 잔여 21.1일**이 되어 cert-2가 43일 중 약 9일(≈21%) 상시 FAIL하므로,
 그 전에 이 값을 40으로 올린다(잔여 36일 갱신).
@@ -309,6 +374,10 @@ Certificate·ClusterIssuer 삭제에도 발급된 Secret은 보존된다(`enable
 | target | `name: cloudflare-dns-token`, `creationPolicy: Owner` |
 | store | `secretStoreRef: {kind: ClusterSecretStore, name: vault-platform}` (`apiVersion: external-secrets.io/v1` — v1beta1 금지) |
 
+- ⚠ **kv 시드에도 §1과 같은 규율을 적용한다 — 값을 argv에 두지 않는다.** `vault kv put <경로> api-token=<값>` 형태는 §1이 금지한
+  `--from-literal=`과 **정확히 같은 노출 등급**이다(셸 히스토리 · `ps` 출력). 값이 `-`이면 Vault CLI가 stdin에서 읽으므로
+  `… | vault kv put kv/platform/cloudflare/dns-token api-token=-` 로 파이프해 넣는다(평문 파일을 만들어 `@file`로 넘기지 않는다).
+  시드 뒤 확인은 `vault kv get -field=…`(값 출력)이 아니라 `vault kv metadata get kv/platform/cloudflare/dns-token`(키·버전만)으로 한다.
 - ⚠ **`docs/runbooks/bootstrap.md:36`의 "cert-manager 토큰은 Vault kv 시드(T043)에서 소비 예정"은 오기다** — kv 시드는 **T045**이고 T043은 AOP다.
 - ⚠ **인수 함정(VD-10 · 미검증)**: ESO의 `creationPolicy: Owner`가 **자신이 만들지 않은 기존 Secret을 인수하는지** 실측된 바 없다
   (라벨/어노테이션 선인수가 필요한지, `Merge`를 써야 하는지도 미확인).

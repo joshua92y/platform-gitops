@@ -15,7 +15,10 @@ metadata:
 spec:
   acme:
     server: https://acme-v02.api.letsencrypt.org/directory
-    email: contact@joshuatech.dev          # 대표 메일(2026-09-07 사용자 결정) — 만료 임박 알림이 여기로 온다
+    email: contact@joshuatech.dev          # 대표 메일(2026-09-07 사용자 결정) — **계정 연락처 기록일 뿐 알림 경로가 아니다.**
+                                           # LE는 2025-06-04부터 만료 알림 메일을 보내지 않는다("Ending Support for Expiration
+                                           # Notification Emails") → 발급·갱신은 이 주소의 메일 라우팅과 **무관하게** 동작한다.
+                                           # 갱신 실패를 알려 줄 자동 수단은 T098의 만료 메트릭 알림뿐이다 — README §9.
     privateKeySecretRef:
       name: letsencrypt-prod-account-key
       # ⚠ **삭제 금지.** staging 쪽과 같은 이유 — cert-manager 생성분이고 git에 없으며 재등록 한도는 10회/3시간/IP다. README §3.

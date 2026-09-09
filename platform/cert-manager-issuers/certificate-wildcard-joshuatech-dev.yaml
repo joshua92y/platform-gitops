@@ -27,7 +27,11 @@ spec:
   privateKey:
     algorithm: ECDSA
     size: 256
-    # `rotationPolicy`는 적지 않는다 — cert-manager v1.18.0부터 CRD 기본값이 `Always`라 명시해도 동작이 같다(설계 §14.2 "무가치 3").
+    rotationPolicy: Always
+    # 설계 §3 문면 그대로 명시한다. v1.21.1에서는 생략해도 결과가 같지만, 그 `Always`는 **cert-manager 컨트롤러의 코드 기본값**이지
+    # CRD 구조 기본값이 아니다(certificates.cert-manager.io v1 스키마의 `privateKey.rotationPolicy`에는 `default:` 키가 없고
+    # description에만 "The default was changed from `Never` to `Always` in cert-manager >=v1.18.0"이라 적혀 있다).
+    # 다운그레이드·타 클러스터 이관 시 의미가 달라지므로 명시를 유지한다.
   renewBeforePercentage: 33
   # 설계 D3 = A(문면 유지). 90일 수명에서 갱신 시작이 잔여 29.7일이라 cert-2 임계값(30일)과 약 60일마다 7.2시간 겹친다
   # (주기의 ≈0.5%, 첫 발생은 prod 발급 +60일 ≈ 2026-11 — SP-1 검증 구간 밖). ⚠ 2027-02-10 LE classic이 64일로 바뀌면
