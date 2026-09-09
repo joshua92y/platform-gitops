@@ -1,6 +1,143 @@
-# platform/cert-manager/ — cert-manager(CRD 제공)
-# sync-wave: 계약 gitops-repo.md §sync-wave 단일 표 참조(wave 번호는 표에만 기재 — 중복 금지).
-# 빈 뼈대(T003) — 실제 매니페스트는 T031+에서 작성한다.
+# platform/cert-manager/ — cert-manager v1.21.1(CRD 6장 + controller·webhook·cainjector) (T042 PR-1)
+#
+# 정본 계약(모노레포 specs/003-platform-foundation/contracts/):
+#   - gitops-repo.md §Application 규약(워크로드 강화 · **삭제 보호**: 오퍼레이터 CRD에 `argocd.argoproj.io/sync-options: Delete=false,Prune=false`)
+#     · §sync-wave 단일 표(wave 번호는 그 표에만 적는다 — 여기 중복 기재 금지) · §이미지·승격(platform/ 이미지는 태그에 `@sha256` 병기)
+#   - network-policy.md §네임스페이스 표(`cert-manager` = PSA **baseline**) · §허용 매트릭스(ingress {10250, 9402} ∪ egress {53, 443, 6443})
+#     · §포트 출처 각주(webhook 10250 — 아래 `webhook.securePort`와 validate 검사 5.4b가 대조한다)
+#
+# 설치 방식 = kustomize `helmCharts` **OCI 인플레이트**(설계 D1 = A). Argo CD의 helm source를 쓰지 않는 이유는 README §1.
+#   전제: `bootstrap/argocd/argocd-cm.yaml`의 `kustomize.buildOptions: "--enable-helm"`(T042 PR-0). 없으면 repo-server가
+#   helmCharts를 인플레이트하지 못해 이 Application이 `ComparisonError`로 굳는다(리소스 손실은 없다 — `prune: false`이고
+#   렌더 실패 시 Argo는 아무것도 지우지 않는다. 증상은 "새 sync가 멈춤"뿐이다).
+#   인플레이트는 helm **릴리스가 아니다** — `helm list -n cert-manager`에 아무것도 보이지 않는 것이 정상이다.
+#   로컬 재현: `kustomize build --enable-helm platform/cert-manager`(helm 바이너리 필요).
+#
+# 이 디렉터리가 만들지 "않는" 것 — 경계(운영 절차는 README.md):
+#   1) Namespace `cert-manager`와 PSA 라벨: 정본은 `platform/policies/`(계약: 정책 객체는 거기에만 — validate 검사 5.0·5.1).
+#      Application의 `CreateNamespace=true`는 이미 policies가 ns를 선언하므로 실질 no-op이다.
+#   2) Application `platform-cert-manager`: `clusters/oci-k3s/apps/platform-cert-manager.yaml` 소유(T041 PR-C가 이미 배포).
+#      이 PR은 그 파일을 **건드리지 않는다** — 검사 7.1이 `source.path: platform/cert-manager`를 강제한다.
+#   3) NetworkPolicy: 정본은 `platform/policies/`. 차트 자체 정책 3종(최상위 · webhook · cainjector)은 아래에서 **전부 false로 명시**한다
+#      (기본값도 false지만, "정책은 platform/policies만"이라는 계약 의도를 코드에 남긴다).
+#   4) Secret(ACME 계정 키 · Cloudflare API 토큰): 최초는 운영자 수동 생성(T042), T045 뒤 `secrets/cert-manager/` ExternalSecret으로 교체한다.
+#      토큰 값은 이 저장소에 없다. Issuer/ClusterIssuer·Certificate는 `platform/cert-manager-issuers/`(PR-2·PR-3) 소유다.
+#
+# 되돌리기: revert 머지 → `resources: []` 복귀. 그다음(필요 시) 운영자가 Deployment·webhook 설정을 수동 삭제한다.
+#   **CRD 6장은 의도적으로 남는다**(`crds.keep: true` + 아래 patches의 `Delete=false,Prune=false`) — Certificate·Order 전멸 방지.
+#   순서 규율: git revert 머지가 **먼저**, 수동 삭제가 그다음(selfHeal이 즉시 재생성한다). 자세한 절차는 README §5.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-resources: []
+
+# ⚠ 전역 `namespace:` 변환기를 두지 않는다(설계 §8 R3 — 이 파일에서 가장 위험한 한 줄).
+#   차트는 `global.leaderElection.namespace`(kube-system)에 Role/RoleBinding `cert-manager:leaderelection`을 렌더한다.
+#   전역 변환기가 이 둘을 cert-manager ns로 재작성하면 컨트롤러 인자 `--leader-election-namespace=kube-system`과 어긋나
+#   Lease 접근이 forbidden → 리더가 되지 못해 **인증서가 한 장도 발급되지 않는데 파드는 Ready, Argo는 Synced/Healthy**다(무증상).
+#   네임스페이스는 아래 `helmCharts[].namespace`(= helm `--namespace`)로만 준다.
+#   같은 이유로 `platform/cert-manager-issuers/`에도 전역 변환기를 두지 않는다(§8 R4 — kube-system Certificate가 재작성된다).
+helmCharts:
+  - name: cert-manager
+    repo: oci://quay.io/jetstack/charts   # kustomize 규칙 — OCI 레지스트리는 `oci://` 접두 필수
+    version: v1.21.1                      # quay 태그 v1.21.1 == 1.21.1(같은 digest, 2026-09-08 실측)
+    releaseName: cert-manager             # Service 이름 `cert-manager-webhook` 고정(validate PORT_TABLE과 짝)
+    namespace: cert-manager
+    valuesInline:
+      crds:
+        enabled: true                     # 구 `installCRDs`(deprecated)와 **동시 사용 금지** — cert-manager.crd-check 헬퍼가 실패시킨다
+        keep: true                        # 기본값이지만 명시(research INGRESS-D1 사고 방지)
+
+      global:
+        rbac:
+          create: true
+          aggregateClusterRoles: true     # 기본값이지만 명시 — aggregate-to-view가 certificates·certificaterequests·issuers·challenges·orders에
+                                          # 붙어 agent-view가 읽는다. clusterissuers는 `cert-manager-cluster-view`(cluster-reader 라벨)에만
+                                          # 있어 agent-view로는 못 읽는다(정상 — 계약대로다).
+        leaderElection:
+          namespace: kube-system          # 차트 기본값을 **명시** — 위 "전역 namespace 변환기 금지"의 근거다
+        nodeSelector:
+          role: data                      # 편차 ④ — controller·webhook·cainjector 3종 전부 노드 B. 차트가 컴포넌트별 nodeSelector와
+                                          # 병합해 `{kubernetes.io/os: linux, role: data}`가 된다(로컬 렌더로 실측 확인).
+
+      dns01RecursiveNameservers: "1.1.1.1:53"   # 편차 ②(설계 D2) — 쉼표 구분 `host:port` 문자열. 포트를 생략하면 ExchangeContext가 주소를 해석하지 못한다.
+      dns01RecursiveNameserversOnly: true       # **필수값**. false면 self-check가 권위 NS의 임의 IP:53으로 나가는데 정책은 1.1.1.1/32:53만 열어 전부 드롭된다.
+
+      startupapicheck:
+        enabled: false                    # 기본 true면 helm post-install 훅이 Argo의 PostSync Job이 되어 **매 sync마다** Job·SA·Role·RoleBinding·ClusterRole이
+                                          # 생성·삭제된다(GitOps에서는 잡음일 뿐 — CRD 준비 확인은 Argo의 sync-wave와 재시도가 대신한다).
+
+      prometheus:
+        enabled: true                     # 기본값 명시 — 계약 허용 매트릭스 `monitoring → cert-manager 9402` 행과 짝
+        servicemonitor:
+          enabled: false                  # 스크레이프 설정은 T098(platform/monitoring) 소유
+        podmonitor:
+          enabled: false
+
+      networkPolicy:
+        enabled: false                    # 차트 자체 정책(최상위) — 정책은 platform/policies만
+
+      # --- controller ---
+      # 이미지는 반드시 **블록 스타일**로 쓴다. 한 줄 flow(`image: { tag: …, digest: … }`)로 쓰면 validate 검사 4b의
+      # `image:` 스칼라 정규식에 걸리는데 값에 `@sha256:`가 없어 WARN이 난다(블록이면 `image:` 뒤가 비어 매칭되지 않는다).
+      # 렌더 결과는 `quay.io/jetstack/cert-manager-controller:v1.21.1@sha256:416a2d76…` 형태로 태그와 digest가 함께 남는다(계약 §이미지).
+      # ⚠ 차트 `version` bump PR은 아래 digest 3개를 **함께** 갱신해야 한다 — 자동 검사가 없다(README §3).
+      image:
+        tag: v1.21.1
+        digest: sha256:416a2d76870d996460e62bd7f521bf14fa017be9e3e904aab92163a331fcb61a
+      resources:
+        requests:
+          cpu: 20m
+          memory: 80Mi
+        limits:
+          memory: 160Mi                   # CPU limit은 두지 않는다(저장소 관례 · validate 5.5와 같은 취지)
+
+      webhook:
+        securePort: 10250                 # 명시해야 검사 5.4b가 실제로 대조한다. 계약 §포트 각주 · 정책 `allow-apiserver-webhook` ·
+                                          # validate HELM_PORT_KEYS 3중 일치 — **변경 금지**(셋을 함께 바꿔야 한다).
+        networkPolicy:
+          enabled: false
+        image:
+          tag: v1.21.1
+          digest: sha256:d8b3961b51c8c7320633f8208dc46bf88aa13804d0f7cbe48a096b2c523cee42
+        resources:
+          requests:
+            cpu: 10m
+            memory: 40Mi
+          limits:
+            memory: 80Mi
+
+      cainjector:
+        networkPolicy:
+          enabled: false
+        image:
+          tag: v1.21.1
+          digest: sha256:ccf6b919ec0500745a47a910118f834f9636d0aac1ff221245cd2557ed8c7c98
+        resources:
+          requests:
+            cpu: 10m
+            memory: 40Mi
+          limits:
+            memory: 128Mi                 # Secret 캐시 성장 여지
+
+      # requests 합계 = 160Mi ≈ 0.156 GiB → plan A14의 "cert-manager 0.16" 행과 일치.
+      # 차트 기본은 `resources: {}`(요청 없음)이라 명시하지 않으면 예산·`kubectl top` 대조가 성립하지 않는다. T097 실측으로 교정한다.
+      # 키 오타는 조용히 무시되지 않는다 — 차트에 `values.schema.json`이 동봉돼 있고 28곳이 `additionalProperties: false`라
+      # 로컬 `kustomize build --enable-helm`이 즉시 실패한다.
+
+patches:
+  # CRD 삭제 보호(계약 §Application 규약). 대상은 CRD 6장 전부 —
+  #   acme.cert-manager.io: challenges · orders / cert-manager.io: certificaterequests · certificates · clusterissuers · issuers.
+  # 차트는 CRD를 `crds/`가 아니라 `templates/crd-*.yaml`로 렌더하므로 `includeCRDs`가 필요 없고, `crds.enabled: true`만으로 6장이 렌더된다.
+  # SMP(strategic merge)를 쓰는 이유: JSON6902 `add`는 `annotations` 맵이 없으면 빌드가 깨진다(T041 교훈).
+  # patch 안의 `name`은 자리표시자다 — 대상 선택은 `target`이 하고, kustomize가 패치 적용 뒤 원래 name/namespace를 복원한다(렌더로 검증).
+  # `crds.keep: true`가 붙이는 `helm.sh/resource-policy: keep`은 **Argo의 prune과 무관**하다 — 이 어노테이션이 Argo 쪽 유일한 대응물이다.
+  - target:
+      group: apiextensions.k8s.io
+      version: v1
+      kind: CustomResourceDefinition
+    patch: |-
+      apiVersion: apiextensions.k8s.io/v1
+      kind: CustomResourceDefinition
+      metadata:
+        name: placeholder-target-selector-decides
+        annotations:
+          argocd.argoproj.io/sync-options: Delete=false,Prune=false
