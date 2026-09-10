@@ -31,19 +31,31 @@ spec:
     - https://github.com/joshua92y/platform-gitops.git
     # 차트 저장소(계약 "sourceRepos [gitops, 차트 저장소]"). 아래는 plan.md Primary Dependencies · research.md 기준의
     # **현재 알려진 값**이다. 컴포넌트를 kustomize `helmCharts` 로 인플레이트하면 Application source 는 gitops 저장소뿐이므로
-    # 해당 줄은 그 컴포넌트 태스크의 PR 에서 지운다(설계 D7).
+    # 해당 줄은 그 컴포넌트 태스크의 PR 에서 지운다(설계 D7). 첫 실행 사례는 아래 jetstack 문단이다.
     - https://charts.external-secrets.io           # external-secrets
     - https://helm.releases.hashicorp.com          # vault
     - https://cloudnative-pg.github.io/charts      # cnpg operator + plugin-barman-cloud
     - https://charts.goauthentik.io                # authentik
     - https://grafana.github.io/helm-charts        # monitoring(k8s-monitoring)
     - https://stakater.github.io/stakater-charts   # reloader
+    # jetstack(cert-manager) 두 줄은 **지웠다(T042 PR-5)** — 위 D7 규칙을 처음으로 실행한 자리다.
+    #   T042 는 설계 D1 = A(kustomize `helmCharts` 인플레이트)를 택했고, 그래서 `platform-cert-manager` 의 Application source 는
+    #   gitops 저장소 하나뿐이다(`../apps/platform-cert-manager.yaml` 의 `source.path: platform/cert-manager`).
+    #   차트는 repo-server 의 kustomize 가 `platform/cert-manager/kustomization.yaml` 의 `helmCharts[].repo`
+    #   (`oci://quay.io/jetstack/charts`)로 **직접** 당겨오고, AppProject `sourceRepos` 는 Application 의 `source.repoURL` 만
+    #   검사하므로 그 경로를 **통제하지 못한다**. 두 줄은 통제가 아니라 "통제하고 있다"는 착각을 주는 잔재였다.
+    #   ⚠ 그 공백은 여기서 메울 수 없다 — 메우는 자리는 `tests/validate.sh` 의 `helmCharts[].repo` **허용 목록 정적 검사**이고,
+    #     T047(validate 워크플로 완성)에서 넣는다. 2026-09-10 현재 그 검사는 없다(`tests/validate.sh` 에 `helmCharts` 는
+    #     렌더링·valuesInline 잎 검사로만 등장하고 `repo` 를 대조하는 곳이 없다 — 직접 확인).
+    #   확인 절차: 머지 뒤 `platform-cert-manager` 가 Synced 를 유지하는지 본다. sourceRepos 는 source 검사이므로 영향이
+    #     없을 것으로 보지만 kubectl 없이 단정하지 않는다 — OutOfSync 나 `ComparisonError` 가 나면 이 커밋을 revert 한다.
     # OCI 레지스트리 표기 — 미확정이라 두 형식을 함께 둔다(같은 레지스트리 경로라 권한이 넓어지지 않는다).
     #   research.md 실측 메모는 "OCI 차트는 repoURL 에 oci:// 없이 host/path"(Argo CD 3.0 이전 helm-OCI 방식),
     #   설계 D7 은 `oci://` 접두사 형식을 적었다. 어느 쪽으로 확정되는지는 컴포넌트 태스크의 실측이며,
     #   확정 뒤 쓰지 않는 표기를 그 PR 에서 지운다.
-    - oci://quay.io/jetstack/charts                # cert-manager
-    - quay.io/jetstack/charts
+    #   ※ jetstack 은 이 질문에 **답하지 않고 사라졌다.** 인플레이트를 택하면 sourceRepos 에 표기가 아예 남지 않기 때문이다.
+    #     `platform/cert-manager/kustomization.yaml` 이 `oci://` 를 쓰는 것은 kustomize 의 `helmCharts[].repo` 규칙이지
+    #     Argo CD 의 repoURL 표기 규칙이 아니므로, 아래 두 쌍의 근거로 삼지 않는다.
     - oci://quay.io/strimzi-helm                   # kafka(strimzi-kafka-operator)
     - quay.io/strimzi-helm
     - oci://ghcr.io/openfga/helm-charts            # openfga

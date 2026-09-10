@@ -1,11 +1,16 @@
-# platform/cert-manager-issuers/certificate-wildcard-joshuatech-dev.yaml — 오리진 와일드카드 인증서 (T042 PR-2 → PR-3에서 2줄 전환)
+# platform/cert-manager-issuers/certificate-wildcard-joshuatech-dev.yaml — 오리진 와일드카드 인증서 (T042 PR-2 → PR-3 승격 완료)
 #
 # 이 클러스터의 **오리진 인증서 1장**이다. Traefik의 TLSStore `default`(PR-4)가 이 Secret을 서빙하고,
 # 그 앞단에서 Cloudflare가 Full(strict)로 오리진 체인을 검증한다.
 #
-# ⚠ **지금은 staging 단계다** — `issuerRef.name`이 `letsencrypt-staging`이고 `secretName`이 `…-tls-staging`이다.
-#   PR-3에서 **그 두 줄을 한 커밋·한 diff로** `letsencrypt-prod` / `wildcard-joshuatech-dev-tls`로 바꾼다(설계 §14.2 각색 D).
-#   두 줄을 쪼개지 않는 이유와 왜 staging 구간에 별도 Secret 이름을 쓰는지는 README §4·§5.
+# **현재 상태 — prod 승격 완료.** 아래 두 줄이 종착값이다: `secretName: wildcard-joshuatech-dev-tls` ·
+#   `issuerRef.name: letsencrypt-prod`(PR-3 = gitops `32a1022`, 한 커밋·한 diff로 전환).
+#   실측: `status.revision` **2** · issuer `C=US, O=Let's Encrypt, CN=YE2` ·
+#   SAN `*.joshuatech.dev` + `joshuatech.dev` · `notAfter 2026-12-08`(첫 갱신 ≈ 2026-11-08) · prod 중복 한도 1슬롯 소비.
+#   PR-4(TLSStore, `4f23abd`)까지 머지된 뒤 `auth.joshuatech.dev`가 526 → **404**로 바뀌어 서빙까지 확인했다.
+# 과거(전이 구간): PR-2에서는 이 두 줄이 `letsencrypt-staging` / `…-tls-staging`이었다 — staging 인증서와 prod 인증서가
+#   같은 Secret을 절대 공유하지 못하게 만든 전용 이름이고(설계 §14.2 각색 D), 그 설계 이유는
+#   README §5(왜 staging 구간에만 `-staging` Secret 이름을 쓰는가). 승격 절차 자체는 README §4(PR-3 승격 절차)에 남아 있다.
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
@@ -17,13 +22,19 @@ metadata:
   #   cloudflared·system-upgrade 디렉터리에는 변환기가 있으므로 복사-붙여넣기 사고를 조심한다.
 spec:
   secretName: wildcard-joshuatech-dev-tls
-  # 종착값(tasks.md:121 문면 · tests/platform/ingress.tests.ps1:66 상수 · infra/bootstrap/traefik-config.yaml:61).
+  # 종착값. 같은 이름을 쓰는 곳: 모노레포 `tasks.md`의 T042 행 · `tests/platform/ingress.tests.ps1`의 `$WildcardSecretName` 상수 ·
+  #   `infra/bootstrap/traefik-config.yaml`의 T042 선행·후속 의존 주석 · 이 저장소 `platform/traefik/tlsstore-default.yaml`.
+  #   (줄 번호로 적지 않는다 — 실제로 밀린 적이 있다.)
   #   PR-2에서는 `…-tls-staging`이었다(설계 §14.2 각색 D의 전이 구간 전용 이름). staging 인증서와 prod 인증서가
   #   같은 Secret을 절대 공유하지 않게 만드는 것이 목적이었고, 쓰기 대상이 이 한 줄로 유일하게 결정되므로
-  #   (a) staging 체인으로 cert-1이 거짓 PASS하는 일이 없었고 (b) PR-4 이후 `issuerRef`만 되돌렸을 때
-  #   성공한 staging 재발급이 서빙 Secret을 덮어 전 호스트 526을 만드는 경로가 **구조적으로 존재하지 않는다**. README §5.
-  # ⚠ 승격 뒤 남는 고아 Secret `wildcard-joshuatech-dev-tls-staging`(kube-system)은 git에 없어 Argo prune 대상이 아니다.
-  #   운영자가 안정화 확인 뒤 수동 삭제한다 — 삭제 전 반드시 `get`으로 대상 이름을 눈으로 확인할 것(README §6).
+  #   (a) staging 체인으로 cert-1이 거짓 PASS하는 일이 없었고 (b) `issuerRef`만 되돌렸을 때 성공한 staging 재발급이
+  #   서빙 Secret을 덮어 전 호스트 526을 만드는 경로가 **전이 구간에는 구조적으로 존재하지 않았다**. README §5.
+  # ⚠ **승격이 끝난 지금은 그 보호가 없다** — 두 이름이 하나가 됐으므로 `issuerRef`만 되돌리면 그 경로가 다시 열린다.
+  #   되돌리기 두 갈래의 구분은 아래 `issuerRef` 주석.
+  # 기록(이 단계는 끝났다): 승격 뒤 남은 고아 Secret `wildcard-joshuatech-dev-tls-staging`(kube-system)은 git에 없어
+  #   Argo prune 대상이 아니었고, **PR-4 머지 전에 운영자가 수동으로 삭제해 이미 정리됐다.**
+  #   절차와 오삭제 경고(prod 쪽을 지우면 즉시 재발급 = prod 슬롯 소비 + 526 구간)는 README §10(승격 뒤 정리 — `-staging` Secret 삭제).
+  #   ⚠ 옛 주석의 "(README §6)"은 오기였다 — §6은 staging 구간의 **기대 실패**를 적어 둔 절이고 삭제 절차가 아니다.
   dnsNames:
     - joshuatech.dev                       # ⚠ apex SAN 필수 — 와일드카드는 `*.joshuatech.dev`만 덮고 apex를 덮지 않는다.
     - "*.joshuatech.dev"                   #   빠지면 apex/www 경로에서 Cloudflare Full(strict)가 526을 낸다.
@@ -37,14 +48,39 @@ spec:
     # 다운그레이드·타 클러스터 이관 시 의미가 달라지므로 명시를 유지한다.
   renewBeforePercentage: 33
   # 설계 D3 = A(문면 유지). 90일 수명에서 갱신 시작이 잔여 29.7일이라 cert-2 임계값(30일)과 약 60일마다 7.2시간 겹친다
-  # (주기의 ≈0.5%, 첫 발생은 prod 발급 +60일 ≈ 2026-11 — SP-1 검증 구간 밖). ⚠ 2027-02-10 LE classic이 64일로 바뀌면
-  # 33% = 잔여 21.1일이 되어 cert-2가 43일 중 약 9일(≈21%) 상시 FAIL한다 — 그때 이 값을 40으로 올린다(README §9).
+  # (주기의 ≈0.5%, 첫 발생은 prod 발급 +60일 ≈ 2026-11-08 — SP-1 검증 구간 밖). ⚠ 2027-02-10 LE classic이 64일로 바뀌면
+  # 33% = 잔여 21.1일이 되어 cert-2가 43일 중 약 9일(≈21%) 상시 FAIL한다 — 그때 이 값을 **50**(잔여 32일)으로 올린다
+  # (README §9(레이트리밋 규율)).
+  # ⚠ 정정: 예전 문면이 적어 둔 "40으로 올린다"는 **산술 오류**다. `renewBeforePercentage`는 수명 대비 **잔여** 비율이라
+  #   64일 × 0.40 = 잔여 **25.6일**이고, 이는 cert-2 임계 30일보다 짧다 → 갱신 주기 38.4일 중 4.4일(≈11%)이 그대로 FAIL한다.
+  #   ("40이면 잔여 36일"이라는 계산은 수명 90일로 낸 값을 64일 문장에 옮겨 적은 것이다.)
+  #   임계를 넘기려면 **≥47%**(64 × 0.47 = 30.1일)여야 하고, 여유를 둔 실용값이 50(32일)이다.
+  # ⚠ 근본 해법은 비율을 다시 맞추는 것이 아니다 — cert-2가 `notAfter - now > 30일`을 보는 한 CA 수명이 바뀔 때마다
+  #   이 값을 쫓아가야 하고, 그때마다 위와 같은 환산 실수가 재발한다. 단언을 cert-manager가 계산해 둔
+  #   `status.renewalTime` 기준으로 바꾸는 것이 정답이며, converge에 인계한다.
   revisionHistoryLimit: 1
   # `commonName`을 두지 않는다(SAN만). CN은 64자 제한이 있고 최신 CA/브라우저 규약에서 무시된다.
   issuerRef:
     kind: ClusterIssuer
     group: cert-manager.io
-    name: letsencrypt-prod                 # PR-3에서 위 secretName과 **같은 커밋**으로 전환했다(주문 2회 방지).
-    #   되돌리기 주의: PR-4(TLSStore) 머지 **이후에는 이 줄을 revert 하지 않는다** — Secret 이름이 함께 되돌아가
-    #   서빙 Secret이 사라지고 Traefik이 자체 서명으로 떨어져 Cloudflare Full(strict)에서 전 호스트 526이 된다.
-    #   PR-4 이후의 되돌리기는 PR-4만 revert 한다(README §5).
+    name: letsencrypt-prod                 # PR-3(`32a1022`)에서 위 secretName과 **같은 커밋**으로 전환했다(주문 2회 방지).
+    #   되돌리기 주의: PR-4(TLSStore) 머지 **이후에는 이 줄을 revert 하지 않는다.** 다만 이유는 옛 주석이 적은 것과 다르다.
+    # ⚠ 정정: "서빙 Secret이 사라지고 Traefik이 자체 서명으로 떨어져 전 호스트 526"은 **사실과 반대다.**
+    #   ⚠ **다만 되돌리기는 두 갈래이고 위험이 정반대다 — 아래 (a)(b)는 ① 에만 적용된다.**
+    #     ① **PR-3 전체 revert**(`issuerRef`+`secretName` 두 줄 동시) — 쓰기 대상이 `…-tls-staging`으로 옮겨가므로
+    #        서빙 Secret은 **갱신 주체를 잃은 채 남는다.** 즉시 526은 아니고, 위험은 (a)(b)가 말하는 **조용한 만료**다.
+    #     ② **`issuerRef`만 revert**(1줄) — `secretName`이 서빙 Secret 그대로라 성공한 staging 재발급이
+    #        **서빙 Secret을 덮어써 즉시 전 호스트 526**이 된다. `selfHeal: true`라 머지되는 순간 자동 적용된다.
+    #        전이 구간(`secretName`이 `…-tls-staging`이던 때)에는 이 경로가 구조적으로 없었지만, **승격으로 두 이름이 하나가 된 지금은 열려 있다**(README §5).
+    #        장애 중에 "한 줄만 되돌리면 되겠지"가 가장 위험한 선택지다.
+    #   (a) 차트 기본값 `enableCertificateOwnerRef: false`를 그대로 쓴다(이 저장소의 오버라이드 0건) —
+    #       Certificate를 지우거나 `secretName`을 되돌려도 **이미 발급된 Secret은 남는다.** ① 에서 즉시 526이 오지 않는 이유다.
+    #   (b) Traefik v3.7.8은 인증서를 적재할 때 유효기간을 검사하지 않는다(`certificate_store.go`의 `parseCertificate`는
+    #       `tls.X509KeyPair`만 하고 `NotAfter`를 참조하지 않으며, `GetBestCertificate`는 `matchDomain`만 본다)
+    #       → 만료돼도 **자체 서명으로 바뀌지 않고 만료된 인증서를 계속 서빙한다.**
+    #   진짜 위험은 즉시 장애가 아니라 **갱신 주체를 잃은 채 조용히 만료하는 것**이다(최대 90일 뒤이고,
+    #   만료 알림은 T098 전까지 존재하지 않는다). 엣지에서 보이는 결과는 어차피 526이지만 진단이 달라진다 —
+    #   **526 진단 1순위는 발급자 표기가 아니라 `notAfter`다**(노드 내부 curl에서 `expire date`를 항상 함께 읽는다).
+    #   PR-4 이후의 되돌리기는 **PR-4만** revert 한다 — 그 규율의 정본은 `platform/traefik/README.md`
+    #   §7(되돌리기 — **PR-4만** revert 한다) 안의 "⚠ PR-3(prod 승격)을 revert 하지 마라"다.
+    #   (이 디렉터리 README §12(되돌리기)는 이 디렉터리 전체를 되돌리는 다른 이야기다 — 혼동하지 않는다.)

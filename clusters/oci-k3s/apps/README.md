@@ -15,10 +15,10 @@ project: 플랫폼 컴포넌트 → `platform`, 앱 → `dev`·`prod`, `platform
 
 | 파일 | Application | source.path | 비고 |
 |---|---|---|---|
-| `platform-cert-manager.yaml` | `platform-cert-manager` | `platform/cert-manager` | 뼈대(`resources: []`) — 매니페스트는 T042 |
+| `platform-cert-manager.yaml` | `platform-cert-manager` | `platform/cert-manager` | **T042 PR-1로 채워졌다.** kustomize `helmCharts` 인플레이트 = cert-manager v1.21.1(CRD 6장 + controller·webhook·cainjector). 전제는 argocd-cm `kustomize.buildOptions: --enable-helm`(PR-0). CRD 6장은 `Delete=false,Prune=false` 패치로 보호 |
 | `platform-external-secrets.yaml` | `platform-external-secrets` | `platform/external-secrets` | 뼈대 — T045. ESO가 ExternalSecret CRD 제공자 |
 | `platform-vault.yaml` | `platform-vault` | `platform/vault` | 뼈대 — T044 |
-| `platform-cert-manager-issuers.yaml` | `platform-cert-manager-issuers` | `platform/cert-manager-issuers` | 뼈대 — T042. CRD 소비자라 `SkipDryRunOnMissingResource` 필수 |
+| `platform-cert-manager-issuers.yaml` | `platform-cert-manager-issuers` | `platform/cert-manager-issuers` | **T042 PR-2·PR-3으로 채워졌다.** ClusterIssuer 2종(LE staging·prod, DNS-01/Cloudflare) + 와일드카드 Certificate `wildcard-joshuatech-dev`(ns `kube-system`, apex SAN 포함). PR-3에서 prod 승격 완료. CRD 소비자라 `SkipDryRunOnMissingResource` 필수 |
 | `platform-cnpg.yaml` | `platform-cnpg` | `platform/cnpg` | 뼈대 — T052(오퍼레이터) |
 | `platform-system-upgrade.yaml` | `platform-system-upgrade` | `platform/system-upgrade` | **첫 배포**(T037 SUC 컨트롤러 + CRD + Plan 2) — 확인 기준값은 파일 머리 주석·VD-SUC |
 | `platform-cnpg-cluster.yaml` | `platform-cnpg-cluster` | `platform/cnpg-cluster` | 뼈대 — T053. `Cluster pg-main` = 삭제 보호 1순위 |
@@ -31,7 +31,9 @@ project: 플랫폼 컴포넌트 → `platform`, 앱 → `dev`·`prod`, `platform
 | `platform-monitoring.yaml` | `platform-monitoring` | `platform/monitoring` | 뼈대 — T098(Alloy). 이름은 `monitoring`(`observability` 금지) |
 | `platform-cloudflared.yaml` | `platform-cloudflared` | `platform/cloudflared` | T039 배포분 **인수**(소유권 이동) — 확인 기준값은 파일 머리 주석 |
 | `platform-reloader.yaml` | `platform-reloader` | `platform/reloader` | 뼈대 — T046(VD-9 scoped 모드) |
-| `platform-traefik.yaml` | `platform-traefik` | `platform/traefik` | 뼈대 — T042. Traefik 본체는 K3s 관리(HelmChartConfig, T038); 여기엔 Middleware·TLSOption·TLSStore만 |
+| `platform-traefik.yaml` | `platform-traefik` | `platform/traefik` | **T042 PR-4로 채워졌다.** 지금 sync하는 것은 TLSStore `default`(ns `kube-system`) 1장뿐 — 와일드카드를 동적 인증서(`spec.certificates[]`)로 적재한다. Traefik 본체는 K3s 관리(HelmChartConfig, T038). 계약 §디렉터리의 kind 화이트리스트는 Middleware·TLSOption·TLSStore지만 **TLSOption은 이 디렉터리에 두지 않는다** — 아래 각주 참조. Middleware는 아직 없다 |
+
+**각주 — `platform/traefik/`에 TLSOption을 두지 않는 이유(정본과 provider 조건 구분은 `platform/traefik/README.md` §8).** 이름이 `default`인 TLSStore/TLSOption은 ns와 무관하게 전역 id로 승격되고, 두 개 이상 존재하면 Traefik이 그 이름의 항목을 삭제한다. 다만 **삭제되는 대상이 다르다.** TLSOption 중복은 옵션 객체 자체를 지우고 서버가 내장 기본값으로 되돌아가는데, 내장 기본에 `minVersion: VersionTLS12`는 있고 `sniStrict`·`clientAuth`는 **없다** — 그래서 그 둘만 조용히 사라진다. `sniStrict`는 2026-09-10 모노레포 `infra/bootstrap/traefik-config.yaml`의 `tlsOptions.default`에 실제로 투입됐으므로 이것은 가정이 아니라 **살아 있는 보안 설정**이다. 반대로 TLSStore 중복은 Store 설정(`defaultCertificate`·`defaultGeneratedCert`)만 지우고 `certificates:` 목록은 살아남아 계속 서빙된다. 양쪽 다 TLS 핸드셰이크는 성공하고 Error 로그 한 줄만 남으므로 **동작으로는 드러나지 않는다.** 그래서 소유권을 못박는다 — TLSOption `default`는 모노레포 HelmChartConfig 단독, TLSStore `default`는 `platform/traefik/` 단독, 각각 정확히 한 곳. 계약 `gitops-repo.md` §디렉터리는 **kind 화이트리스트**이고 같은 줄이 HelmChartConfig를 Traefik 자체 설정의 정본으로 지목하므로 이 배치는 계약과 충돌하지 않는다. (단 이 "내장 기본값 복귀"는 중복이 **같은 provider**(Kubernetes CRD) 안에서 일어날 때다 — 서로 다른 provider가 각각 `default`를 주면 집계기가 지우기만 하고 기본값을 넣지 않아 그 옵션에 의존하는 **라우터 초기화가 통째로 실패한다**. 오늘 배치는 둘 다 CRD provider라 결론은 바뀌지 않는다.)
 
 앱 Application(`<pod>-<env>`)은 후속 PR에서 이 디렉터리에 추가된다.
 

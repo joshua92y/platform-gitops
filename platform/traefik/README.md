@@ -15,6 +15,10 @@ Namespace·PSA·NetworkPolicy는 `platform/policies/`, Application `platform-tra
 
 > **이 저장소에 비밀은 없다.** 인증서 Secret은 cert-manager가 만들고 Argo CD는 만들지도 지우지도 않는다(Application이 `prune: false`).
 
+**현재 상태(2026-09-10)** — PR-4 머지 완료(gitops main `4f23abd`). prod 와일드카드가 실려 `auth.joshuatech.dev`가 526 → **404**로
+바뀌었고 v2 호스트 526은 0건이다. 이어서 모노레포 쪽 `sniStrict`도 **투입 완료**다(§9). 아래 §1·§3은 그때 실행한 절차의 기록이며,
+되돌리기·재투입 때 그대로 다시 쓴다.
+
 ---
 
 ## 1. ⚠ 머지 순서 규율 — prod `Ready=True` 확인 **뒤에만** 머지한다
@@ -147,7 +151,7 @@ kubectl -n kube-system get tlsstore default -o jsonpath='{.spec.certificates[0].
 # 합격: wildcard-joshuatech-dev-tls
 # 빈 값  : **명령이 exit 0이고 stderr가 비었을 때만** CRD 프루닝으로 판정한다
 #          (Forbidden도 stdout이 비므로 stderr를 먼저 본다 — agent-view kubeconfig로 실행하면 오진한다)
-#          → **즉시 중단**. sniStrict로 진행하지 않는다(§7).
+#          → **즉시 중단**(당시 규율은 "여기서 sniStrict로 진행하지 않는다"였다 — 재적용 때도 같다, §7·§9).
 #          이 경우 Traefik은 자체 서명으로 서빙 중이므로 이미 526일 수 있다 → §7 되돌리기 + forward-fix(§7 마지막 문단).
 #          (T043 전에는 §6 즉효 레버를 당기지 않는다 — 526 뒤에 사용자 트래픽이 없다, §6.)
 ```
@@ -168,7 +172,8 @@ Cloudflare Access가 **edge에서** 302를 돌려주므로 요청이 오리진�
 | **`auth`** | Access 앱이 **`/if/admin` 경로만** 보호 → 루트는 오리진까지 도달 | **✓ 유일** |
 
 → v2 A 레코드 7개 중 오리진 상태 코드가 반영되는 것은 **`auth` 루트뿐**이다.
-sniStrict를 켠 뒤에도 와일드카드 SAN이 `auth.joshuatech.dev`를 덮으므로 이 검증은 계속 유효하다.
+sniStrict 투입(2026-09-10) 뒤에도 와일드카드 SAN이 `auth.joshuatech.dev`를 덮으므로 이 검증은 그대로 유효하다 —
+투입 직후 실측도 `404`(526 아님)로 변화가 없었다(§9).
 
 ---
 
@@ -233,7 +238,24 @@ PR-3은 `issuerRef`와 `secretName`을 **한 커밋으로** 바꿨다. 되돌리
 `issuerRef`만 되돌리는 1줄 revert는 다르다 — 그쪽은 **성공한 staging 재발급이 서빙 Secret을 덮어 즉시 전 호스트 526**이고
 `selfHeal: true`라 자동 적용된다. **PR-4 이후에는 존재하지 않는 선택지다**(설계 §14.2 각색 D가 없앤 경로).
 
-### 되돌리기 2단 — 순서를 뒤집지 않는다
+### 되돌리기 3단 — 순서를 뒤집지 않는다
+
+**0단이 먼저다 — `sniStrict`를 제거한다.** 종전 문면은 이 단계를 "sniStrict를 이미 적용한 뒤라면"이라는 **조건문**으로
+적었는데, 2026-09-10 17:24 KST 투입(§9)으로 그 조건은 **항상 참**이 됐다. 그래서 조건이 아니라 기본 순서다.
+
+```text
+0단: 모노레포 infra/bootstrap/traefik-config.yaml의 `tlsOptions.default`에서 `sniStrict: true`를 빼고 노드 A에 재설치한다
+     (그 파일 헤더의 절차 1~2). 반영에 약 15초가 걸리므로
+     `kubectl -n kube-system get tlsoption default -o yaml`의 spec에서 사라진 것을 **눈으로 확인한 뒤** 1단으로 간다.
+```
+
+0단을 건너뛰고 TLSStore부터 지우면 `GetBestCertificate`가 `nil`을 반환하고 `sniStrict` 때문에 폴백 없이 `nil, nil` →
+**443 전면 중단**이다(설계 §8 R6).
+
+**0단만 하고 멈추면 서빙은 그대로다.** TLSStore가 남아 있어 SNI가 일치하는 v2 호스트는 계속 와일드카드를 받는다 —
+달라지는 것은 SNI 불일치 요청이 `000`(핸드셰이크 거절) 대신 자체 서명을 받는 것뿐이고, Cloudflare edge는 항상 일치하는 SNI를
+보내므로 **엣지 영향이 없다**. 자체 서명 복귀 = 전 호스트 526은 **2단(TLSStore 삭제) 뒤**의 상태이고, 그것이 되돌리기 도중의
+정상 중간 상태다(§2). 0단 직후에 526이 보이면 원인은 다른 데 있다.
 
 ```bash
 # 1단: git revert 머지가 **먼저**다. 반대로 하면 selfHeal이 즉시 되살린다.
@@ -251,9 +273,6 @@ PR-3은 `issuerRef`와 `secretName`을 **한 커밋으로** 바꿨다. 되돌리
 kubectl -n kube-system delete tlsstore default
 ```
 
-**⚠ sniStrict를 이미 적용한 뒤라면 순서가 하나 더 앞선다: `sniStrict` 제거(모노레포 → 노드 A) → TLSStore 삭제.**
-반대로 하면 `GetBestCertificate`가 `nil`을 반환하고 `sniStrict` 때문에 폴백 없이 `nil, nil` → **443 전면 중단**이다(설계 §8 R6).
-
 **되돌린 뒤의 상태는 "정상"이 아니다.** Traefik은 자체 서명으로 돌아가므로 Full(strict)에서 여전히 526이다(§2).
 되돌리기는 잘못된 인증서를 치우는 조치일 뿐이고, 서비스 회복은 **올바른 Secret을 다시 실어야** 끝난다.
 
@@ -269,7 +288,7 @@ kubectl -n kube-system delete tlsstore default
 
 | 중복 대상 | 삭제되는 것 | 살아남는 것 | 실제 증상 |
 |---|---|---|---|
-| **TLSOption `default`** | 옵션 객체 자체(`kubernetes.go:1380`) | 서버가 **내장 기본값**으로 되돌아감(`tlsmanager.go:34-38`) | `minVersion`은 그대로 `VersionTLS12`(내장 기본이 같은 값) · **내장 기본이 없는 설정만 소실** = 지금은 없고 **`sniStrict`(T042 단계 9)·`clientAuth`(T043)를 넣는 순간 그 둘이 사라진다** |
+| **TLSOption `default`** | 옵션 객체 자체(`kubernetes.go:1380`) | 서버가 **내장 기본값**으로 되돌아감(`tlsmanager.go:34-38`) | `minVersion`은 그대로 `VersionTLS12`(내장 기본이 같은 값) · **내장 기본이 없는 설정만 소실** = 2026-09-10 투입한 **`sniStrict`가 지금 그 대상**이고, `clientAuth`(T043)가 더해지면 둘 다 사라진다 |
 | **TLSStore `default`** | Store 설정만(`defaultCertificate`·`defaultGeneratedCert` — `kubernetes.go:1450`) | **`certificates:` 목록 전부**(이미 `tlsConfigs`에 담겨 DynamicCerts로 편입) | 이 형태에서는 **와일드카드 서빙 유지** |
 
 삭제 호출은 `delete(tlsOptions, tls.DefaultTLSConfigName)`과 `delete(tlsStores, tls.DefaultTLSStoreName)`이고
@@ -294,7 +313,30 @@ kubectl -n kube-system delete tlsstore default
 
 ---
 
-## 9. 다음 단계 — 판별 실험 ①② → sniStrict (**이 PR은 sniStrict를 켜지 않는다**)
+## 9. sniStrict — **투입 완료**(2026-09-10 17:24 KST) · 판별 실험 ①②는 남겨 둔다
+
+PR-4(이 디렉터리의 TLSStore)가 머지된 **뒤에** 판별 실험 ①②를 노드 A 안에서 실행해 둘 다 성립하는 것을 확인하고 `sniStrict: true`를 켰다.
+스위치는 이 저장소가 아니라 모노레포 `infra/bootstrap/traefik-config.yaml`의 `valuesContent` → `tlsOptions.default`에 있다
+(D5 = T042 단계 9, 커밋 `0bdc621`+`829226d`). 아래는 그날 실제로 얻은 출력이다.
+
+| 실험 | SNI | 실측 출력 | 뜻 |
+|---|---|---|---|
+| ① | `traefik.joshuatech.dev`(일치) | issuer `C=US; O=Let's Encrypt; CN=YE2` · `expire date Dec  8 08:59:09 2026 GMT` | 와일드카드가 **DynamicCerts에 편입**돼 SNI 매칭에 잡힌다 |
+| ② | `no-such.example.invalid`(불일치) | `subject`·`issuer` 모두 `CN=TRAEFIK DEFAULT CERT` | 폴백이 와일드카드가 **아니다** = `defaultCertificate` 미설정 |
+
+②가 자체 서명이라는 것이 "sniStrict를 켜도 가려질 폴백이 없다"의 증거다(와일드카드가 나왔다면 어딘가 `defaultCertificate`가
+설정돼 있다는 뜻이므로 켜지 않는다). **최종 판정은 적용 뒤 ②를 다시 돌린 결과였다 — 그 요청이 `000`(핸드셰이크 거절)으로
+바뀌었다.** ①은 그대로 LE 와일드카드다. Cloudflare edge는 항상 SNI를 보내므로 서비스 영향은 없고, 실제로 `auth`는 404를 유지했다.
+
+**운영 정보 — 투입/제거는 파드를 건드리지 않는다.** `tlsOptions`만 바꾸는 값은 차트가 `templates/tlsoption.yaml`의 CR 하나로만
+렌더하므로 **Deployment 롤아웃이 나지 않는다**: 실측에서 파드 AGE·RESTARTS가 그대로였고(6일째 같은 파드) **443 순단은 0초**였다.
+대신 파일 설치 → K3s deploy 컨트롤러가 집기까지 **약 15초** 걸리므로 직후 조회하면 옛 spec이 보인다 — 실패로 오독하지 않는다.
+정본 서술은 모노레포 `traefik-config.yaml` 헤더의 절차 3(b)·4다.
+
+### 판별 실험 ①② — 언제 다시 쓰는가
+
+지우지 않는 이유는 앞으로도 같은 판별이 필요하기 때문이다: **되돌리기 뒤 재투입**(§7의 0단으로 sniStrict를 뺐다가 다시 켤 때),
+**T043 `clientAuth` 투입 전 점검**, 그리고 **526 진단**(①의 `expire date`로 만료 여부를 먼저 본다, §7).
 
 `/api/certificates`는 DynamicCerts와 DefaultCertificate를 **합쳐서** 반환하므로 판별에 쓸 수 없다.
 소스가 보장하는 판별은 **SNI 두 개 비교**다. 워크스테이션은 Cloudflare 대역 밖이라 NSG에서 먼저 막혀 늘 000이므로 **노드 A 안에서** 실행한다
@@ -312,16 +354,15 @@ ssh … ubuntu@<노드 A> "curl -skv --resolve no-such.example.invalid:443:10.0.
   https://no-such.example.invalid -o /dev/null 2>&1 | grep -Ei 'subject:|issuer:'"
 ```
 
-**①②가 둘 다 성립할 때만 sniStrict를 켠다.** ②에서 와일드카드가 나오면 어딘가에 `defaultCertificate`가 설정된 것이므로 켜지 않고 원인을 찾는다.
+**①②가 둘 다 성립할 때만 sniStrict를 켠다** — 재투입에도 같은 규율이다. ②에서 와일드카드가 나오면 어딘가에
+`defaultCertificate`가 설정된 것이므로 켜지 않고 원인을 찾는다. 이미 켜져 있는 동안에는 ②가 `000`이므로 이 판별을 하려면
+0단(§7)으로 sniStrict를 먼저 빼야 한다.
 보조 판별: 차트 값 `logs.general.level: DEBUG`를 한시 적용하면 편입은 `Adding certificate for domain(s) …`, 폴백 사용은
-`Serving default certificate for request: …`로 직접 보인다(확인 후 INFO 복귀 — 이것도 Traefik 롤아웃을 유발한다).
+`Serving default certificate for request: …`로 직접 보인다(확인 후 INFO 복귀 — 이것은 `tlsOptions`와 달리 **Traefik 롤아웃을 유발한다**).
 
-**sniStrict는 이 저장소가 아니라 모노레포에 있다**(D5 = T042 단계 9): `infra/bootstrap/traefik-config.yaml`의
-`valuesContent` → `tlsOptions.default`에 `sniStrict: true`를 넣고 노드 A의 `server/manifests/traefik-config.yaml`로 설치한다.
-투입 전 **노드 A에 현재 파일 사본을 반드시 먼저 보존한다**(1분 롤백). 적용 순서는 T038 헤더가 못박은 대로
-**T042(와일드카드가 동적 인증서가 된 것 확인) → sniStrict → T043(CA Secret) → clientAuth**다.
-
-켠 뒤에는 ①은 그대로, **②는 핸드셰이크 실패로 바뀌는 것이 정상**이다. Cloudflare edge는 항상 SNI를 보내므로 서비스 영향이 없다.
+투입·재투입 전에는 **노드 A에 현재 파일 사본을 반드시 먼저 보존한다**(1분 롤백). 적용 순서는 T038 헤더가 못박은 대로
+**T042(와일드카드가 동적 인증서가 된 것 확인) → sniStrict → T043(CA Secret) → clientAuth**이고, 앞의 둘은 끝났다 —
+남은 것은 T043의 CA Secret과 `clientAuth`다.
 
 ---
 
@@ -348,19 +389,22 @@ ssh … ubuntu@<노드 A> "curl -skv --resolve no-such.example.invalid:443:10.0.
      오프라인·403이면 `-ignore-missing-schemas`가 조용히 건너뛴다 → 저장소 안 벤더링은 "공백 메우기"가 아니라
      **결정성 개선** 항목이다.
      (이 PR에서 `tests/validate.sh`를 고치지 않는다 — T033 산출물이고 게이트 PR의 범위를 넘는다.)
-  ⑤ **PR-5: 이미 머지된 `platform/cert-manager-issuers/` 문면 정정 5건.** 전부 PR-3 승격 이후 낡았거나 사실과 어긋난다.
-     이미 머지된 파일이라 이 PR에서 고치지 않는다. `certificate-wildcard-joshuatech-dev.yaml` 기준:
-     · `:48-50` "서빙 Secret이 사라지고 … 전 호스트 526" → **사실과 반대**다(`enableCertificateOwnerRef: false`라 Secret은
-       남는다). §7의 **조용한 만료 폭탄** 모델로 바꾼다.
-     · `:6-8` "⚠ 지금은 staging 단계다" → PR-3 승격으로 낡았다(같은 파일 `:19`·`:47`은 이미 prod). "현재 = prod 승격 완료(rev 2)"로.
-     · `:26` 고아 Secret 삭제 절차를 "(README §6)"으로 지목 → §6은 **기대 실패** 절이고 삭제 절차는 **§10**이다.
-     · `:50` 되돌리기 근거를 "(README §5)"로 지목 → §5는 `-staging` 이름의 근거이고, "PR-4만 revert" 규율의 정본은
-       **이 README §7**이다(그 저장소 §12가 아니다 — §12는 이 디렉터리 자체의 되돌리기다).
-     · `:41`과 `platform/cert-manager-issuers/README.md` §9의 64일 전환 대응값 **40** → 산술 오류다(바로 아래 항목).
+  ⑤ ~~PR-5: 이미 머지된 `platform/cert-manager-issuers/` 문면 정정 5건~~ → **완료(PR-5)**. 전부 PR-3 승격 이후
+     낡았거나 사실과 어긋났던 것이고, `certificate-wildcard-joshuatech-dev.yaml`과 그 디렉터리 README에서 함께 고쳤다:
+     · Certificate 주석의 "서빙 Secret이 사라지고 … 전 호스트 526"(되돌리기 경고 문단) → **사실과 반대**였다.
+       `enableCertificateOwnerRef: false`(차트 기본값, `platform/`에 오버라이드 0건)라 Secret은 남는다 →
+       §7의 **조용한 만료 폭탄** 모델로 교체.
+     · 머리 주석의 "지금은 staging 단계다" → PR-3 승격(gitops main `32a1022`)으로 낡았다 → "prod 승격 완료(rev 2)"로.
+     · 고아 Secret 삭제 절차를 "(README §6)"으로 지목 → §6은 **기대 실패** 절이고 삭제 절차는 **§10**이다.
+     · 되돌리기 근거를 "(README §5)"로 지목 → §5는 `-staging` 이름의 근거이고, "PR-4만 revert" 규율의 정본은
+       **이 README §7**이다(그 저장소 §12가 아니다 — §12는 그 디렉터리 자체의 되돌리기다).
+     · 64일 전환 대응값 **40**(Certificate의 `renewBeforePercentage` 주석과 그 README §9) → 산술 오류다(바로 아래 항목).
 - **cert-2 임계값** — `renewBeforePercentage: 33` + LE classic 90일이라 갱신 시작이 잔여 29.7일이고, cert-2 기준(30일)과
   약 60일마다 7.2시간 겹친다. **2027-02-10 LE classic이 64일로 바뀌면 43일 중 약 9일(≈21%) 상시 FAIL**이 된다.
   ⚠ 그때의 대응값으로 여러 문서가 적어 둔 **40은 틀렸다.** `renewBeforePercentage`는 **잔여** 비율이므로
   64일 × 0.40 = **25.6일**이고 cert-2 기준(30일)을 여전히 못 넘긴다 — 주기 38.4일 중 4.4일(≈11%)이 계속 FAIL한다.
   ("잔여 36일"이라는 병기 수치는 90일로 계산한 값이다.) 30일을 넘기려면 **≥47%**(64×0.47 = 30.1일)이고
-  실용값은 **50**(32일)이다. 세 곳(`certificate-…dev.yaml:41` · `platform/cert-manager-issuers/README.md` §9 · 이 문단)을
-  PR-5에서 함께 고친다. 근본 해법은 cert-2를 `status.renewalTime` 기준으로 바꾸는 것(converge).
+  실용값은 **50**(32일)이다. 이 값이 적힌 세 곳(Certificate의 `renewBeforePercentage` 주석 ·
+  `platform/cert-manager-issuers/README.md` §9 · 이 문단)은 **PR-5에서 함께 고쳤다.**
+  값 자체를 바꾸는 것은 아직 남았다 — 2027-02-10 전에 별도 PR로 `renewBeforePercentage`를 올린다.
+  근본 해법은 cert-2를 `status.renewalTime` 기준으로 바꾸는 것(converge).

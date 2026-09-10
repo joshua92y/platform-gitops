@@ -9,9 +9,11 @@ cert-manager v1.21.1의 **컨트롤 플레인만** 소유한다 — CRD 6장 + D
 |---|---|
 | `kustomization.yaml` | `helmCharts` 한 항목(OCI 인플레이트) + `valuesInline` 전량 + CRD 삭제 보호 patch. 이 디렉터리가 만들지 않는 것(ns · Application · NetworkPolicy · Secret)의 경계는 머리 주석에 있다 |
 
-> **머지 순서: PR-0 → PR-1.** 이 PR은 `bootstrap/argocd/argocd-cm.yaml`의 `kustomize.buildOptions: "--enable-helm"`(T042 PR-0)을
-> 전제로 한다. 두 PR 모두 main을 대상으로 하고 GitHub은 순서를 모르므로 **순서를 강제하는 기계 장치가 없다** — PR-1은 draft로 열고
-> 본문의 "PR-0 머지 확인" 체크박스를 채운 뒤에만 머지한다. 뒤집혔을 때 무엇이 깨지는지는 §2.
+> **머지 순서: PR-0 → PR-1 — 그 순서로 끝났다.** PR-0(#11) 12:50 KST → PR-1(#12) 12:59 KST(2026-09-09).
+> 이 PR은 `bootstrap/argocd/argocd-cm.yaml`의 `kustomize.buildOptions: "--enable-helm"`(T042 PR-0)을 전제로 하는데,
+> 두 PR 모두 main을 대상으로 하고 GitHub은 순서를 모르므로 **순서를 강제하는 기계 장치가 없었다** — PR-1을 draft로 열고
+> 본문의 "PR-0 머지 확인" 체크박스를 채운 뒤에 머지하는 것이 유일한 장치였다. 같은 형태의 PR 쌍에서 되풀이할 규율이고,
+> 뒤집혔을 때 무엇이 깨졌을지는 §2.
 
 - **이 저장소에 비밀은 없다.** Cloudflare API 토큰과 ACME 계정 키는 운영자 수동 Secret(T042) → `secrets/cert-manager/` ExternalSecret(T045)으로 간다.
   저장소 비밀과 별개로, 이 PR이 **클러스터에 들이는 권한**의 폭발 반경은 §7에 따로 적었다 — 머지 전에 반드시 읽는다.
@@ -21,9 +23,10 @@ cert-manager v1.21.1의 **컨트롤 플레인만** 소유한다 — CRD 6장 + D
   kustomize build --enable-helm platform/cert-manager | kubeconform -strict -ignore-missing-schemas -summary
   # 객체 46개: ClusterRole 13 · ClusterRoleBinding 10 · CRD 6 · SA/Service/Role/RoleBinding/Deployment 각 3 · Validating/Mutating 각 1
   ```
-  ⚠ 렌더하면 이 디렉터리에 `charts/`(차트 사본)가 생긴다. T042 PR-0이 `.gitignore`에 `charts/`를 등재한다(**이 PR보다 먼저** 머지돼야 한다) —
-  그전까지는 방어선이 규율뿐이므로 `git add -A`·`git commit -a`를 쓰지 말고, 커밋 전에 `git status`로 섞이지 않았는지 확인한다
-  (gitleaks가 차트 사본을 훑어 오탐을 내기도 한다).
+  ⚠ 렌더하면 이 디렉터리에 `charts/`(차트 사본)가 생긴다. T042 PR-0(#11)이 `.gitignore`에 `charts/`를 등재했고 이 PR(#12)보다
+  먼저 머지됐으므로 지금은 무시된다 — `git add -A`가 차트 사본을 끌어들이지 않는다.
+  (등재 전에는 방어선이 규율뿐이었다: `git add -A`·`git commit -a`를 쓰지 않고 커밋 전에 `git status`로 확인했다.
+  gitleaks가 차트 사본을 훑어 오탐을 내기도 한다.)
 
 ---
 
@@ -48,8 +51,8 @@ cert-manager v1.21.1의 **컨트롤 플레인만** 소유한다 — CRD 6장 + D
 
 ## 2. 선행 의존 — `kustomize.buildOptions: "--enable-helm"`
 
-`bootstrap/argocd/argocd-cm.yaml`에 이 키가 있어야 repo-server가 `helmCharts`를 인플레이트한다(T042 PR-0이 단독으로 넣는다 —
-**이 PR보다 먼저 머지돼야 한다**).
+`bootstrap/argocd/argocd-cm.yaml`에 이 키가 있어야 repo-server가 `helmCharts`를 인플레이트한다(T042 PR-0 = #11이 단독으로 넣었고,
+이 PR = #12보다 **8분 34초 먼저** 머지됐다). 아래는 그 순서가 뒤집혔을 때 무엇이 깨지는지의 기록이다 — 같은 형태의 PR 쌍에서 다시 쓴다.
 
 - **없으면**: `platform-cert-manager`가 렌더 실패로 `ComparisonError`에 굳는다. **리소스 손실은 없다** —
   Application이 `prune: false`이고, 렌더에 실패하면 Argo는 아무것도 지우지 않는다. 그러나 **조용한 실패는 아니다**:
@@ -61,10 +64,17 @@ cert-manager v1.21.1의 **컨트롤 플레인만** 소유한다 — CRD 6장 + D
   통제는 main 브랜치 ruleset(PR 필수 · required check `validate` · `bypass_actors: []`)뿐이다. 새 `helmCharts` 항목을 추가하는
   PR은 `repo`·`version`을 리뷰 포인트로 삼는다.
 - ⚠ **그 통제에는 구멍이 하나 있다 — 차트 태그는 가변이다.** `helmCharts`에는 digest 필드가 없어 `version: v1.21.1`은 이름 참조일 뿐이다.
-  태그가 재푸시되거나 레지스트리가 오염되면 repo-server의 **다음 캐시 미스**에서 다른 CRD·ClusterRole·webhook 설정이 인플레이트되고,
-  `selfHeal: true`가 그것을 **PR 없이 자동 적용한다.** 이 저장소에서 PR 게이트를 거치지 않는 유일한 변경 경로다.
+  태그가 재푸시되거나 레지스트리가 오염되면 다른 CRD·ClusterRole·webhook 설정이 인플레이트되고 `selfHeal: true`가 그것을
+  **PR 없이 자동 적용한다.** 이 저장소에서 PR 게이트를 거치지 않는 유일한 변경 경로다.
   방어는 `kustomization.yaml`의 차트 digest 주석(대조용 실측 기록)과 §3의 bump 절차뿐이며, 둘 다 사람이 지키는 규율이다.
+  ⚠ **다만 "다음 캐시 미스에 즉시"는 과장이었다**(2026-09-10 정정). kustomize는 `charts/cert-manager`가 이미 있으면 pull을
+  건너뛰고(5.8.1 `chartExistsLocally()`는 **버전을 보지 않는다**), Argo repo-server는 최초 init 1회만 작업 트리를 청소한다 —
+  살아 있는 repo-server는 옛 차트를 계속 재사용한다. 재푸시가 실제로 먹히는 시점은 **repo-server 재시작 또는 `charts/` 제거 뒤**다.
+  방향이 위험한 쪽으로만 틀린 것이 아니다: 같은 이유로 **차트 버전을 올려도 즉시 반영되지 않는다**(§3의 함정).
 - `argocd-cm` 변경 뒤에는 Application을 **hard refresh**해야 새 buildOptions가 반영된다.
+  대상은 그 경로를 보는 **자식 Application**(`platform-cert-manager`)이다 — root의 source는 `clusters/oci-k3s/apps`라
+  `platform/<comp>/`만 바뀐 PR에는 구조적으로 no-op다. root가 정답인 경우는 `apps/`가 바뀌어 새 child가 생길 때뿐이고,
+  평소에는 `timeout.reconciliation: 180s` 안에 저절로 반영된다.
 
 **helm 릴리스가 아니다.** 인플레이트는 kustomize가 렌더 시각에 템플릿을 펼치는 것이라 `helm list -n cert-manager`에는
 아무것도 보이지 않는다. `helm rollback`·`helm uninstall`도 쓸 수 없다 — 되돌리기는 §5의 git 경로뿐이다.
@@ -103,6 +113,15 @@ cert-manager v1.21.1의 **컨트롤 플레인만** 소유한다 — CRD 6장 + D
 5. `helm pull oci://quay.io/jetstack/charts/cert-manager --version <새 태그>`의 **`Digest:` 출력**을 PR 본문에 붙이고
    `version:` 줄 주석의 차트 digest를 그 값으로 갱신한다(§2 마지막 불릿 — 태그가 가변이라 이 기록이 유일한 대조 수단이다).
 
+**⚠ bump가 라이브에 반영되지 않는 함정 — `charts/` 캐시**(2026-09-10 발견). `helmCharts[0].version`을 올려도
+**살아 있는 repo-server는 옛 차트를 계속 쓴다.** kustomize 5.8.1의 `chartExistsLocally()`는 `charts/cert-manager`가 있으면
+그것으로 끝내고 **버전을 비교하지 않으며**, Argo repo-server는 최초 init 1회만 작업 트리를 청소하기 때문이다.
+(근거: kustomize 5.8.1 `chartExistsLocally()` · repo-server 워크스페이스 초기화의 `git clean -ffdx`. 2026-09-10 사후 감사에서 확인했고,
+라이브 재현은 아직 없다 — 다음 차트 bump 때 실측해 런북에 남기고, 정적 검사 가능 여부는 T047에서 본다. 소스 줄 번호는 밀리므로 함수명으로만 지목한다.)
+**hard refresh로는 풀리지 않는다** — 그것은 git 리비전을 다시 읽을 뿐 차트 사본을 지우지 않는다.
+그래서 bump PR을 머지한 뒤에는 렌더 결과가 실제로 새 버전인지(§6의 `get deploy -o wide` 이미지 태그·digest)를 확인하고,
+옛 값이면 repo-server를 재시작하거나 그 `charts/`를 지운다. 반대로 이 캐시는 태그 재푸시 공격도 같은 만큼 늦춘다(§2).
+
 T116에서 Renovate customManager로 자동화할 후보다(그때까지는 이 문단이 유일한 방어선이다).
 
 ---
@@ -126,8 +145,12 @@ T116에서 Renovate customManager로 자동화할 후보다(그때까지는 이 
 - **편차 ④ `global.nodeSelector: {role: data}`**(계약 문면은 컴포넌트별 지정) — 차트가 이 값을 컴포넌트별 nodeSelector와
   **병합**해 3 워크로드 모두 `{kubernetes.io/os: linux, role: data}`가 된다(렌더로 실측). 키 3개(`nodeSelector` ·
   `webhook.nodeSelector` · `cainjector.nodeSelector`)를 각각 쓰는 것보다 드리프트 여지가 작다.
-  결과적으로 3종이 노드 B 단독 배치이므로, 노드 B drain 중에는 `failurePolicy: Fail`인 webhook 때문에 cert-manager CR의
+  결과적으로 3종이 노드 B 단독 배치이므로, **노드 B가 비가용인 동안에는** `failurePolicy: Fail`인 webhook 때문에 cert-manager CR의
   CREATE/UPDATE가 클러스터 전역에서 거부된다(**서빙 영향 없음 — 발급만 큐잉**). SUC 업그레이드 창 동안 issuers를 sync 하지 않는다.
+  ⚠ 종전 문면은 이 상황을 "노드 B **drain** 중"이라고 적었는데 **틀렸다** — SUC Plan에는 `cordon: true`만 있고 `drain:` 키가 없다
+  (`platform/system-upgrade/plan-k3s-agent.yaml`·`plan-k3s-server.yaml`). cordon은 새 스케줄만 막고 기존 파드를 쫓아내지 않으므로,
+  비가용 구간은 drain 때문이 아니라 **k3s/노드 재시작으로 파드가 잠깐 죽는 동안**이다. 결론(발급만 큐잉)은 같지만
+  "파드가 옮겨 갔겠지"라고 오진하지 않으려면 구분해 둔다.
 - **`webhook.securePort: 10250`은 변경 금지** — 계약 §포트 각주 · `platform/policies`의 `allow-apiserver-webhook` ·
   `validate.sh`의 `HELM_PORT_KEYS` 3중 일치다. 바꾸려면 셋을 같은 PR에서 함께 바꿔야 한다.
 - **`crds.enabled: true` 하나만 쓴다** — 구 `installCRDs`(deprecated)와 동시에 쓰면 차트의 `crd-check` 헬퍼가 렌더를 실패시킨다.
@@ -138,11 +161,13 @@ T116에서 Renovate customManager로 자동화할 후보다(그때까지는 이 
 
 ## 5. 되돌리기 — 2단 규율 (순서가 곧 안전장치)
 
-> ⚠ **이 되돌리기가 '무해'한 것은 PR-4(TLSStore) 적용 전까지다.** TLSStore가 살아 있는 상태에서 이 PR을 revert하면 컨트롤러가
+> ⚠ **이 되돌리기는 더 이상 '무해'하지 않다.** 무해했던 것은 PR-4(TLSStore) 적용 전까지이고, PR-4는 2026-09-10에 머지됐다
+> (gitops main `4f23abd`) — 즉 아래 조건은 이제 **항상 적용된다.** TLSStore가 살아 있는 상태에서 이 PR을 revert하면 컨트롤러가
 > 사라져 **갱신만 조용히 멈춘다** — CRD·Certificate·Secret은 남아 서빙이 계속되므로 그 순간에는 아무 신호가 없고, 최대 90일 뒤
-> 만료 시점에 Cloudflare Full(strict)가 **전 호스트 526**을 낸다(설계 R5·R19). T098의 만료 알림
-> (`certmanager_certificate_expiration_timestamp_seconds`) 전에는 자동 감지 수단이 **없으므로**, PR-4 이후에 revert한다면
-> 만료일을 사람이 기록하고 감시한다:
+> 만료 시점에 Cloudflare Full(strict)가 **전 호스트 526**을 낸다(설계 R5·R19). 그때도 오리진이 자체 서명으로 바뀌지는 않는다 —
+> Traefik은 만료된 인증서를 그대로 계속 내밀므로(v3.7.8은 적재 시 유효기간을 보지 않는다) 진단은 발급자가 아니라
+> **`notAfter`**로 한다. T098의 만료 알림(`certmanager_certificate_expiration_timestamp_seconds`) 전에는 자동 감지 수단이
+> **없으므로**, revert한다면 만료일을 사람이 기록하고 감시한다:
 >
 > ```bash
 > kubectl -n kube-system get secret wildcard-joshuatech-dev-tls -o jsonpath='{.data.tls\.crt}' \
