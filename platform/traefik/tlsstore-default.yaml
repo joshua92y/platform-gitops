@@ -30,7 +30,9 @@
 #   "안전하게 둘 다 적어 두자"가 가장 위험하다. CRD provider의 TLSStore 처리 루프는 `defaultCertificate`의 Secret을
 #   읽지 못하면 `continue`로 **그 TLSStore 항목 전체를 건너뛴다** — `buildCertificates` 호출까지 통째로 지나간다.
 #   즉 defaultCertificate로 적어 둔 Secret 한 장이 없거나 오타가 나면 `certificates:`에 적은 **동적 인증서까지 전부 사라진다.**
-#   오류 한 줄 없이 자체 서명으로 되돌아가므로 증상은 "전 호스트 526"뿐이다. 그래서 이 파일에는 `certificates:` **하나만** 둔다.
+#   자체 서명으로 되돌아가 증상은 "전 호스트 526"이다. 로그에는 `continue` 직전의 Error 한 줄만 남는다
+#   (`Failed to fetch secret <ns>/<name>` · `Secret <ns>/<name> does not exist` · `Could not get certificate blocks` 중 하나) —
+#   **정작 사라진 동적 인증서 쪽은 아무 말이 없다.** 그래서 이 파일에는 `certificates:` **하나만** 둔다.
 #
 # ── 왜 ns가 `kube-system`인가 (설계 §6.3) ─────────────────────────────────────────────────────────────
 #   Traefik의 세 인증서 경로(TLSStore·Ingress `spec.tls`·IngressRoute `spec.tls`)는 모두 **참조하는 객체 자신의 ns**에서만
@@ -43,8 +45,20 @@
 #
 # ── 이 파일이 만들지 "않는" 것 ────────────────────────────────────────────────────────────────────────
 #   · **TLSOption `default`를 여기에 두지 않는다**(설계 §6.4 소유권 단일화 · §8 R7). 이름이 `default`인 TLSStore/TLSOption은
-#     ns와 무관하게 전역 id로 승격되고 **두 개 이상 존재하면 Traefik이 양쪽을 다 버려** 내장 기본값으로 되돌아간다.
-#     오류가 나지 않으므로 minVersion TLS12·sniStrict가 조용히 사라지는 **무증상 보안 회귀**가 된다.
+#     ns와 무관하게 전역 id로 승격되고 **두 개 이상 존재하면 그 이름의 항목이 통째로 삭제된다.** 다만 삭제되는 대상이 다르다
+#     (v3.7.8 `kubernetes.go` 실측):
+#       · TLSOption 중복 → `delete(tlsOptions, tls.DefaultTLSConfigName)`(`kubernetes.go:1380`)로 **옵션 객체 자체가 사라지고**
+#         집계기가 **내장 기본값**을 대신 넣는다(`tlsmanager.go:34-38` `DefaultTLSOptions`). 내장 기본의 `MinVersion`도
+#         `VersionTLS12`라 그 값은 실질적으로 유지되고, **내장 기본이 없는 설정만 소실**된다 —
+#         지금은 해당 없음, 그러나 `sniStrict`(T042 단계 9)·`clientAuth`(T043)를 넣는 순간 **그 둘이 조용히 사라진다.**
+#         R7이 막으려는 보안 회귀는 이쪽이다.
+#       · TLSStore 중복 → `delete(tlsStores, tls.DefaultTLSStoreName)`(`:1450`)은 **Store 설정(`defaultCertificate`·`defaultGeneratedCert`)만** 지운다.
+#         `buildCertificates`가 그 앞에서 이미 `tlsConfigs`를 채웠고 그 맵은 그대로 반환되므로, `certificates:` 목록의
+#         인증서는 `Stores:["default"]`를 달고 DynamicCerts에 편입된다(TLS Manager가 빈 `Store{}`를 다시 만든다).
+#         즉 이 파일 형태(= `certificates:` 단독)는 중복 상황에서도 **와일드카드 서빙이 유지된다** — 안전한 방향이다.
+#     양쪽 모두 Error 로그를 남긴다: `Default TLS Options/Stores defined in multiple namespaces: [...]`.
+#     **그래도 각각 정확히 1개** 규율은 유지한다 — TLSOption 쪽 소실이 무증상 보안 회귀이고, 진단 시 두 경우를 혼동하면
+#     "와일드카드가 사라졌다"(실제로는 유지)와 "minVersion이 사라졌다"(실제 회귀)를 서로 바꿔 찾게 된다.
 #     TLSOption `default`의 정본은 모노레포 `infra/bootstrap/traefik-config.yaml`(HelmChartConfig, T038)이고,
 #     TLSStore `default`의 정본은 이 파일이다 — 각각 정확히 한 곳. 계약 `gitops-repo.md` §디렉터리는
 #     **kind 화이트리스트**이고 같은 줄이 HelmChartConfig를 Traefik 자체 설정의 정본으로 지목하므로 이 배치는 계약과

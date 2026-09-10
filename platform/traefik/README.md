@@ -25,7 +25,9 @@ Namespace·PSA·NetworkPolicy는 `platform/policies/`, Application `platform-tra
 ```bash
 # ⓪ 머지 전 기준선 — 지금 auth가 무엇을 반환하는지 적어 둔다(§3 ④의 대조군)
 curl -sI https://auth.joshuatech.dev | head -1
-# 예상: HTTP/2 526 (오리진이 아직 자체 서명 = 이 PR이 고치려는 상태). 머지 뒤 404로 바뀌면 성공이다.
+# 예상: 상태 코드 **526** (오리진이 아직 자체 서명 = 이 PR이 고치려는 상태). 머지 뒤 404로 바뀌면 성공이다.
+#      프로토콜 표기(`HTTP/2` / `HTTP/1.1`)는 curl 빌드에 따라 다르다 — **상태 코드만 본다**
+#      (2026-09-10 워크스테이션 실측: `HTTP/1.1 526 <none>`).
 #      머지 전에 이미 404라면 어딘가 다른 경로로 인증서가 실려 있다는 뜻이므로 머지하지 말고 원인을 찾는다.
 
 # ① Certificate가 prod로 발급 완료인가 (운영자 admin · certificates는 agent-view로도 읽힌다)
@@ -80,8 +82,12 @@ Argo CD UI는 `kubectl -n argocd port-forward svc/argocd-server 8080:80`으로 �
 ## 3. 머지 뒤 확인
 
 ```bash
-# ⓪ 머지 직후 Argo가 main의 새 SHA를 아직 못 볼 수 있다(T041 실측 — 런북 §3 절차 메모)
-kubectl -n argocd annotate app root argocd.argoproj.io/refresh=hard --overwrite
+# ⓪ 머지 직후 Argo가 main의 새 SHA를 아직 못 볼 수 있다(reconciliation 주기 180s)
+#   ⚠ 대상은 **자식 Application**이다. 이 PR이 바꾼 것은 `platform/traefik/`이고 그 경로를 보는 것은
+#     child `platform-traefik`이다 — root의 source는 `clusters/oci-k3s/apps/`라 이 PR에서 바뀌지 않는다.
+#     **root에만 걸면 자식에 전파되지 않는다**(2026-09-09 실측: root만 갱신했을 때 platform-cert-manager가
+#     옛 리비전에서 Synced/Healthy로 보였다). root가 정답인 경우는 `apps/`가 바뀌어 **새 child가 생길 때**뿐이다(T041 PR-B2).
+kubectl -n argocd annotate app platform-traefik argocd.argoproj.io/refresh=hard --overwrite
 
 # ① Application 상태
 kubectl -n argocd get app platform-traefik -o jsonpath='{.status.sync.status} {.status.health.status}{"\n"}'
@@ -89,13 +95,36 @@ kubectl -n argocd get app platform-traefik -o jsonpath='{.status.sync.status} {.
 
 # ② TLSStore가 **정확히 1개**인가 (⚠ traefik.io는 agent-view 권한 밖 — 운영자 admin 전용, §8)
 kubectl get tlsstore -A
-# 합격: kube-system/default 1개. 2개 이상이면 즉시 §8(이름 default 중복 → 양쪽 폐기)로 간다.
+# 합격: kube-system/default 1개. 2개 이상이면 §8(이름 default 중복)로 간다 — 이 형태(certificates 단독)에서는
+#       와일드카드 서빙이 유지되지만 Store 설정이 폐기되므로 그대로 두지 않는다.
 kubectl get tlsoption -A
 # 합격: kube-system/default 1개(T038 HelmChartConfig 산출물). 이 PR은 TLSOption을 만들지 않는다.
 
-# ③ Traefik이 Secret 참조에 실패하지 않았는가
-kubectl -n kube-system logs deploy/traefik --since=10m | grep -Ei 'certificate|tls'
-# 합격: Secret을 찾지 못했다는 오류(`secret ... not found`, `unable to fetch certificate`) 없음
+# ③ Traefik이 Secret 참조·적재에 실패하지 않았는가 (표적 스크리닝 — **적재 성공의 증거는 아니다**, 아래 참조)
+#   ⚠ 넓은 패턴('certificate|tls')으로 찾지 않는다. 이 클러스터는 **JSON 접근 로그가 켜져 있고**
+#     필터가 `statuscodes: "400-599"`라(모노레포 `infra/bootstrap/traefik-config.yaml`), T042 시점에는
+#     Ingress가 없어 모든 요청이 404다 → 접근 로그 줄이 계속 쌓여 "0건" 판정이 불가능해진다.
+#     아래는 v3.7.8 소스에서 그대로 옮긴 **실제** 메시지다(임의 문면으로 찾으면 놓친다).
+kubectl -n kube-system logs deploy/traefik --since=10m \
+  | grep -E 'Unable to read certificate secret|Unable to parse certificate|Could not get certificate blocks|Failed to fetch secret|does not exist|Default TLS (Stores|Options) defined'
+# PowerShell:
+#   kubectl -n kube-system logs deploy/traefik --since=10m |
+#     Select-String -Pattern 'Unable to read certificate secret|Unable to parse certificate|Could not get certificate blocks|Failed to fetch secret|does not exist|Default TLS (Stores|Options) defined'
+#
+# 각 문자열의 뜻 — `certificates:` 경로(이 PR이 쓰는 경로)는 **2단**이라 실패 문면도 2종이다:
+#   · Unable to read certificate secret <ns>/<name>, skipping   ← 1단: Secret이 없거나 tls.crt/tls.key 키가 없음
+#   · Unable to parse certificate <name>                        ← 2단: 키는 있으나 X509KeyPair 파싱 실패
+#                                                                  → **그 인증서만 조용히 탈락**한다(가장 놓치기 쉬움)
+#   · Failed to fetch secret <ns>/<name>                        ← `defaultCertificate` 경로(이 PR에는 없어야 정상)
+#   · Secret <ns>/<name> does not exist                         ← 〃
+#   · Could not get certificate blocks                          ← 〃
+#   · Default TLS Stores/Options defined in multiple namespaces ← 이름 `default` 중복(§8)
+#
+# 합격: 0건. ⚠ **0건은 "알려진 실패 문면이 없다"는 뜻일 뿐 "인증서가 실렸다"는 뜻이 아니다.**
+#   어떤 로그 목록도 닫힌 집합이 될 수 없다 — 이 PR의 지배적 실패 모드인 **유효하지만 틀린 인증서**
+#   (staging 체인·만료된 prod)는 파싱에 성공하므로 로그를 **한 줄도 남기지 않는다.**
+#   적재 여부의 정본 증거는 **§9 ①의 노드 내부 curl**(issuer + expire date)이고, ③이 0건이어도
+#   ④가 526이면 인증서 경로를 용의선상에서 빼지 않는다.
 
 # ④ ⚠ edge 검증 — 반드시 auth 루트로 한다 (§5)
 curl -sI https://auth.joshuatech.dev | head -1
@@ -151,8 +180,10 @@ sniStrict를 켠 뒤에도 와일드카드 SAN이 `auth.joshuatech.dev`를 덮�
 > ### ⚠ 이 레버는 **존 전역 설정**이다
 >
 > **⚠ 당기기 전 필수 판정 — T043 전에는 당기지 않는다.**
-> T042 시점 gitops 저장소에는 Ingress·IngressRoute가 **0개**이고(`grep -rn '^kind: Ingress' platform/ clusters/`),
+> T042 시점 **이 저장소에는** Ingress·IngressRoute가 **0개**이고(`grep -rn '^kind: Ingress' platform/ clusters/`),
 > Argo CD UI조차 `port-forward` 전용이다(런북 §3 T040 — 공개 접근은 T043부터).
+> (라이브에는 차트가 만든 `traefik-dashboard` IngressRoute 1개가 있다 — `traefik.joshuatech.dev`, Access 뒤라
+>  사용자 트래픽이 아니다. 아래 판정은 그대로 성립한다.)
 > 즉 이 구간의 526 뒤에는 **서비스 중인 사용자 트래픽이 없다.** 가용성 이득 0에 v1 존 전역 보안 저하만 남는다.
 > 판단 기준은 "526이 보이는가"가 아니라 **"526 뒤에 실제 사용자 트래픽이 있는가"**다.
 > T043(호스트별 Ingress + Access) 투입 전에는 이 레버를 **당기지 않는다** — 근본 복구(§7 + forward-fix)만 한다.
@@ -185,7 +216,12 @@ PR-3은 `issuerRef`와 `secretName`을 **한 커밋으로** 바꿨다. 되돌리
 
 **즉시 526이 되지는 않는다.** Traefik은 그 Secret의 prod 인증서를 만료일까지 계속 서빙한다.
 위험은 반대 방향의 **조용한 만료 폭탄**이다:
-- 갱신 주체가 없으므로 남은 유효기간(최대 90일)이 지나면 아무 경고 없이 자체 서명으로 떨어져 전 호스트 526.
+- 갱신 주체가 없으므로 남은 유효기간(최대 90일)이 지나면 아무 경고 없이 **전 호스트 526**이 된다.
+  ⚠ 이때 오리진은 **자체 서명으로 바뀌지 않는다.** Traefik의 인증서 적재는 `tls.X509KeyPair` 파싱만 하고
+  유효기간을 검사하지 않으므로(v3.7.8 `certificate_store.go` `parseCertificate` — `NotAfter` 참조 0건)
+  **만료된 LE 인증서를 그대로 계속 내민다.** edge 결과는 똑같이 526이지만 §9 ①의 노드 내부 curl에는
+  `TRAEFIK DEFAULT CERT`가 아니라 정상 발급자(`CN=YE2`)가 보인다 — "자체 서명을 찾는" 진단은 여기서 헛돈다.
+  526을 만나면 **`notAfter`를 먼저 본다**(§9 ①의 `expire date` 줄).
 - 만료 알림은 T098 전까지 존재하지 않는다(§10).
 - 유일한 자동 신호는 `cert-1`(`found 0`)·`cert-2`이고, 그 문면은 "cert-manager 고장"과 구별되지 않는다
   (`platform/cert-manager-issuers/README.md` §6).
@@ -202,8 +238,8 @@ PR-3은 `issuerRef`와 `secretName`을 **한 커밋으로** 바꿨다. 되돌리
 ```bash
 # 1단: git revert 머지가 **먼저**다. 반대로 하면 selfHeal이 즉시 되살린다.
 #      (PR-4 revert PR을 만들어 머지한다 — 이 저장소에서 직접 push 하지 않는다.)
-#   ⚠ 머지가 즉시 반영되지 않으면 당긴다:
-#        kubectl -n argocd annotate app root argocd.argoproj.io/refresh=hard --overwrite
+#   ⚠ 머지가 즉시 반영되지 않으면 당긴다 — 대상은 **자식**이다(root는 이 경로를 보지 않는다, §3 ⓪):
+#        kubectl -n argocd annotate app platform-traefik argocd.argoproj.io/refresh=hard --overwrite
 #   ⚠ PR을 머지할 수 없는데(GitHub 장애·리뷰 대기) 지금 지워야 하면 selfHeal을 먼저 멈춘다:
 #        kubectl -n argocd scale sts argocd-application-controller --replicas=0
 #      복구 뒤 --replicas=1로 되돌리고, 그 전에 revert 머지를 반드시 끝낸다.
@@ -228,9 +264,24 @@ kubectl -n kube-system delete tlsstore default
 **agent-view는 `traefik.io` 그룹(TLSStore·TLSOption·IngressRoute)을 읽지 못한다.** `cert-1`/`cert-2` 검사는 Certificate만 보므로
 "Traefik이 실제로 그 인증서를 서빙하는가"는 **운영자 admin·노드 내부 curl 전용**으로 남는다(계약 §에이전트 자격 변경 후보).
 
-**이름이 `default`인 TLSStore/TLSOption은 ns와 무관하게 전역 id로 승격되고, 두 개 이상 존재하면 Traefik이 양쪽을 다 버린다.**
-오류가 나지 않으므로 `minVersion: VersionTLS12`와 (나중의) `sniStrict`가 **조용히 사라지는 보안 회귀**가 된다.
-그래서 소유권을 한 곳씩으로 못박았다.
+**이름이 `default`인 TLSStore/TLSOption은 ns와 무관하게 전역 id로 승격되고, 두 개 이상 존재하면 그 이름의 항목이 삭제된다.**
+다만 **삭제되는 대상이 다르다**(v3.7.8 `kubernetes.go` 실측) — 진단할 때 둘을 바꿔 찾지 않도록 구분해 둔다.
+
+| 중복 대상 | 삭제되는 것 | 살아남는 것 | 실제 증상 |
+|---|---|---|---|
+| **TLSOption `default`** | 옵션 객체 자체(`kubernetes.go:1380`) | 서버가 **내장 기본값**으로 되돌아감(`tlsmanager.go:34-38`) | `minVersion`은 그대로 `VersionTLS12`(내장 기본이 같은 값) · **내장 기본이 없는 설정만 소실** = 지금은 없고 **`sniStrict`(T042 단계 9)·`clientAuth`(T043)를 넣는 순간 그 둘이 사라진다** |
+| **TLSStore `default`** | Store 설정만(`defaultCertificate`·`defaultGeneratedCert` — `kubernetes.go:1450`) | **`certificates:` 목록 전부**(이미 `tlsConfigs`에 담겨 DynamicCerts로 편입) | 이 형태에서는 **와일드카드 서빙 유지** |
+
+삭제 호출은 `delete(tlsOptions, tls.DefaultTLSConfigName)`과 `delete(tlsStores, tls.DefaultTLSStoreName)`이고
+두 상수의 값은 모두 `"default"`다(`tlsmanager.go:27`·`:30`) — 소스에서 리터럴 `"default"`로 찾으면 나오지 않는다.
+양쪽 모두 Error 로그를 남긴다(`Default TLS Options/Stores defined in multiple namespaces: [...]`).
+그러나 **TLS 핸드셰이크는 계속 성공하므로 동작으로는 드러나지 않는다** — 로그를 보지 않으면 무증상이다.
+
+⚠ TLSOption 행의 "내장 기본값 복귀"는 **중복이 같은 provider(Kubernetes CRD) 안에서 일어날 때**의 이야기다
+(차트가 만드는 TLSOption과 이 디렉터리가 만들 TLSOption은 둘 다 CRD provider라 이 경우에 해당한다).
+**서로 다른 provider**가 각각 `default`를 주면 집계기가 지우기만 하고 기본값을 넣지 않아
+그 옵션에 의존하는 **라우터 초기화가 통째로 실패한다**(`aggregator.go` — "cascading failure" 주석).
+어느 쪽이든 결론은 같다: 각각 정확히 한 곳. 그래서 소유권을 못박았다.
 
 | 객체 | 정본 소유 | 금지 |
 |---|---|---|
@@ -251,8 +302,10 @@ kubectl -n kube-system delete tlsstore default
 
 ```bash
 # ① SNI 일치 → LE 와일드카드가 나와야 한다 = DynamicCerts 매칭 성공
+#   ⚠ `expire date`를 반드시 함께 본다 — Traefik은 만료된 인증서도 계속 서빙하므로(§7)
+#     발급자만 보면 "정상"으로 오독한다. 526 진단 시에는 이 줄이 1순위다.
 ssh … ubuntu@<노드 A> "curl -skv --resolve traefik.joshuatech.dev:443:10.0.7.78 \
-  https://traefik.joshuatech.dev -o /dev/null 2>&1 | grep -Ei 'subject:|issuer:|subjectAltName'"
+  https://traefik.joshuatech.dev -o /dev/null 2>&1 | grep -Ei 'subject:|issuer:|subjectAltName|expire date|start date'"
 
 # ② SNI 불일치 → 자체 서명 'TRAEFIK DEFAULT CERT'가 나와야 한다 = 폴백 경로가 와일드카드가 아님
 ssh … ubuntu@<노드 A> "curl -skv --resolve no-such.example.invalid:443:10.0.7.78 \
@@ -283,12 +336,31 @@ ssh … ubuntu@<노드 A> "curl -skv --resolve no-such.example.invalid:443:10.0.
   ④ **`validate.sh` 교차 파일 단언** — `platform/traefik/`의 TLSStore는 `default`/`kube-system` 1개이고
      `spec.certificates[].secretName`이 `platform/cert-manager-issuers/`의 Certificate `spec.secretName`과 **문자열 일치**할 것 ·
      `spec.defaultCertificate` 키 존재 시 FAIL(하이브리드 금지) · `platform/traefik/`에 kind `TLSOption` 존재 시 FAIL(R7 소유권).
-     자격·라이브 접근이 필요 없는 순수 트리 검사이며, 현재 kubeconform이 CRD 스키마 부재로 이 파일을 통째로 skip 하므로
-     (실측: `default TLSStore skipped`) 이것이 **유일한 정적 방어선**이다.
+     자격·라이브 접근이 필요 없는 순수 트리 검사다.
+     **현재 정적 검사 실태(2026-09-10 재확인)**: 이 파일은 검사 1에서 **이미 스키마 검증되고 있다.**
+     `validate.sh`는 `-schema-location`에 datree CRDs-catalog를 항상 넘기고(`tests/validate.sh:201`·`:351`),
+     그 카탈로그의 `traefik.io/tlsstore_v1alpha1.json`이 PR-4 검증 때 캐시에 실제로 받아졌다. 스키마가
+     `spec.additionalProperties: false` · `certificates[].required: [secretName]` · 항목도 `additionalProperties: false`라
+     **키 오타는 `-strict`에서 FAIL한다.** (이전 문면의 "kubeconform이 이 파일을 skip 한다"는 **오류였다** —
+     `-schema-location` 없이 맨몸 kubeconform을 돌린 결과를 옮겨 적은 것이다.)
+     그래서 위 세 단언의 실제 몫은 스키마가 **못 잡는** 것들이다: 교차 파일 이름 일치 · `defaultCertificate` 존재
+     (스키마에 있는 정상 필드라 통과한다) · 두 번째 TLSStore/TLSOption. 덧붙여 스키마는 GitHub raw에서 받으므로
+     오프라인·403이면 `-ignore-missing-schemas`가 조용히 건너뛴다 → 저장소 안 벤더링은 "공백 메우기"가 아니라
+     **결정성 개선** 항목이다.
      (이 PR에서 `tests/validate.sh`를 고치지 않는다 — T033 산출물이고 게이트 PR의 범위를 넘는다.)
-  ⑤ **PR-3 Certificate 주석 48-50 정정** — `platform/cert-manager-issuers/certificate-wildcard-joshuatech-dev.yaml`의
-     "서빙 Secret이 사라지고 … 전 호스트 526"은 사실과 반대다(`enableCertificateOwnerRef: false`라 Secret은 남는다).
-     진짜 위험은 §7이 적은 **조용한 만료 폭탄**이다. 이미 머지된 파일이라 이 PR에서 고치지 않는다.
+  ⑤ **PR-5: 이미 머지된 `platform/cert-manager-issuers/` 문면 정정 5건.** 전부 PR-3 승격 이후 낡았거나 사실과 어긋난다.
+     이미 머지된 파일이라 이 PR에서 고치지 않는다. `certificate-wildcard-joshuatech-dev.yaml` 기준:
+     · `:48-50` "서빙 Secret이 사라지고 … 전 호스트 526" → **사실과 반대**다(`enableCertificateOwnerRef: false`라 Secret은
+       남는다). §7의 **조용한 만료 폭탄** 모델로 바꾼다.
+     · `:6-8` "⚠ 지금은 staging 단계다" → PR-3 승격으로 낡았다(같은 파일 `:19`·`:47`은 이미 prod). "현재 = prod 승격 완료(rev 2)"로.
+     · `:26` 고아 Secret 삭제 절차를 "(README §6)"으로 지목 → §6은 **기대 실패** 절이고 삭제 절차는 **§10**이다.
+     · `:50` 되돌리기 근거를 "(README §5)"로 지목 → §5는 `-staging` 이름의 근거이고, "PR-4만 revert" 규율의 정본은
+       **이 README §7**이다(그 저장소 §12가 아니다 — §12는 이 디렉터리 자체의 되돌리기다).
+     · `:41`과 `platform/cert-manager-issuers/README.md` §9의 64일 전환 대응값 **40** → 산술 오류다(바로 아래 항목).
 - **cert-2 임계값** — `renewBeforePercentage: 33` + LE classic 90일이라 갱신 시작이 잔여 29.7일이고, cert-2 기준(30일)과
-  약 60일마다 7.2시간 겹친다. **2027-02-10 LE classic이 64일로 바뀌면 43일 중 약 9일(≈21%) 상시 FAIL**이 되므로
-  그때 값을 40으로 올린다(`platform/cert-manager-issuers/README.md` §9).
+  약 60일마다 7.2시간 겹친다. **2027-02-10 LE classic이 64일로 바뀌면 43일 중 약 9일(≈21%) 상시 FAIL**이 된다.
+  ⚠ 그때의 대응값으로 여러 문서가 적어 둔 **40은 틀렸다.** `renewBeforePercentage`는 **잔여** 비율이므로
+  64일 × 0.40 = **25.6일**이고 cert-2 기준(30일)을 여전히 못 넘긴다 — 주기 38.4일 중 4.4일(≈11%)이 계속 FAIL한다.
+  ("잔여 36일"이라는 병기 수치는 90일로 계산한 값이다.) 30일을 넘기려면 **≥47%**(64×0.47 = 30.1일)이고
+  실용값은 **50**(32일)이다. 세 곳(`certificate-…dev.yaml:41` · `platform/cert-manager-issuers/README.md` §9 · 이 문단)을
+  PR-5에서 함께 고친다. 근본 해법은 cert-2를 `status.renewalTime` 기준으로 바꾸는 것(converge).
