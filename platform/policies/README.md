@@ -13,6 +13,17 @@
 **허용 매트릭스는 exhaustive다.** 표에 없는 출발·도착·포트를 이 디렉터리에서 열지 않는다.
 새 경로가 필요하면 계약을 먼저 고치고(리뷰 경계 `k8s-security`), 그다음 매니페스트를 고친다.
 
+**계약 인용 규약: 줄 번호로 인용하지 않는다.** 계약은 개정되면 줄이 밀린다 — 2026-09-09 모노레포
+`d5f8a82`가 §정책 세트 아래에 5줄을 끼워 넣어 그 뒤 번호가 전부 **+5** 밀렸고(옛 `:121` webhook 행 =
+지금 `:126`), 그때까지 이 문서와 매니페스트 주석이 달고 있던 `:33`~`:122` 인용은 한 번에 전부 다른 줄을
+가리키게 됐다. 그래서 이 문서는 계약을 **절 이름 + 행 키(`<출발> → <도착> <포트>`) 또는 정책 이름**으로만
+가리킨다. 행 키는 계약 안에서 검색으로 찾을 수 있고 개정으로 이동해도 유효하다. 약칭 둘:
+
+- **§내부 매트릭스** = 계약의 `## 허용 매트릭스 — 클러스터 내부 (출발 ns → 도착 ns:포트)` 절
+- **§외부 매트릭스** = 계약의 `## 허용 매트릭스 — 클러스터 밖 · 노드 IP` 절
+
+(둘 다 그 문자열 그대로 계약에서 검색된다.)
+
 ---
 
 ## 1. 파일 배치
@@ -20,11 +31,11 @@
 | 파일 | 내용 | 객체 수 | 정본 |
 |---|---|---|---|
 | `namespaces.yaml` | Namespace 14개 + PSA 라벨(`enforce`=`warn`=`audit`) + 삭제 보호 어노테이션 | 14 | `network-policy.md` §네임스페이스 표 |
-| `policies-common.yaml` | 공통 정책 세트 5종 + 조건부 2종 | 49 | 같은 문서 §정책 세트(:33–:37 · :43–:44) |
-| `policies-matrix.yaml` | 클러스터 **내부** 허용 매트릭스(도착 ingress 21 + 출발 egress 10) | 31 | 같은 문서 §허용 매트릭스 — 클러스터 내부(:77–:95) |
-| `policies-external.yaml` | 클러스터 **밖**·노드 IP egress | 13 | 같은 문서 §허용 매트릭스 — 클러스터 밖·노드 IP(:106–:119) |
+| `policies-common.yaml` | 공통 정책 세트 5종 + 조건부 2종 | 49 | 같은 문서 §정책 세트(공통 5종 표 + 조건부 2종 표) |
+| `policies-matrix.yaml` | 클러스터 **내부** 허용 매트릭스(도착 ingress 21 + 출발 egress 10) | 31 | 같은 문서 §허용 매트릭스 — 클러스터 내부 |
+| `policies-external.yaml` | 클러스터 **밖**·노드 IP egress | 13 | 같은 문서 §허용 매트릭스 — 클러스터 밖 · 노드 IP |
 | `quota.yaml` | `jt-dev`·`jt-prod`의 ResourceQuota + LimitRange | 4 | `spec.md` FR-039 · `gitops-repo.md` §네임스페이스 |
-| `rbac-agent-view.yaml` | ServiceAccount `agent-view` + ClusterRole 2 + ClusterRoleBinding 3 + Role/RoleBinding ×3 | 12 | `tasks.md:120` 문면 · `hostnames-and-access.md` :51–:58 |
+| `rbac-agent-view.yaml` | ServiceAccount `agent-view` + ClusterRole 2 + ClusterRoleBinding 3 + Role/RoleBinding ×3 | 12 | `tasks.md` T041 문면 · `hostnames-and-access.md` §클러스터(K8s)의 `agent-view` 항 |
 | `kustomization.yaml` | 위 6파일을 `resources`로만 묶는다(트랜스포머 없음) | — | — |
 
 `tests/`(검사 Job)는 이 `kustomization.yaml`이 **참조하지 않는다**. 전용 AppProject `tests` 소속의
@@ -33,7 +44,8 @@
 ### 트랜스포머를 두지 않는 이유
 
 - kustomize 공통 `labels:`(구 `commonLabels`)는 **모든** 객체에 라벨을 붙인다. 그러면 (1)
-  `kube-system` Namespace가 "PSA 라벨만"이라는 계약(`network-policy.md:26`)을 벗어나고, (2)
+  `kube-system` Namespace가 "PSA 라벨만"이라는 계약(`network-policy.md` §네임스페이스 표의
+  "`kube-system`은 … **라벨만 SSA로 패치**하고" 항)을 벗어나고, (2)
   아래 §6 되돌리기 선택자가 `agent-view` RBAC까지 걸려 비상 삭제가 tester·에이전트의 접근 경로를
   함께 지운다. 그래서 되돌리기용 라벨 `app.kubernetes.io/part-of: platform-policies`는
   NetworkPolicy·ResourceQuota·LimitRange 매니페스트에만 **직접** 기재하고
@@ -65,78 +77,90 @@
 
 ## 3. 계약 매트릭스 행 → 정책 이름 대응표
 
-행 번호는 `contracts/network-policy.md`의 줄 번호다. 파일 약어: **C** = `policies-common.yaml` ·
+계약 행은 **행 키**(`<출발> → <도착> <포트>`) 또는 정책 이름으로 가리킨다 — 줄 번호를 쓰지 않는 이유는
+위 §계약 인용 규약을 볼 것. 파일 약어: **C** = `policies-common.yaml` ·
 **M** = `policies-matrix.yaml` · **E** = `policies-external.yaml`.
 
 ### 3.1 공통 세트 · 조건부 (C, 49장)
 
+계약 §정책 세트의 표는 정책 이름이 곧 행 키다. 매트릭스 쪽에도 짝이 있는 행은 그 행 키를 함께 적는다.
+
 | 계약 행 | 규칙 | 정책 이름 | 적용 ns | 장수 |
 |---|---|---|---|---|
-| :33 | ingress·egress 전면 차단 | `default-deny` | `kube-system` 제외 13 | 13 |
-| :34 :96 | → `kube-system` kube-dns 53 UDP·TCP | `allow-dns` | 같은 13 | 13 |
-| :35 | 자기 ns 안 통신 | `allow-same-namespace` | `argocd` `data` `cnpg-system` `external-secrets` `cert-manager` `monitoring` `identity` | 7 |
-| :36 :122 | → 노드 A/32 6443(K8s API) | `allow-kube-api` | `argocd` `vault` `external-secrets` `cert-manager` `cnpg-system` `data` `monitoring` `system-upgrade` `reloader` `cloudflared` | 10 |
-| :37 :120 :121 | ← 노드 A/32(webhook · port-forward) **+ 노드 A flannel-wg/32**(`cert-manager` · `cnpg-system`, T042 PR-A) ※ | `allow-apiserver-webhook` | `cert-manager` 10250 · `external-secrets` 10250 · `cnpg-system` 9443 · `vault` 8200 | 4 |
-| :43 | IMDS만 제외한 egress 허용 1장 | `deny-imds` | `kube-system` 전용 | 1 |
-| :44 :111 | → IMDS 169.254.169.254:80 | `allow-imds` | `vault` 전용 | 1 |
+| §정책 세트 `default-deny` | ingress·egress 전면 차단 | `default-deny` | `kube-system` 제외 13 | 13 |
+| §정책 세트 `allow-dns` + §내부 매트릭스 `전 ns → kube-dns 53` | → `kube-system` kube-dns 53 UDP·TCP | `allow-dns` | 같은 13 | 13 |
+| §정책 세트 `allow-same-namespace` | 자기 ns 안 통신 | `allow-same-namespace` | `argocd` `data` `cnpg-system` `external-secrets` `cert-manager` `monitoring` `identity` | 7 |
+| §정책 세트 `allow-kube-api` + §외부 매트릭스 `위 10 ns → 노드 A private IP 6443` | → 노드 A/32 6443(K8s API) | `allow-kube-api` | `argocd` `vault` `external-secrets` `cert-manager` `cnpg-system` `data` `monitoring` `system-upgrade` `reloader` `cloudflared` | 10 |
+| §정책 세트 `allow-apiserver-webhook` + §외부 매트릭스의 `노드 A private IP → vault 8200` 행 및 `노드 A private IP 및 노드 A flannel 터널 장치 주소 → cert-manager · external-secrets · cnpg-system` 행 | ← 노드 A/32(webhook · port-forward) **+ 노드 A flannel-wg/32**(`cert-manager` · `cnpg-system`, T042 PR-A) ※ | `allow-apiserver-webhook` | `cert-manager` 10250 · `external-secrets` 10250 · `cnpg-system` 9443 · `vault` 8200 | 4 |
+| §정책 세트 `deny-imds` | IMDS만 제외한 egress 허용 1장 | `deny-imds` | `kube-system` 전용 | 1 |
+| §정책 세트 `allow-imds` + §외부 매트릭스 `vault → 169.254.169.254 80` | → IMDS 169.254.169.254:80 | `allow-imds` | `vault` 전용 | 1 |
 
-※ `allow-apiserver-webhook` 행은 **매니페스트가 계약을 의도적으로 벗어난 유일한 행**이다 — 계약 `:37`·`:121`은
-아직 출발지를 "노드 A private IP/32"로만 적고 있고, 정정은 대기 중이다(§8 갭 표의 같은 행이 잔여 항목과 선행
-조건을 적는다). 실측 근거와 메커니즘은 `policies-common.yaml`의 `allow-apiserver-webhook` 절 머리 주석에 있다.
+※ `allow-apiserver-webhook` 행은 **한때** 매니페스트가 계약을 의도적으로 벗어난 유일한 행이었다. 지금은
+아니다 — 계약 정정(모노레포 `d5f8a82`, 2026-09-09 15:17:57)이 이 매니페스트를 담은 PR #13 머지(`cad608a`,
+15:21:51)보다 **3분 54초 먼저** 들어가 그 이탈은 해소됐고, 계약의 webhook 행 출발 열은 지금
+"노드 A private IP **및** 노드 A flannel 터널 장치 주소"다. 남은 것은 **잔여 1건(`external-secrets`)**뿐이며
+그 내용은 §8을 볼 것. 실측 근거와 메커니즘은 `policies-common.yaml`의 `allow-apiserver-webhook` 절 머리
+주석에 있다.
 
 ### 3.2 클러스터 내부 매트릭스 (M, 31장)
 
-| 계약 행 | 출발 → 도착:포트 | 도착 ns ingress | 출발 ns egress |
-|---|---|---|---|
-| :77 | `kube-system`(traefik) → `argocd` 8080 | `argocd/allow-from-traefik` | — |
-| :78 | `kube-system`(traefik) → `vault` 8200 | `vault/allow-from-traefik` | — |
-| :79 | `kube-system`(traefik) → `identity` 9000 | `identity/allow-from-traefik` | — |
-| :80 | `kube-system`(traefik) → `jt-dev`·`jt-prod` 8000 | `jt-dev/allow-from-traefik` · `jt-prod/allow-from-traefik` | — |
-| :81 | `kube-system`(traefik) → `monitoring` 4317 | `monitoring/allow-otlp-from-traefik` | — |
-| :82 | `jt-dev`·`jt-prod` → `data` 5432·9093·6379 | `data/allow-from-apps` | `jt-dev/allow-egress-to-data` · `jt-prod/allow-egress-to-data` |
-| :83 | `jt-dev`·`jt-prod` → `identity` 9000·8080 | `identity/allow-from-apps` | `jt-dev/allow-egress-to-identity` · `jt-prod/allow-egress-to-identity` |
-| :84 | `jt-dev`·`jt-prod` → `monitoring` 4317·4318 | `monitoring/allow-otlp-from-apps` | `jt-dev/allow-egress-to-monitoring` · `jt-prod/allow-egress-to-monitoring` |
-| :85 | `identity` → `data` 5432 | `data/allow-from-identity` | `identity/allow-egress-to-data` |
-| :86 | `identity` → `jt-prod` 8000 | `jt-prod/allow-from-identity` | `identity/allow-egress-to-apps` |
-| :87 | `identity` → `jt-dev` 8000 | `jt-dev/allow-from-identity` | `identity/allow-egress-to-apps`(:86과 같은 1장) |
-| :88 | `external-secrets` → `vault` 8200 | `vault/allow-from-external-secrets` | `external-secrets/allow-egress-to-vault` |
-| :89 | `monitoring` → `argocd` 8082·8083·8084 | `argocd/allow-scrape-from-monitoring` | `monitoring/allow-egress-scrape` |
-| :90 | `monitoring` → `vault` 8200 | `vault/allow-scrape-from-monitoring` | 〃 |
-| :91 | `monitoring` → `external-secrets` 8080 | `external-secrets/allow-scrape-from-monitoring` | 〃 |
-| :92 | `monitoring` → `cert-manager` 9402 | `cert-manager/allow-scrape-from-monitoring` | 〃 |
-| :93 | `monitoring` → `cnpg-system` 8080 | `cnpg-system/allow-scrape-from-monitoring` | 〃 |
-| :94 | `monitoring` → `data` 9187·9404 | `data/allow-scrape-from-monitoring` | 〃 |
-| :95 | `monitoring` → `jt-dev`·`jt-prod` 9100·9464 | `jt-dev/allow-scrape-from-monitoring` · `jt-prod/allow-scrape-from-monitoring` | 〃 |
-| :96 | 전 ns → kube-dns 53 | — | `allow-dns`(C, 13장) |
+첫 열이 계약 §허용 매트릭스 — 클러스터 내부의 **행 키 그대로**다(그 문자열로 계약에서 검색한다).
 
-- 출발이 `kube-system`인 5행(:77–:81)은 **도착 ns의 ingress로만** 구현한다. `kube-system`에는
-  default-deny가 없고(계약 :33 :46) 정책은 `deny-imds` 한 장뿐이어야 하므로(계약 :26 ·
-  cluster.tests `np-1`) 그 ns에 egress 정책을 둘 수 없다. 계약 :73의 "한 쌍" 문언과의 차이는
-  규칙 추가가 아니라 누락 쪽이며 converge 인계 항목이다.
+| 계약 행 키 (출발 → 도착:포트) | 도착 ns ingress | 출발 ns egress |
+|---|---|---|
+| `kube-system`(traefik) → `argocd` 8080 | `argocd/allow-from-traefik` | — |
+| `kube-system`(traefik) → `vault` 8200 | `vault/allow-from-traefik` | — |
+| `kube-system`(traefik) → `identity` 9000 | `identity/allow-from-traefik` | — |
+| `kube-system`(traefik) → `jt-dev`·`jt-prod` 8000 | `jt-dev/allow-from-traefik` · `jt-prod/allow-from-traefik` | — |
+| `kube-system`(traefik) → `monitoring` 4317 | `monitoring/allow-otlp-from-traefik` | — |
+| `jt-dev`·`jt-prod` → `data` 5432·9093·6379 | `data/allow-from-apps` | `jt-dev/allow-egress-to-data` · `jt-prod/allow-egress-to-data` |
+| `jt-dev`·`jt-prod` → `identity` 9000·8080 | `identity/allow-from-apps` | `jt-dev/allow-egress-to-identity` · `jt-prod/allow-egress-to-identity` |
+| `jt-dev`·`jt-prod` → `monitoring` 4317·4318 | `monitoring/allow-otlp-from-apps` | `jt-dev/allow-egress-to-monitoring` · `jt-prod/allow-egress-to-monitoring` |
+| `identity` → `data` 5432 | `data/allow-from-identity` | `identity/allow-egress-to-data` |
+| `identity` → `jt-prod` 8000 | `jt-prod/allow-from-identity` | `identity/allow-egress-to-apps` |
+| `identity` → `jt-dev` 8000 | `jt-dev/allow-from-identity` | `identity/allow-egress-to-apps`(prod 행과 같은 1장) |
+| `external-secrets` → `vault` 8200 | `vault/allow-from-external-secrets` | `external-secrets/allow-egress-to-vault` |
+| `monitoring` → `argocd` 8082·8083·8084 | `argocd/allow-scrape-from-monitoring` | `monitoring/allow-egress-scrape` |
+| `monitoring` → `vault` 8200 | `vault/allow-scrape-from-monitoring` | 〃 |
+| `monitoring` → `external-secrets` 8080 | `external-secrets/allow-scrape-from-monitoring` | 〃 |
+| `monitoring` → `cert-manager` 9402 | `cert-manager/allow-scrape-from-monitoring` | 〃 |
+| `monitoring` → `cnpg-system` 8080 | `cnpg-system/allow-scrape-from-monitoring` | 〃 |
+| `monitoring` → `data` 9187·9404 | `data/allow-scrape-from-monitoring` | 〃 |
+| `monitoring` → `jt-dev`·`jt-prod` 9100·9464 | `jt-dev/allow-scrape-from-monitoring` · `jt-prod/allow-scrape-from-monitoring` | 〃 |
+| 전 ns → `kube-system` kube-dns 53 | — | `allow-dns`(C, 13장) |
+
+- 출발이 `kube-system`인 위 5행은 **도착 ns의 ingress로만** 구현한다. `kube-system`에는 default-deny가
+  없고(계약 §정책 세트 `default-deny` 행의 "`kube-system` 제외 13 ns"와 그 아래 "`kube-system`에는
+  default-deny를 걸지 않는다" 항) 정책은 `deny-imds` 한 장뿐이어야 하므로(계약 §네임스페이스 표의
+  "라벨만 SSA로 패치하고(정책은 `deny-imds`만)" 항 · cluster.tests `np-1`) 그 ns에 egress 정책을 둘 수
+  없다. 계약 §허용 매트릭스 — 클러스터 내부 머리글의 "한 쌍" 문언과의 차이는 규칙 추가가 아니라 누락
+  쪽이며 converge 인계 항목이다.
 - 검산: ingress 21 = `argocd` 2 · `vault` 3 · `external-secrets` 1 · `cert-manager` 1 ·
   `cnpg-system` 1 · `data` 3 · `identity` 2 · `jt-dev` 3 · `jt-prod` 3 · `monitoring` 2.
   egress 10 = `external-secrets` 1 · `identity` 2 · `jt-dev` 3 · `jt-prod` 3 · `monitoring` 1.
 
 ### 3.3 클러스터 밖 · 노드 IP (E, 13장)
 
-| 계약 행 | 출발 → 도착:포트 | 정책 이름 | 파일 |
-|---|---|---|---|
-| :106 | `identity` → 외부 443 | `allow-egress-external-443` | E |
-| :107 | `jt-dev`·`jt-prod` → 외부 443 | 〃 (2장) | E |
-| :108 | `cert-manager` → 외부 443 | 〃 | E |
-| :109 | `cert-manager` → `1.1.1.1` 53 UDP·TCP | `allow-egress-dns-1111` | E |
-| :110 | `vault` → 외부 443 | `allow-egress-external-443` | E |
-| :111 | `vault` → IMDS 80 | `allow-imds` | C |
-| :112 | `argocd` → 외부 443 | `allow-egress-external-443` | E |
-| :113 | `data` → 외부 443 | 〃 | E |
-| :114 | `monitoring` → 외부 443 | 〃 | E |
-| :115 | `monitoring` → 노드 A·B 10250 | `allow-egress-kubelet` | E |
-| :116 | `system-upgrade` → 외부 443 | `allow-egress-external-443` | E |
-| :117 | `cloudflared` → 외부 7844·443 | `allow-egress-tunnel`(현재 **TCP만** — §8) | E |
-| :118 :119 | `cloudflared` → 노드 A·B 22 | `allow-egress-ssh-nodes`(2행 = 1장 2목적지) | E |
-| :120 | 노드 A → `vault` 8200 | `allow-apiserver-webhook` | C |
-| :121 | 노드 A → `cert-manager`·`external-secrets`·`cnpg-system` | 〃 | C |
-| :122 | 위 10 ns → 노드 A 6443 | `allow-kube-api` | C |
+첫 열이 계약 §허용 매트릭스 — 클러스터 밖 · 노드 IP의 **행 키 그대로**다.
+
+| 계약 행 키 (출발 → 도착:포트) | 정책 이름 | 파일 |
+|---|---|---|
+| `identity` → 외부 443 | `allow-egress-external-443` | E |
+| `jt-dev`·`jt-prod` → 외부 443 | 〃 (2장) | E |
+| `cert-manager` → 외부 443 | 〃 | E |
+| `cert-manager` → `1.1.1.1` 53 UDP·TCP | `allow-egress-dns-1111` | E |
+| `vault` → 외부 443 | `allow-egress-external-443` | E |
+| `vault` → `169.254.169.254` 80 | `allow-imds` | C |
+| `argocd` → 외부 443 | `allow-egress-external-443` | E |
+| `data` → 외부 443 | 〃 | E |
+| `monitoring` → 외부 443 | 〃 | E |
+| `monitoring` → 노드 A·B private IP 10250 | `allow-egress-kubelet` | E |
+| `system-upgrade` → 외부 443 | `allow-egress-external-443` | E |
+| `cloudflared` → 외부 7844·443 | `allow-egress-tunnel`(**UDP 7844 + TCP 7844 + TCP 443** — §8) | E |
+| `cloudflared` → 노드 A 22 · 노드 B 22 | `allow-egress-ssh-nodes`(2행 = 1장 2목적지) | E |
+| 노드 A private IP → `vault` 8200 | `allow-apiserver-webhook` | C |
+| 노드 A private IP **및** 노드 A flannel 터널 장치 주소 → `cert-manager`·`external-secrets`·`cnpg-system` | 〃 | C |
+| 위 10 ns → 노드 A private IP 6443 | `allow-kube-api` | C |
 
 `allow-egress-external-443` 9장 = `identity` `jt-dev` `jt-prod` `cert-manager` `vault` `argocd`
 `data` `monitoring` `system-upgrade`. NetworkPolicy는 FQDN을 지원하지 않으므로 계약의 "용도"
@@ -223,7 +247,7 @@ kubectl delete networkpolicy -A -l app.kubernetes.io/part-of=platform-policies
 ```
 
 - **선택자가 `app.kubernetes.io/part-of`인 이유:** 이 클러스터의 Argo CD 리소스 추적 방식은
-  **어노테이션**이다(`bootstrap/argocd/argocd-cm.yaml:16`
+  **어노테이션**이다(`bootstrap/argocd/argocd-cm.yaml`의
   `application.resourceTrackingMethod: annotation`). 따라서 흔히 쓰는
   `-l argocd.argoproj.io/instance=platform-policies` 라벨 선택자는 **객체에 존재하지 않는다**
   (그 라벨은 `label` 추적 방식에서만 생긴다). 그래서 매니페스트가 자체 라벨을 직접 갖는다.
@@ -247,8 +271,8 @@ kubectl delete networkpolicy -A -l app.kubernetes.io/part-of=platform-policies
   (`cluster.tests.ps1` np-1이 "kube-system policies == {deny-imds}"를 단언한다).
 - 그래서 traefik 출발 행은 도착 ns의 ingress로만 구현한다(§3.2).
 - `default`·`kube-public`·`kube-node-lease`는 계약 표 14개 밖이라 여기서 선언하지 않는다
-  (validate 5.1은 14개 초과를 FAIL로 본다). 계약 :26의 "모든 네임스페이스" 문구와의 차이는
-  converge 인계 항목이다.
+  (validate 5.1은 14개 초과를 FAIL로 본다). 계약 §네임스페이스 표의 "T031이 클러스터의 **모든**
+  네임스페이스가 PSA 라벨 + 해당 정책을 가짐을 단언한다" 문구와의 차이는 converge 인계 항목이다.
 
 ---
 
@@ -256,10 +280,12 @@ kubectl delete networkpolicy -A -l app.kubernetes.io/part-of=platform-policies
 
 발견된 공백은 매니페스트에 추가 허용 규칙으로 넣지 않고, 계약 개정(또는 해당 태스크)에서 처리한다.
 
-**예외 1건(2026-09-09 · T042 PR-A).** `allow-apiserver-webhook` 행은 실측으로 "계약에 적힌 출발지가
-원리적으로 매칭 불가"임이 드러나 **계약 정정보다 매니페스트가 먼저 갔다**(운영 중인 webhook이 502로
-죽어 있었다). 계약 정정은 취소가 아니라 **머지 선행 조건으로 남아 있다** — 아래 표의 해당 행을 볼 것.
-이것이 이 저장소 안에서 그 의도적 이탈을 기록하는 유일한 장치다.
+**예외 1건 — 이미 닫혔다(2026-09-09 · T042 PR-A).** `allow-apiserver-webhook` 행은 실측으로 "계약에 적힌
+출발지가 원리적으로 매칭 불가"임이 드러나 계약 정정보다 매니페스트 작성이 먼저 갔다(운영 중인 webhook이
+502로 죽어 있었다). **머지 시점에는 순서가 지켜졌다**: 계약 정정 커밋(모노레포 `d5f8a82`, 15:17:57)이
+매니페스트 PR #13 머지(`cad608a`, 15:21:51)보다 3분 54초 먼저 들어갔다. 그러니 "계약 정정 대기 중" ·
+"머지 선행 조건" · "매니페스트가 계약을 벗어난 상태"라고 적힌 문면을 어디서 보든 **그 문서가 낡은 것**이다.
+남은 것은 아래 표의 **잔여 1건(`external-secrets`)**뿐이고, 그것은 이탈이 아니라 미결 결정이다.
 
 | 공백 | 영향 | 처리 |
 |---|---|---|
@@ -268,12 +294,12 @@ kubectl delete networkpolicy -A -l app.kubernetes.io/part-of=platform-policies
 | Traefik metrics 9100(`kube-system`) 스크레이프 egress 행 없음 | Traefik 지표 누락 | 같은 태스크 |
 | cloudflared metrics 2000 스크레이프 행 없음 | 터널 지표 없음 | 같은 태스크 |
 | `cnpg-system` → `data` 8000(operator → instance status, 추정) 행 없음 | CNPG 운영 영향 가능 | CNPG 태스크에서 실측 |
-| ~~`allow-apiserver-webhook`의 ipBlock = 노드 A/32 — 노드 B 배치 webhook은 flannel-wg 주소로 도착할 수 있음~~ **해소(2026-09-09 · T042 PR-A)** — VD-W 실측: apiserver → 파드 IP 직접 dial의 출발 IP는 노드 A flannel-wg 주소 `10.42.0.0`(노드 A podCIDR의 네트워크 주소)이다 | (해소) cert-manager 10250 · cnpg-system 9443에 `10.42.0.0/32` **add-only** 추가 — 기존 `10.0.7.78/32`는 유지 | **잔여 ①** 계약 `:37`·`:121`(출발 열)·`:48`(port-forward 근거의 webhook 행 오적용) 정정 — 모노레포 단독 커밋, **이 정책 변경 머지의 선행 조건**(converge는 tasks.md append만 가능해 contracts/를 고칠 수 없다) · **잔여 ②** `external-secrets`(T045 계획상 노드 A, kube-router LOCAL 예외 추정·**미검증**)는 T045에서 실측 후 결정 |
-| cert-manager `dns01RecursiveNameservers`가 1.1.1.1**/8.8.8.8** — 매트릭스에는 1.1.1.1/32 행만 | 8.8.8.8 조회 차단 | cert-manager 태스크에서 values를 1.1.1.1만으로 두거나 계약 행 추가 |
+| ~~`allow-apiserver-webhook`의 ipBlock = 노드 A/32 — 노드 B 배치 webhook은 flannel-wg 주소로 도착할 수 있음~~ **해소(2026-09-09 · T042 PR-A)** — VD-W 실측: apiserver → 파드 IP 직접 dial의 출발 IP는 노드 A flannel-wg 주소 `10.42.0.0`(노드 A podCIDR의 네트워크 주소)이다 | (해소) cert-manager 10250 · cnpg-system 9443에 `10.42.0.0/32` **add-only** 추가 — 기존 `10.0.7.78/32`는 유지 | ~~계약 정정 대기~~ **해소(모노레포 `d5f8a82`, PR #13 머지 전)** — §정책 세트 `allow-apiserver-webhook` 행과 §외부 매트릭스 webhook 행의 출발 열에 "노드 A flannel 터널 장치 주소"가 들어갔고, webhook 행에 잘못 걸려 있던 port-forward 근거 문장은 삭제된 뒤 "이 정책의 두 행은 메커니즘이 다르다" 항으로 대체됐다 · **잔여 1건** `external-secrets`: 계약은 webhook 행에 이 ns도 열거하지만 매니페스트 규칙에는 flannel 주소가 없다. 이탈이 아니라 미결 결정이다 — ESO를 노드 A에 두면(T045 계획) kube-router의 LOCAL 예외로 flannel 주소 없이 통과할 수 있어 **필요한 값 자체가 달라진다**. T045에서 배치를 확정하고 파드 방화벽 체인의 `--src-type LOCAL` 행 존재를 확인한 뒤 결정 |
+| ~~cert-manager `dns01RecursiveNameservers`가 1.1.1.1**/8.8.8.8** — 매트릭스에는 1.1.1.1/32 행만~~ **해소(커밋 2026-09-09 `8cb1149` · 확인 2026-09-10)** | (해소) 설계 결정 D2 = A로 values를 계약에 맞췄다 — `platform/cert-manager/kustomization.yaml`의 `dns01RecursiveNameservers`가 `"1.1.1.1:53"` **단독**이고 `dns01RecursiveNameserversOnly: true`가 짝이다. 계약 행 1개 · 정책 1장 · values 셋이 일치한다 | **규율**: 8.8.8.8이든 다른 리졸버든 되넣으려면 ① 계약 §외부 매트릭스에 행 추가 ② `policies-external.yaml`에 정책 1장 추가 ③ 그다음 values. values만 먼저 고치면 그 리졸버로 나가는 질의가 정책에 막혀 조용히 타임아웃하고, 증상은 "DNS-01이 pending에서 안 넘어간다"로만 보인다 |
 | `identity`에 `allow-kube-api` 없음(Authentik outpost의 in-cluster API 시도) | 오류 로그 가능(기능 영향 없음 추정) | Authentik 태스크에서 관찰 |
-| `agent-view`의 `applications` 권한: 문면은 `argocd-applications-view` get·list, 계약 :52–:55는 `agent-view-extra` 안 get·list·watch | `kubectl get app -w` 거부 | converge에서 문면·계약 통일(현재는 문면을 따름) |
+| `agent-view`의 `applications` 권한: `tasks.md` T041 문면은 `argocd-applications-view` get·list, `hostnames-and-access.md` §클러스터(K8s)의 `agent-view-extra` 항은 get·list·watch | `kubectl get app -w` 거부 | converge에서 문면·계약 통일(현재는 `tasks.md` 문면을 따름) |
 | CoreDNS 업스트림이 IMDS 주소(`169.254.169.254`)이면 `deny-imds`(ports 없음)가 외부 이름 해석을 끊는다 | 적용 시 전면 DNS 실패 | 적용 전 노드 실측(VD-DNS) — IMDS면 계약 개정 후 예외 1장 |
-| 계약 :117이 cloudflared 7844의 **프로토콜을 적지 않는다** — `allow-egress-tunnel`은 현재 TCP 7844·443만 선언한다(UDP 7844 없음) | QUIC이 막혀 http2로 **조용히 폴백**한다(기능은 유지, 성능·재연결 특성 저하) | 계약 :117에 UDP+TCP를 명시한 뒤 정책에 UDP 7844 추가. 적용 후 확인은 cloudflared 로그의 `Registered tunnel connection` `protocol=quic` |
+| 계약의 `cloudflared` → 외부 7844·443 행이 **프로토콜을 적지 않는다**(매트릭스에 프로토콜 열이 없다) | 문면만 보면 "TCP만"으로 읽을 여지가 있고, 그 판독을 따르면 QUIC이 막혀 http2로 **조용히 폴백**한다(기능은 유지, 성능·재연결 특성 저하) | **정책 쪽은 이미 정해졌다** — 2026-09-08 사용자 결정 A(용도 열의 "QUIC/HTTP2"를 그대로 읽는다)로 `allow-egress-tunnel`은 **UDP 7844 + TCP 7844 + TCP 443**을 선언한다(`policies-external.yaml`이 정본). 남은 것은 계약 문면뿐: 매트릭스에 프로토콜 열을 두거나 그 행의 포트 열을 `7844(UDP·TCP) · 443(TCP)`로 적어 해석 여지를 없앤다(동작 변경 아님). 확인은 cloudflared 로그의 `Registered tunnel connection` `protocol=quic` |
 
 ---
 
@@ -290,3 +316,16 @@ kubectl delete networkpolicy -A -l app.kubernetes.io/part-of=platform-policies
 
 노드 IP가 바뀌면 계약(`network-policy.md` · `hostnames-and-access.md`)을 먼저 고치고,
 `policies-common.yaml`·`policies-external.yaml`과 이 표를 함께 갱신한다.
+
+### `10.42.0.0/32`의 전제 두 가지
+
+자세한 근거는 `policies-common.yaml`의 `allow-apiserver-webhook` 절 머리 주석에 있다.
+
+- 이 값은 "노드 A의" 주소이기 이전에 **apiserver가 도는 노드의 podCIDR 네트워크 주소**다. 오늘은
+  서버(컨트롤 플레인) 노드가 노드 A 하나뿐이라 값 하나로 족하다. 서버 노드를 추가하거나 옮기면(HA에서는
+  어느 서버가 dial할지 고정되지 않는다) 그 노드의 값도 이 규칙에 함께 넣어야 한다.
+- 이 주소는 어떤 파드에도 할당되지 않으므로 허용 대상은 그 노드의 **호스트 네임스페이스**뿐이다. 다만 그
+  netns를 쓰는 것은 apiserver만이 아니다: 노드 A에 뜬 **hostNetwork 파드**(계약 §hostNetwork · 호스트
+  네임스페이스 예외표의 node-exporter · SUC Plan Job)와 노드 A에 뜨는(스케줄되는) **`kube-system` 워크로드**
+  (traefik · coredns · svclb 등)가 같은 netns를 쓴다. 셋 다 PSA `privileged` ns라 "노드 A의 비-특권
+  워크로드는 argocd·cloudflared뿐"이라는 셈(= default-deny가 걸린 13 ns만 센 것)에 들어가지 않는다.

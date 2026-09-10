@@ -16,9 +16,11 @@
 # 이 디렉터리가 만들지 "않는" 것 — 경계(운영 절차는 README.md):
 #   1) Traefik 본체: K3s 번들이라 K3s가 설치·관리하고, 설정 정본은 모노레포 `infra/bootstrap/traefik-config.yaml`
 #      (HelmChartConfig, T038)이다. `sniStrict`(D5, T042 단계 9)도 그 파일에 있다 — 여기서 켜지 않는다.
+#      그 값은 이 디렉터리가 머지된 뒤 **2026-09-10 17:24 KST에 투입 완료**됐다(README §9).
 #   2) **TLSOption `default`**: 위 HelmChartConfig 단독 소유. 여기 또 두면 이름 `default` 중복으로 Traefik이
 #      **그 옵션 객체를 통째로 버리고** 내장 기본값으로 되돌아간다. `minVersion: VersionTLS12`는 내장 기본과 같은 값이라
-#      살아남지만, **내장 기본이 없는 `sniStrict`(T042 단계 9)·`clientAuth`(T043)는 넣는 순간 조용히 사라진다**
+#      살아남지만, **내장 기본이 없는 `sniStrict`(투입 완료)·`clientAuth`(T043)는 조용히 사라진다** — sniStrict가 이미 실려
+#      있으므로 이 위험은 예고가 아니라 **현재형**이다
 #      (설계 §6.4 · §8 R7 — 보안 회귀). Error 로그 한 줄(`Default TLS Options defined in multiple namespaces`)은 남지만
 #      TLS 핸드셰이크는 계속 성공하므로 **동작으로는 드러나지 않는다.** 자세한 구분은 README §8.
 #      계약 §디렉터리는 kind 화이트리스트이고 같은 줄이 HelmChartConfig를 Traefik 자체 설정의 정본으로 지목하므로

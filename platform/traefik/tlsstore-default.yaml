@@ -50,8 +50,8 @@
 #       · TLSOption 중복 → `delete(tlsOptions, tls.DefaultTLSConfigName)`(`kubernetes.go:1380`)로 **옵션 객체 자체가 사라지고**
 #         집계기가 **내장 기본값**을 대신 넣는다(`tlsmanager.go:34-38` `DefaultTLSOptions`). 내장 기본의 `MinVersion`도
 #         `VersionTLS12`라 그 값은 실질적으로 유지되고, **내장 기본이 없는 설정만 소실**된다 —
-#         지금은 해당 없음, 그러나 `sniStrict`(T042 단계 9)·`clientAuth`(T043)를 넣는 순간 **그 둘이 조용히 사라진다.**
-#         R7이 막으려는 보안 회귀는 이쪽이다.
+#         2026-09-10 `sniStrict` 투입으로 **지금 그 대상이 실재한다**(TLSOption이 중복되면 sniStrict가 조용히 사라진다).
+#         `clientAuth`(T043)가 더해지면 둘 다 사라진다. R7이 막으려는 보안 회귀는 이쪽이다.
 #       · TLSStore 중복 → `delete(tlsStores, tls.DefaultTLSStoreName)`(`:1450`)은 **Store 설정(`defaultCertificate`·`defaultGeneratedCert`)만** 지운다.
 #         `buildCertificates`가 그 앞에서 이미 `tlsConfigs`를 채웠고 그 맵은 그대로 반환되므로, `certificates:` 목록의
 #         인증서는 `Stores:["default"]`를 달고 DynamicCerts에 편입된다(TLS Manager가 빈 `Store{}`를 다시 만든다).
@@ -64,8 +64,11 @@
 #     **kind 화이트리스트**이고 같은 줄이 HelmChartConfig를 Traefik 자체 설정의 정본으로 지목하므로 이 배치는 계약과
 #     **충돌하지 않는다** — 다만 이름 `default` 중복(R7)이 무증상 보안 회귀이므로 소유권을 여기서 못박는다.
 #     현재 차트 값이 `tlsStore: {}`(빈 맵)이라 경쟁 CR이 하나도 없어 깨끗하게 인수한다.
-#   · **`sniStrict`는 이 PR이 아니다**(D5 = T042 단계 9). 그 스위치는 모노레포 `traefik-config.yaml`의 `tlsOptions.default`에 있고,
-#     README §9의 판별 실험 ①②가 **둘 다 성립한 뒤에만** 켠다. 여기서 켤 수 있는 값도 아니다.
+#   · **`sniStrict`는 이 파일이 아니라 모노레포에 있다**(D5 = T042 단계 9) — `infra/bootstrap/traefik-config.yaml`의
+#     `valuesContent` → `tlsOptions.default`. 여기서 켤 수 있는 값이 아니다.
+#     **2026-09-10 17:24 KST 투입 완료**: 이 파일이 머지된 뒤(gitops main 4f23abd) 노드 A 안에서 판별 실험 ①②(README §9)를
+#     통과한 것을 확인하고 켰다. 적용 뒤 SNI 불일치는 `000`(핸드셰이크 거절)이 됐고 파드 롤아웃은 나지 않았다.
+#     ⚠ 되돌릴 때는 순서가 반대다 — `sniStrict` 제거(모노레포 → 노드 A)가 **먼저**, TLSStore 삭제가 그다음이다(README §7).
 #   · Secret 자체와 Certificate: `platform/cert-manager-issuers/` 소유. Namespace·PSA·NetworkPolicy: `platform/policies/` 소유.
 #     Application `platform-traefik`: `clusters/oci-k3s/apps/` 소유(T041 PR-C가 이미 배포 — 이 PR은 건드리지 않는다).
 apiVersion: traefik.io/v1alpha1

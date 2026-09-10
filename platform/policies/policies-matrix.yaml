@@ -1,17 +1,26 @@
 # platform/policies/policies-matrix.yaml — 클러스터 내부 허용 매트릭스 (31장 = ingress 21 + egress 10)
 #
 # 정본: 모노레포 specs/003-platform-foundation/contracts/network-policy.md
-#   §허용 매트릭스 — 클러스터 내부(출발 ns → 도착 ns:포트), 계약 :77–:96.
+#   `## 허용 매트릭스 — 클러스터 내부 (출발 ns → 도착 ns:포트)` 절.
 #   이 표는 exhaustive다 — 표에 없는 허용 규칙을 추가하지 않는다. 새 경로가 필요하면
 #   계약을 먼저 고친다(`allow-all`로 푸는 것은 금지).
-#   :96(전 ns → kube-dns 53)은 `allow-dns`로 policies-common.yaml에 있다.
+#   그 표의 마지막 행(전 ns → `kube-system` kube-dns 53)은 `allow-dns`로 policies-common.yaml에 있다.
 #
-# 구현 규칙(계약 :73): 각 행은 "출발 ns의 egress 규칙 + 도착 ns의 ingress 규칙 한 쌍"이다.
-#   예외 = 출발이 `kube-system`(traefik)인 5행(:77 :78 :79 :80 :81). `kube-system`에는
-#   default-deny를 걸지 않으므로(계약 :33 :46) 그 ns의 egress는 애초에 제한되지 않고,
-#   정책은 `deny-imds` 한 장뿐이어야 한다(계약 :26 · tests/platform/cluster.tests.ps1 np-1
+# 계약 인용 규약: **줄 번호로 인용하지 않는다.** 계약은 개정되면 줄이 밀린다 — 2026-09-09
+#   모노레포 `d5f8a82`가 §정책 세트 아래에 5줄을 끼워 넣어 그 뒤 번호가 전부 +5 밀렸고,
+#   그때까지 이 파일이 정책마다 달고 있던 `:77`~`:96` 인용은 한 번에 전부 다른 줄을 가리키게 됐다.
+#   그래서 아래 주석은 **행 키(`<출발> → <도착> <포트>`)**로만 가리킨다 — 계약 안에서 검색으로 찾는다.
+#   약칭 `§내부 매트릭스` = 위 절 이름(이 문자열로 검색한다).
+#
+# 구현 규칙(계약 §내부 매트릭스 머리글 "각 행은 출발 ns의 egress 규칙 + 도착 ns의 ingress 규칙
+#   한 쌍으로 구현한다"). 예외 = 출발이 `kube-system`(traefik)인 5행(→ `argocd` 8080 · `vault` 8200 ·
+#   `identity` 9000 · `jt-dev`·`jt-prod` 8000 · `monitoring` 4317). `kube-system`에는 default-deny를
+#   걸지 않으므로(계약 §정책 세트 `default-deny` 행의 적용 범위 "`kube-system` 제외 13 ns"와
+#   그 아래 "`kube-system`에는 default-deny를 걸지 않는다" 항) 그 ns의 egress는 애초에 제한되지 않고,
+#   정책은 `deny-imds` 한 장뿐이어야 한다(계약 §네임스페이스 표의 "`kube-system`은 … 라벨만 SSA로
+#   패치하고(정책은 `deny-imds`만)" 항 · tests/platform/cluster.tests.ps1 np-1
 #   "kube-system policies == {deny-imds}"). 따라서 그 5행은 **도착 ns의 ingress로만** 구현한다.
-#   계약 :73의 "한 쌍" 문언과의 차이는 converge 인계 항목이다(규칙 추가가 아니라 누락 쪽).
+#   위 "한 쌍" 문언과의 차이는 converge 인계 항목이다(규칙 추가가 아니라 누락 쪽).
 #
 # 정책 이름 규약:
 #   도착 ns ingress — allow-from-traefik · allow-from-apps · allow-from-identity ·
@@ -44,7 +53,7 @@
 
 # --- argocd (2) --------------------------------------------------------------
 ---
-# 계약 :77 — kube-system(traefik) → argocd 8080: Argo CD UI/API(Ingress `argo.`)
+# 계약 §내부 매트릭스 — kube-system(traefik) → argocd 8080: Argo CD UI/API(Ingress `argo.`)
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -58,7 +67,7 @@ spec:
     - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }, podSelector: { matchLabels: { app.kubernetes.io/name: traefik } } }]
       ports: [{ protocol: TCP, port: 8080 }]
 ---
-# 계약 :89 — monitoring → argocd 8082·8083·8084: metrics(application-controller·repo-server·server)
+# 계약 §내부 매트릭스 — monitoring → argocd 8082·8083·8084: metrics(application-controller·repo-server·server)
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -74,7 +83,7 @@ spec:
 
 # --- vault (3) ---------------------------------------------------------------
 ---
-# 계약 :78 — kube-system(traefik) → vault 8200: Vault UI(Ingress `vault.`)
+# 계약 §내부 매트릭스 — kube-system(traefik) → vault 8200: Vault UI(Ingress `vault.`)
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -88,7 +97,7 @@ spec:
     - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }, podSelector: { matchLabels: { app.kubernetes.io/name: traefik } } }]
       ports: [{ protocol: TCP, port: 8200 }]
 ---
-# 계약 :88 — external-secrets → vault 8200: kv 읽기
+# 계약 §내부 매트릭스 — external-secrets → vault 8200: kv 읽기
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -102,9 +111,9 @@ spec:
     - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: external-secrets } } }]
       ports: [{ protocol: TCP, port: 8200 }]
 ---
-# 계약 :90 — monitoring → vault 8200: `vault_core_unsealed` 등(telemetry unauthenticated_metrics_access)
-#   계약 :98 — scrape 도착 ns의 ingress는 namespaceSelector가 monitoring인 것만 허용한다.
-#   jt-* 등 다른 ns가 같은 8200으로 들어오는 경로는 열리지 않는다(cluster.tests np-4).
+# 계약 §내부 매트릭스 — monitoring → vault 8200: `vault_core_unsealed` 등(telemetry unauthenticated_metrics_access)
+#   계약 §내부 매트릭스 아래 "scrape 대상 ns의 ingress는 `namespaceSelector`가 `monitoring`인 것만
+#   허용한다" 항. jt-* 등 다른 ns가 같은 8200으로 들어오는 경로는 열리지 않는다(cluster.tests np-4).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -120,7 +129,7 @@ spec:
 
 # --- external-secrets (1) ----------------------------------------------------
 ---
-# 계약 :91 — monitoring → external-secrets 8080: ESO metrics
+# 계약 §내부 매트릭스 — monitoring → external-secrets 8080: ESO metrics
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -136,7 +145,7 @@ spec:
 
 # --- cert-manager (1) --------------------------------------------------------
 ---
-# 계약 :92 — monitoring → cert-manager 9402: cert-manager metrics(`CertExpiringSoon`)
+# 계약 §내부 매트릭스 — monitoring → cert-manager 9402: cert-manager metrics(`CertExpiringSoon`)
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -152,7 +161,7 @@ spec:
 
 # --- cnpg-system (1) ---------------------------------------------------------
 ---
-# 계약 :93 — monitoring → cnpg-system 8080: CNPG operator metrics
+# 계약 §내부 매트릭스 — monitoring → cnpg-system 8080: CNPG operator metrics
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -168,7 +177,7 @@ spec:
 
 # --- data (3) ----------------------------------------------------------------
 ---
-# 계약 :82 — jt-dev·jt-prod → data 5432·9093·6379: pg-main · Kafka(SCRAM/TLS) · Dragonfly
+# 계약 §내부 매트릭스 — jt-dev·jt-prod → data 5432·9093·6379: pg-main · Kafka(SCRAM/TLS) · Dragonfly
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -182,7 +191,7 @@ spec:
     - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: jt-dev } } }, { namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: jt-prod } } }]
       ports: [{ protocol: TCP, port: 5432 }, { protocol: TCP, port: 9093 }, { protocol: TCP, port: 6379 }]
 ---
-# 계약 :85 — identity → data 5432: Authentik·OpenFGA DB
+# 계약 §내부 매트릭스 — identity → data 5432: Authentik·OpenFGA DB
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -196,7 +205,7 @@ spec:
     - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: identity } } }]
       ports: [{ protocol: TCP, port: 5432 }]
 ---
-# 계약 :94 — monitoring → data 9187·9404: CNPG instance exporter · Strimzi kafka-exporter
+# 계약 §내부 매트릭스 — monitoring → data 9187·9404: CNPG instance exporter · Strimzi kafka-exporter
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -212,8 +221,8 @@ spec:
 
 # --- identity (2) ------------------------------------------------------------
 ---
-# 계약 :79 — kube-system(traefik) → identity 9000: Authentik(`auth.` Ingress, forward-auth outpost)
-#   계약 :99 — `traefik → identity 8080`(OpenFGA) 행은 삭제됐다. OpenFGA는 공개 호스트가 없고
+# 계약 §내부 매트릭스 — kube-system(traefik) → identity 9000: Authentik(`auth.` Ingress, forward-auth outpost)
+#   계약 §내부 매트릭스 아래 "`traefik → identity 8080`(OpenFGA) 행은 **삭제**했다" 항 — OpenFGA는 공개 호스트가 없고
 #   클러스터 안(jt-* → identity 8080)에서만 호출한다.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -228,8 +237,9 @@ spec:
     - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }, podSelector: { matchLabels: { app.kubernetes.io/name: traefik } } }]
       ports: [{ protocol: TCP, port: 9000 }]
 ---
-# 계약 :83 — jt-dev·jt-prod → identity 9000·8080: Authentik(JWKS·revoke API, svc DNS) · OpenFGA
-#   계약 :129 — pod의 JWKS는 svc DNS(`http://authentik-server.identity.svc:9000/...`)를 쓴다.
+# 계약 §내부 매트릭스 — jt-dev·jt-prod → identity 9000·8080: Authentik(JWKS·revoke API, svc DNS) · OpenFGA
+#   계약 §공개 호스트 예외(FR-046 예외 2)의 범위 — "pod(identity-admin 등)의 **JWKS는 svc DNS**를 쓴다" 항
+#   (`http://authentik-server.identity.svc:9000/application/o/<pod>/jwks/`).
 #   공개 호스트로 나가지 않으므로 jt-* 외부 443 규칙에 Authentik은 들어가지 않는다.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -246,7 +256,7 @@ spec:
 
 # --- jt-dev (3) --------------------------------------------------------------
 ---
-# 계약 :80 — kube-system(traefik) → jt-dev 8000: pod m2m·admin Ingress
+# 계약 §내부 매트릭스 — kube-system(traefik) → jt-dev 8000: pod m2m·admin Ingress
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -260,7 +270,7 @@ spec:
     - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }, podSelector: { matchLabels: { app.kubernetes.io/name: traefik } } }]
       ports: [{ protocol: TCP, port: 8000 }]
 ---
-# 계약 :87 — identity → jt-dev 8000: Authentik → identity-admin dev 웹훅(dev NotificationTransport, svc DNS)
+# 계약 §내부 매트릭스 — identity → jt-dev 8000: Authentik → identity-admin dev 웹훅(dev NotificationTransport, svc DNS)
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -274,7 +284,7 @@ spec:
     - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: identity } } }]
       ports: [{ protocol: TCP, port: 8000 }]
 ---
-# 계약 :95 — monitoring → jt-dev 9100·9464: pod web metrics · relay outbox metrics
+# 계약 §내부 매트릭스 — monitoring → jt-dev 9100·9464: pod web metrics · relay outbox metrics
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -290,7 +300,7 @@ spec:
 
 # --- jt-prod (3) -------------------------------------------------------------
 ---
-# 계약 :80 — kube-system(traefik) → jt-prod 8000: pod m2m·admin Ingress
+# 계약 §내부 매트릭스 — kube-system(traefik) → jt-prod 8000: pod m2m·admin Ingress
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -304,7 +314,7 @@ spec:
     - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }, podSelector: { matchLabels: { app.kubernetes.io/name: traefik } } }]
       ports: [{ protocol: TCP, port: 8000 }]
 ---
-# 계약 :86 — identity → jt-prod 8000: Authentik → identity-admin prod 웹훅(`/webhooks/authentik`, svc DNS)
+# 계약 §내부 매트릭스 — identity → jt-prod 8000: Authentik → identity-admin prod 웹훅(`/webhooks/authentik`, svc DNS)
 #   jt-dev는 ingress에 identity만 허용한다(jt-prod는 출발 ns가 아니다) — cluster.tests np-3.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -319,7 +329,7 @@ spec:
     - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: identity } } }]
       ports: [{ protocol: TCP, port: 8000 }]
 ---
-# 계약 :95 — monitoring → jt-prod 9100·9464: pod web metrics · relay outbox metrics
+# 계약 §내부 매트릭스 — monitoring → jt-prod 9100·9464: pod web metrics · relay outbox metrics
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -335,7 +345,7 @@ spec:
 
 # --- monitoring (2) ----------------------------------------------------------
 ---
-# 계약 :81 — kube-system(traefik) → monitoring 4317: Traefik OTLP 트레이스 → Alloy(T038)
+# 계약 §내부 매트릭스 — kube-system(traefik) → monitoring 4317: Traefik OTLP 트레이스 → Alloy(T038)
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -349,7 +359,7 @@ spec:
     - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }, podSelector: { matchLabels: { app.kubernetes.io/name: traefik } } }]
       ports: [{ protocol: TCP, port: 4317 }]
 ---
-# 계약 :84 — jt-dev·jt-prod → monitoring 4317·4318: OTLP(gRPC·HTTP) → Alloy
+# 계약 §내부 매트릭스 — jt-dev·jt-prod → monitoring 4317·4318: OTLP(gRPC·HTTP) → Alloy
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -369,7 +379,7 @@ spec:
 
 # --- external-secrets (1) ----------------------------------------------------
 ---
-# 계약 :88 — external-secrets → vault 8200: kv 읽기(도착 ingress = vault/allow-from-external-secrets)
+# 계약 §내부 매트릭스 — external-secrets → vault 8200: kv 읽기(도착 ingress = vault/allow-from-external-secrets)
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -385,7 +395,7 @@ spec:
 
 # --- identity (2) ------------------------------------------------------------
 ---
-# 계약 :85 — identity → data 5432: Authentik·OpenFGA DB
+# 계약 §내부 매트릭스 — identity → data 5432: Authentik·OpenFGA DB
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -399,7 +409,7 @@ spec:
     - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: data } } }]
       ports: [{ protocol: TCP, port: 5432 }]
 ---
-# 계약 :86 :87 — identity → jt-prod 8000 · identity → jt-dev 8000: Authentik → identity-admin 웹훅
+# 계약 §내부 매트릭스 — identity → jt-prod 8000 행 · identity → jt-dev 8000 행: Authentik → identity-admin 웹훅
 #   두 행의 도착 포트가 같아 한 장으로 묶는다(도착 ingress는 ns마다 allow-from-identity로 따로 있다).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -416,7 +426,7 @@ spec:
 
 # --- jt-dev (3) --------------------------------------------------------------
 ---
-# 계약 :82 — jt-dev → data 5432·9093·6379: pg-main · Kafka(SCRAM/TLS) · Dragonfly
+# 계약 §내부 매트릭스 — jt-dev → data 5432·9093·6379: pg-main · Kafka(SCRAM/TLS) · Dragonfly
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -430,7 +440,7 @@ spec:
     - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: data } } }]
       ports: [{ protocol: TCP, port: 5432 }, { protocol: TCP, port: 9093 }, { protocol: TCP, port: 6379 }]
 ---
-# 계약 :83 — jt-dev → identity 9000·8080: Authentik(JWKS·revoke API, svc DNS) · OpenFGA
+# 계약 §내부 매트릭스 — jt-dev → identity 9000·8080: Authentik(JWKS·revoke API, svc DNS) · OpenFGA
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -444,7 +454,7 @@ spec:
     - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: identity } } }]
       ports: [{ protocol: TCP, port: 9000 }, { protocol: TCP, port: 8080 }]
 ---
-# 계약 :84 — jt-dev → monitoring 4317·4318: OTLP(gRPC·HTTP) → Alloy
+# 계약 §내부 매트릭스 — jt-dev → monitoring 4317·4318: OTLP(gRPC·HTTP) → Alloy
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -460,7 +470,7 @@ spec:
 
 # --- jt-prod (3) -------------------------------------------------------------
 ---
-# 계약 :82 — jt-prod → data 5432·9093·6379: pg-main · Kafka(SCRAM/TLS) · Dragonfly
+# 계약 §내부 매트릭스 — jt-prod → data 5432·9093·6379: pg-main · Kafka(SCRAM/TLS) · Dragonfly
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -474,7 +484,7 @@ spec:
     - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: data } } }]
       ports: [{ protocol: TCP, port: 5432 }, { protocol: TCP, port: 9093 }, { protocol: TCP, port: 6379 }]
 ---
-# 계약 :83 — jt-prod → identity 9000·8080: Authentik(JWKS·revoke API, svc DNS) · OpenFGA
+# 계약 §내부 매트릭스 — jt-prod → identity 9000·8080: Authentik(JWKS·revoke API, svc DNS) · OpenFGA
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -488,7 +498,7 @@ spec:
     - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: identity } } }]
       ports: [{ protocol: TCP, port: 9000 }, { protocol: TCP, port: 8080 }]
 ---
-# 계약 :84 — jt-prod → monitoring 4317·4318: OTLP(gRPC·HTTP) → Alloy
+# 계약 §내부 매트릭스 — jt-prod → monitoring 4317·4318: OTLP(gRPC·HTTP) → Alloy
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -504,14 +514,15 @@ spec:
 
 # --- monitoring (1) ----------------------------------------------------------
 ---
-# 계약 :89–:95 — monitoring → scrape 대상 7 ns. 도착 ingress는 각 ns의
-#   allow-scrape-from-monitoring(계약 :98 "namespaceSelector가 monitoring인 것만")이다.
-#   :89 argocd 8082·8083·8084 / :90 vault 8200 / :91 external-secrets 8080 /
-#   :92 cert-manager 9402 / :93 cnpg-system 8080 / :94 data 9187·9404 /
-#   :95 jt-dev·jt-prod 9100·9464.
+# 계약 §내부 매트릭스 — 출발이 `monitoring`인 7행(scrape 대상 7 ns)을 한 장으로 묶는다.
+#   도착 ingress는 각 ns의 allow-scrape-from-monitoring이다(같은 절의 "scrape 대상 ns의 ingress는
+#   `namespaceSelector`가 `monitoring`인 것만 허용한다" 항).
+#   묶은 7행: monitoring → argocd 8082·8083·8084 / vault 8200 / external-secrets 8080 /
+#   cert-manager 9402 / cnpg-system 8080 / data 9187·9404 / jt-dev·jt-prod 9100·9464.
 #   계약 공백(규칙을 추가하지 않는다 — 설계 §5.1, T098 결정 대상): argocd notifications 9001 ·
 #   node-exporter 노드 IP 9100(hostNetwork) · traefik 9100(kube-system) · cloudflared 2000.
-#   kubelet 10250(계약 :115)은 노드 IP 목적지라 policies-external.yaml이 맡는다.
+#   kubelet 10250(계약 §허용 매트릭스 — 클러스터 밖 · 노드 IP의 `monitoring` → 노드 A·B private IP
+#   10250 행)은 노드 IP 목적지라 policies-external.yaml이 맡는다.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
