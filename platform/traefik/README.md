@@ -15,9 +15,13 @@ Namespace·PSA·NetworkPolicy는 `platform/policies/`, Application `platform-tra
 
 > **이 저장소에 비밀은 없다.** 인증서 Secret은 cert-manager가 만들고 Argo CD는 만들지도 지우지도 않는다(Application이 `prune: false`).
 
-**현재 상태(2026-09-10)** — PR-4 머지 완료(gitops main `4f23abd`). prod 와일드카드가 실려 `auth.joshuatech.dev`가 526 → **404**로
-바뀌었고 v2 호스트 526은 0건이다. 이어서 모노레포 쪽 `sniStrict`도 **투입 완료**다(§9). 아래 §1·§3은 그때 실행한 절차의 기록이며,
-되돌리기·재투입 때 그대로 다시 쓴다.
+**현재 상태(2026-09-11)** — **T043 완료.** PR-4 머지(gitops main `4f23abd`)로 prod 와일드카드가 실려 `auth.joshuatech.dev`가 526 → **404**로
+바뀌었고 v2 호스트 526은 0건, 모노레포 쪽 `sniStrict`는 2026-09-10 **투입 완료**(§9.1). 이어서 2026-09-11에 AOP를
+**`RequireAndVerifyClientCert`로 승격**했다 — kube-system Secret `cloudflare-origin-pull-ca` 설치 `06:39:01Z` → 관찰 단계
+`VerifyClientCertIfGiven` 설치 `06:49:41Z` → 승격 설치 `2026-09-11T07:48:23Z`(정본은 모노레포 `infra/bootstrap/traefik-config.yaml`·
+`cloudflare-origin-pull-ca.yaml`, 실행 기록은 모노레포 런북 §3 T043). 같은 날 Argo CD Ingress `argocd/argocd-server`(`argo.joshuatech.dev`,
+`bootstrap/argocd/ingress.yaml`, gitops PR #18 → main `54fdb59`)도 라이브가 됐다. 아래 §1·§3은 **T042 시점(2026-09-10)에 실행한 절차의
+기록**이며 되돌리기·재투입 때 그대로 다시 쓴다 — 단 §3 ③의 "노드 내부 curl" 판정은 승격 뒤 사정이 달라졌으므로 §9.2 D5(ii)를 따른다.
 
 ---
 
@@ -76,10 +80,12 @@ edge는 오리진이 내미는 인증서의 **체인과 SAN을 검증**하고, �
 **영향 범위와 살아남는 것**: 526은 Traefik 443을 지나는 **v2 호스트 전부**(`argo`·`vault`·`traefik`·`auth`·`admin`·`*-m2m-{dev,prod}` 등)에 걸린다.
 다만 cloudflared 터널의 ingress는 `ssh://` 2건 + `tcp://kubernetes.default.svc:443`뿐이라 **Traefik을 경유하지 않는다**
 (`infra/cloudflare/tunnel.tf`) → **443이 완전히 끊겨도 SSH·kubectl 복구 경로는 살아 있다.**
-단 `argo.joshuatech.dev`는 **T043 전까지 Ingress가 없어 애초에 Traefik 443으로 서빙되지 않는다** — 443이 완전히 끊겨도
-Argo CD UI는 `kubectl -n argocd port-forward svc/argocd-server 8080:80`으로 계속 쓸 수 있다(런북 §3 T040).
-그래도 복구의 정본은 UI가 아니라 **git revert + kubectl**이다 — `selfHeal: true` 때문에 순서가 고정돼 있다(§7).
-(T043 뒤에는 이 문장이 뒤집힌다: 그때부터 argo UI도 526과 함께 죽는다.)
+`argo.joshuatech.dev`는 **T043(2026-09-11)부터 Ingress `argocd/argocd-server`(`bootstrap/argocd/ingress.yaml`)로 Traefik 443을 탄다** —
+526이든 AOP 장애든 443이 끊기면 **Argo CD UI도 함께 죽는다**(T042 시점에는 Ingress가 없어 무관했다). 그때 UI는
+`kubectl -n argocd port-forward svc/argocd-server 8080:80`으로 우회한다(런북 §3 T040 방식 — Traefik 443을 지나지 않는다).
+어느 쪽이든 복구의 정본은 UI가 아니라 **git revert + kubectl**이다 — `selfHeal: true` 때문에 순서가 고정돼 있다(§7).
+증상 구분: **526 = 오리진 서버 인증서 계열**(이 절·§7), **525 또는 520 = AOP(클라이언트 인증서) 계열**(어느 코드인지는 미실측 — 런북 VD-7;
+첫 조치는 §6 판정 ②) — 판별표는 §9.2 D5(ii).
 
 ---
 
@@ -127,8 +133,10 @@ kubectl -n kube-system logs deploy/traefik --since=10m \
 # 합격: 0건. ⚠ **0건은 "알려진 실패 문면이 없다"는 뜻일 뿐 "인증서가 실렸다"는 뜻이 아니다.**
 #   어떤 로그 목록도 닫힌 집합이 될 수 없다 — 이 PR의 지배적 실패 모드인 **유효하지만 틀린 인증서**
 #   (staging 체인·만료된 prod)는 파싱에 성공하므로 로그를 **한 줄도 남기지 않는다.**
-#   적재 여부의 정본 증거는 **§9 ①의 노드 내부 curl**(issuer + expire date)이고, ③이 0건이어도
+#   적재 여부의 정본 증거는 **§9.2 D5(ii) ①의 `openssl s_client -servername`**(issuer + notAfter)이고, ③이 0건이어도
 #   ④가 526이면 인증서 경로를 용의선상에서 빼지 않는다.
+#   (T042 실행 당시에는 §9.3 판별 실험 ①의 노드 내부 curl이 그 증거였다 — AOP 승격(2026-09-11) 뒤에는 무인증서 curl이
+#    거절되는 것이 정상이라 openssl로 대체했다. 서버 인증서는 클라이언트 인증서와 무관하게 서버 플라이트로 오므로 승격 뒤에도 읽힌다.)
 
 # ④ ⚠ edge 검증 — 반드시 auth 루트로 한다 (§5)
 curl -sI https://auth.joshuatech.dev | head -1
@@ -153,7 +161,8 @@ kubectl -n kube-system get tlsstore default -o jsonpath='{.spec.certificates[0].
 #          (Forbidden도 stdout이 비므로 stderr를 먼저 본다 — agent-view kubeconfig로 실행하면 오진한다)
 #          → **즉시 중단**(당시 규율은 "여기서 sniStrict로 진행하지 않는다"였다 — 재적용 때도 같다, §7·§9).
 #          이 경우 Traefik은 자체 서명으로 서빙 중이므로 이미 526일 수 있다 → §7 되돌리기 + forward-fix(§7 마지막 문단).
-#          (T043 전에는 §6 즉효 레버를 당기지 않는다 — 526 뒤에 사용자 트래픽이 없다, §6.)
+#          (§6 즉효 레버는 이때도 당기지 않는다 — CRD 프루닝 526은 서버 인증서 계열이라 §7 근본 복구가 답이고,
+#           T043 뒤에도 526 뒤에 사용자 트래픽이 없다. 판정 순서는 §6.)
 ```
 
 ---
@@ -166,14 +175,17 @@ Cloudflare Access가 **edge에서** 302를 돌려주므로 요청이 오리진�
 
 | 호스트 | edge 동작 | 526 탐지 |
 |---|---|---|
-| `argo` · `vault` · `traefik` · `admin` | GitHub IdP Access 앱이 **전체 호스트** 보호 → 항상 302 | ✗ |
+| `argo` | Ingress `argocd/argocd-server`(T043)로 오리진에 닿는 호스트지만 GitHub IdP Access 앱이 **전체 호스트** 보호 → 루트는 항상 edge 302 | ✗ |
+| `vault` · `traefik` · `admin` | GitHub IdP Access 앱이 **전체 호스트** 보호 → 항상 302 | ✗ |
 | `identity-m2m-prod` · `identity-m2m-dev` | Service Auth 401 | ✗ |
 | `preview` | A 레코드 없음 | ✗ |
 | **`auth`** | Access 앱이 **`/if/admin` 경로만** 보호 → 루트는 오리진까지 도달 | **✓ 유일** |
 
-→ v2 A 레코드 7개 중 오리진 상태 코드가 반영되는 것은 **`auth` 루트뿐**이다.
+→ v2 A 레코드 7개 중 오리진 상태 코드가 반영되는 것은 **`auth` 루트뿐**이다(T043 뒤에도 같다 — `argo`에 Ingress가 생겼어도 Access 302가 앞선다).
 sniStrict 투입(2026-09-10) 뒤에도 와일드카드 SAN이 `auth.joshuatech.dev`를 덮으므로 이 검증은 그대로 유효하다 —
-투입 직후 실측도 `404`(526 아님)로 변화가 없었다(§9).
+투입 직후 실측도 `404`(526 아님)로 변화가 없었다(§9.1). AOP 승격(2026-09-11) 뒤에도 `auth`는 404를 유지했다 — edge가 Cloudflare
+클라이언트 인증서를 내밀므로 이 검증은 **443 생존 판정**(§9.2 D5(ii) ②)으로 계속 쓴다. 단 여기서 보이는 것은 서버 인증서 계열(526)뿐이고,
+AOP 계열은 525 또는 520으로 나타난다(어느 쪽인지 미실측 — VD-7).
 
 ---
 
@@ -184,14 +196,21 @@ sniStrict 투입(2026-09-10) 뒤에도 와일드카드 SAN이 `auth.joshuatech.d
 
 > ### ⚠ 이 레버는 **존 전역 설정**이다
 >
-> **⚠ 당기기 전 필수 판정 — T043 전에는 당기지 않는다.**
-> T042 시점 **이 저장소에는** Ingress·IngressRoute가 **0개**이고(`grep -rn '^kind: Ingress' platform/ clusters/`),
-> Argo CD UI조차 `port-forward` 전용이다(런북 §3 T040 — 공개 접근은 T043부터).
-> (라이브에는 차트가 만든 `traefik-dashboard` IngressRoute 1개가 있다 — `traefik.joshuatech.dev`, Access 뒤라
->  사용자 트래픽이 아니다. 아래 판정은 그대로 성립한다.)
-> 즉 이 구간의 526 뒤에는 **서비스 중인 사용자 트래픽이 없다.** 가용성 이득 0에 v1 존 전역 보안 저하만 남는다.
+> **⚠ 당기기 전 필수 판정 — 증상을 먼저 분류하고, 526 뒤에 사용자 트래픽이 없으면 당기지 않는다.**
 > 판단 기준은 "526이 보이는가"가 아니라 **"526 뒤에 실제 사용자 트래픽이 있는가"**다.
-> T043(호스트별 Ingress + Access) 투입 전에는 이 레버를 **당기지 않는다** — 근본 복구(§7 + forward-fix)만 한다.
+> T043(2026-09-11) 뒤 **이 저장소의** Ingress는 `bootstrap/argocd/ingress.yaml`(`argo.joshuatech.dev`) **1개**이고
+> (`grep -rn '^kind: Ingress' platform/ clusters/ bootstrap/`), 라이브에는 차트가 만든 `traefik-dashboard` IngressRoute 1개가 더 있다
+> (`traefik.joshuatech.dev`). 둘 다 GitHub IdP Access 뒤의 **운영자 트래픽**이고 사용자(앱) 호스트의 Ingress는 없다(앱 Application은 후속 PR).
+> 즉 지금의 526 뒤에도 **서비스 중인 사용자 트래픽은 없다** — 가용성 이득 0에 v1 존 전역 보안 저하만 남으므로 **당기지 않는다**.
+> Argo CD UI는 `port-forward`로 우회한다(§2).
+>
+> **T043 뒤의 판정 순서**
+> ① **526 = 오리진 서버 인증서 계열** → 이 레버가 아니라 근본 복구(§7 + forward-fix). `notAfter`부터 본다(§9.2 D5(ii) ①).
+> ② **525 또는 520 = AOP(클라이언트 인증서) 계열**(어느 코드인지는 미실측 — 런북 VD-7) → 이 레버는 **무관**하다: `full`은 edge의
+>    오리진 **서버** 인증서 검증만 끄고, 오리진(Traefik)이 edge의 클라이언트 인증서를 요구·거절하는 쪽은 바꾸지 않는다.
+>    첫 조치는 모노레포 `infra/bootstrap/traefik-config.yaml`의 **clientAuth 없는 사본(`traefik-config.pre-t043.yaml`) 재설치**
+>    (그 파일 헤더 절차 1~2 · 반영 약 15초 · 롤아웃 없음 — 30초 안에 끝난다)이고, Secret `cloudflare-origin-pull-ca`는 그 뒤에도
+>    지우지 않는다(계약 §오리진 보호 3중 2.의 되돌리기 순서: clientAuth 제거 → spec에서 빈 값 확인 → 그다음에야 Secret). 판별표는 §9.2 D5(ii) ⑤.
 >
 > 정본은 `infra/cloudflare/zone_settings.tf`의 `cloudflare_zone_setting.ssl`이고 값은 존 하나에 하나뿐이다.
 > 당기는 순간 v2 호스트만이 아니라 **v1 매출 경로(`api`·`mainapi`·`mcp`·`cache`·apex·`www`)의 오리진 검증까지 함께 꺼진다.**
@@ -204,9 +223,9 @@ sniStrict 투입(2026-09-10) 뒤에도 와일드카드 SAN이 `auth.joshuatech.d
 > 3. 콘솔에서 손으로 바꿨다면 코드(`zone_settings.tf`)와의 드리프트가 생긴 것이다 — 복구 뒤 `tofu plan`이
 >    **No changes**인지 확인한다. (`ssl=strict` 드리프트 단언 추가는 T047/converge 인계 후보.)
 
-레버를 쓰지 않고 버티는 근거는 T043 뒤에도 남는다: 526은 **v2 플랫폼 호스트에만** 걸리고 v1 매출 경로는 이 인증서를 쓰지 않는다.
-SSH·kubectl 복구 경로도 살아 있으므로(§2), 근본 복구가 수 분 내면 그때도 **당기지 않는 쪽이 낫다.**
-(T043 전에는 "낫다"가 아니라 **당기지 않는다** — 위 판정 참조.)
+레버를 쓰지 않고 버티는 근거는 T043 뒤에도 그대로다: 526은 **v2 플랫폼 호스트에만** 걸리고 v1 매출 경로는 이 인증서를 쓰지 않는다.
+SSH·kubectl 복구 경로도 살아 있으므로(§2), 사용자 호스트의 Ingress가 생긴 뒤에도 근본 복구가 수 분 내면 **당기지 않는 쪽이 낫다.**
+(사용자 트래픽이 없는 지금은 "낫다"가 아니라 **당기지 않는다** — 위 판정 참조.)
 
 ---
 
@@ -224,9 +243,9 @@ PR-3은 `issuerRef`와 `secretName`을 **한 커밋으로** 바꿨다. 되돌리
 - 갱신 주체가 없으므로 남은 유효기간(최대 90일)이 지나면 아무 경고 없이 **전 호스트 526**이 된다.
   ⚠ 이때 오리진은 **자체 서명으로 바뀌지 않는다.** Traefik의 인증서 적재는 `tls.X509KeyPair` 파싱만 하고
   유효기간을 검사하지 않으므로(v3.7.8 `certificate_store.go` `parseCertificate` — `NotAfter` 참조 0건)
-  **만료된 LE 인증서를 그대로 계속 내민다.** edge 결과는 똑같이 526이지만 §9 ①의 노드 내부 curl에는
+  **만료된 LE 인증서를 그대로 계속 내민다.** edge 결과는 똑같이 526이지만 §9.2 D5(ii) ①의 `openssl s_client`에는
   `TRAEFIK DEFAULT CERT`가 아니라 정상 발급자(`CN=YE2`)가 보인다 — "자체 서명을 찾는" 진단은 여기서 헛돈다.
-  526을 만나면 **`notAfter`를 먼저 본다**(§9 ①의 `expire date` 줄).
+  526을 만나면 **`notAfter`를 먼저 본다**(§9.2 D5(ii) ①의 `notAfter=` 줄).
 - 만료 알림은 T098 전까지 존재하지 않는다(§10).
 - 유일한 자동 신호는 `cert-1`(`found 0`)·`cert-2`이고, 그 문면은 "cert-manager 고장"과 구별되지 않는다
   (`platform/cert-manager-issuers/README.md` §6).
@@ -281,14 +300,16 @@ kubectl -n kube-system delete tlsstore default
 ## 8. 관측 사각 · 이름 `default` 중복 (설계 §8 R7 · R18)
 
 **agent-view는 `traefik.io` 그룹(TLSStore·TLSOption·IngressRoute)을 읽지 못한다.** `cert-1`/`cert-2` 검사는 Certificate만 보므로
-"Traefik이 실제로 그 인증서를 서빙하는가"는 **운영자 admin·노드 내부 curl 전용**으로 남는다(계약 §에이전트 자격 변경 후보).
+"Traefik이 실제로 그 인증서를 서빙하는가"는 **운영자 admin·노드 내부 `openssl s_client -servername` 전용**으로 남는다(계약 §에이전트 자격 변경 후보).
+AOP 승격(2026-09-11) 뒤에는 노드 내부 **무인증서 curl이 거절되는 것이 정상**이라 서빙 확인 수단이 아니다 — 서버 인증서는 CertificateRequest와
+무관하게 서버 플라이트로 오므로 `openssl s_client`로는 승격 뒤에도 읽힌다(§9.2 D5(ii) ①).
 
 **이름이 `default`인 TLSStore/TLSOption은 ns와 무관하게 전역 id로 승격되고, 두 개 이상 존재하면 그 이름의 항목이 삭제된다.**
 다만 **삭제되는 대상이 다르다**(v3.7.8 `kubernetes.go` 실측) — 진단할 때 둘을 바꿔 찾지 않도록 구분해 둔다.
 
 | 중복 대상 | 삭제되는 것 | 살아남는 것 | 실제 증상 |
 |---|---|---|---|
-| **TLSOption `default`** | 옵션 객체 자체(`kubernetes.go:1380`) | 서버가 **내장 기본값**으로 되돌아감(`tlsmanager.go:34-38`) | `minVersion`은 그대로 `VersionTLS12`(내장 기본이 같은 값) · **내장 기본이 없는 설정만 소실** = 2026-09-10 투입한 **`sniStrict`가 지금 그 대상**이고, `clientAuth`(T043)가 더해지면 둘 다 사라진다 |
+| **TLSOption `default`** | 옵션 객체 자체(`kubernetes.go:1380`) | 서버가 **내장 기본값**으로 되돌아감(`tlsmanager.go:34-38`) | `minVersion`은 그대로 `VersionTLS12`(내장 기본이 같은 값) · **내장 기본이 없는 설정만 소실** = 2026-09-10 투입한 **`sniStrict`**와 2026-09-11 승격한 **`clientAuth`(AOP 검증)** — 둘 다 실려 있으므로 중복 즉시 **둘 다 사라진다**(= AOP 검증 해제, 무인증서 직접 TLS가 다시 통과). 투입 완료 상태의 **현재형** 위험이다 |
 | **TLSStore `default`** | Store 설정만(`defaultCertificate`·`defaultGeneratedCert` — `kubernetes.go:1450`) | **`certificates:` 목록 전부**(이미 `tlsConfigs`에 담겨 DynamicCerts로 편입) | 이 형태에서는 **와일드카드 서빙 유지** |
 
 삭제 호출은 `delete(tlsOptions, tls.DefaultTLSConfigName)`과 `delete(tlsStores, tls.DefaultTLSStoreName)`이고
@@ -313,9 +334,15 @@ kubectl -n kube-system delete tlsstore default
 
 ---
 
-## 9. sniStrict — **투입 완료**(2026-09-10 17:24 KST) · 판별 실험 ①②는 남겨 둔다
+## 9. sniStrict·clientAuth — **투입 완료** · 판별 실험 D5(ii)
 
-PR-4(이 디렉터리의 TLSStore)가 머지된 **뒤에** 판별 실험 ①②를 노드 A 안에서 실행해 둘 다 성립하는 것을 확인하고 `sniStrict: true`를 켰다.
+TLSOption `default`에는 지금 `minVersion: VersionTLS12` + `sniStrict: true`(2026-09-10) + `clientAuth{secretNames: [cloudflare-origin-pull-ca],
+clientAuthType: RequireAndVerifyClientCert}`(2026-09-11 승격)가 실려 있다. 정본은 모두 모노레포 `infra/bootstrap/traefik-config.yaml`이고
+이 디렉터리는 TLSStore만 소유한다(§8). 9.1은 투입 기록, 9.2가 **승격 뒤의 현재 판정(D5(ii))**, 9.3은 승격 전·재투입 전용 판별이다.
+
+### 9.1 투입 기록 — sniStrict(2026-09-10 17:24 KST) · clientAuth(2026-09-11)
+
+PR-4(이 디렉터리의 TLSStore)가 머지된 **뒤에** 판별 실험 ①②(§9.3)를 노드 A 안에서 실행해 둘 다 성립하는 것을 확인하고 `sniStrict: true`를 켰다.
 스위치는 이 저장소가 아니라 모노레포 `infra/bootstrap/traefik-config.yaml`의 `valuesContent` → `tlsOptions.default`에 있다
 (D5 = T042 단계 9, 커밋 `0bdc621`+`829226d`). 아래는 그날 실제로 얻은 출력이다.
 
@@ -331,12 +358,77 @@ PR-4(이 디렉터리의 TLSStore)가 머지된 **뒤에** 판별 실험 ①②�
 **운영 정보 — 투입/제거는 파드를 건드리지 않는다.** `tlsOptions`만 바꾸는 값은 차트가 `templates/tlsoption.yaml`의 CR 하나로만
 렌더하므로 **Deployment 롤아웃이 나지 않는다**: 실측에서 파드 AGE·RESTARTS가 그대로였고(6일째 같은 파드) **443 순단은 0초**였다.
 대신 파일 설치 → K3s deploy 컨트롤러가 집기까지 **약 15초** 걸리므로 직후 조회하면 옛 spec이 보인다 — 실패로 오독하지 않는다.
-정본 서술은 모노레포 `traefik-config.yaml` 헤더의 절차 3(b)·4다.
+정본 서술은 모노레포 `traefik-config.yaml` 헤더의 절차 3(b)·4다. clientAuth 투입·승격도 같은 성질(`tlsOptions`만)이라 롤아웃이 없었다.
 
-### 판별 실험 ①② — 언제 다시 쓰는가
+**clientAuth(AOP) 투입 기록 — 2026-09-11, T043.** 순서는 계약 §오리진 보호 3중 2.대로 **Secret → 지문·notAfter 대조 → clientAuth**였다:
+kube-system Secret `cloudflare-origin-pull-ca`(키 `ca.crt`, 정본 모노레포 `infra/bootstrap/cloudflare-origin-pull-ca.yaml`, K3s AddOn) 설치
+`06:39:01Z` → 관찰 단계 `clientAuthType: VerifyClientCertIfGiven` 설치 `06:49:41Z` → 승격 `RequireAndVerifyClientCert` 설치
+`2026-09-11T07:48:23Z`. 관찰 단계 실측: 매트릭스 8 호스트(`auth`·`api`·`mcp`·`argo`·`vault`·`admin`·`identity-m2m-prod`·`identity-m2m-dev`)의
+`/__probe-404` 액세스 로그 전부에 `TLSClientSubject=CN=origin-pull.cloudflare.net,O=Cloudflare Inc.,L=San Francisco,ST=CA,C=US`(TLS 1.3)가
+찍혔고, 노드 A 자체 서명 클라이언트 인증서는 `TLS alert, unknown CA (560)`으로 거절, 무인증서는 (관찰 단계라) 404 통과였다 —
+`VerifyClientCertIfGiven`도 **제시된 인증서는 검증**하므로 관대한 것은 "인증서 부재"뿐이었다. `traefik` 호스트는 대시보드가 `api@internal`이라
+액세스 로그에 **구조적으로 남지 않는다**(Traefik v3 `accesslog.addInternals` 기본 false) — TLSOption `default`는 라우터 무관 전역이므로
+8 호스트로 충족하며, 승격 뒤 양성 재확인에서도 `traefik` 줄은 기대하지 않는다. 승격 설치 시각을 포함한 실행 기록의 정본은 모노레포 런북 §3 T043이다.
 
-지우지 않는 이유는 앞으로도 같은 판별이 필요하기 때문이다: **되돌리기 뒤 재투입**(§7의 0단으로 sniStrict를 뺐다가 다시 켤 때),
-**T043 `clientAuth` 투입 전 점검**, 그리고 **526 진단**(①의 `expire date`로 만료 여부를 먼저 본다, §7).
+### 9.2 판별 실험 D5(ii) — 승격 뒤의 현재 판정(①~⑤)
+
+승격 뒤에는 **노드 내부 무인증서 curl이 거절되는 것이 정상**이라 T042 때의 판별 실험 ①(§9.3)로는 서버 인증서를 읽을 수 없다.
+그래서 판정을 다섯으로 나눈다. 명령은 모노레포 `traefik-config.yaml` 헤더 절차 4와 같다(노드 A 안 · 사설 IP `10.0.7.78` · `traefik.io` 조회는
+운영자 admin 전용, §8).
+
+```bash
+# ① 서버 인증서(LE 발급자 + notAfter) — 클라이언트 인증서 없이 읽힌다: 서버 인증서는 CertificateRequest와 무관하게
+#    서버 플라이트로 오므로 승격 뒤에도 그대로다. 526 진단 시 1순위(§7 — 만료된 인증서도 계속 서빙된다).
+ssh … ubuntu@<노드 A> "echo | openssl s_client -connect 10.0.7.78:443 -servername traefik.joshuatech.dev 2>/dev/null \
+  | openssl x509 -noout -issuer -enddate"
+# 합격: issuer=C=US, O=Let's Encrypt, CN=YE2 · notAfter=Dec  8 08:59:09 2026 GMT(갱신되면 뒤로 밀린다)
+#   (TLS 1.3에서는 s_client 자체가 핸드셰이크 성공처럼 보이고 그 뒤 alert가 온다 — 인증서 출력은 그 전에 끝나므로 판정에 지장이 없다.)
+
+# ② 443 생존 — edge 경유 auth 루트(§5). 보조: 공개 CT 로그(crt.sh)의 와일드카드 발급 이력.
+curl -sI https://auth.joshuatech.dev | head -1
+# 합격: 404(오리진 Traefik이 만든 코드 = 서버 인증서·AOP 둘 다 통과). 526 = 서버 인증서 계열(§7) · 525/520 = AOP 계열(§6 판정 ②).
+
+# ③ TLSOption 반영 — spec + 로그 grep 6패턴(⚠ traefik.io는 운영자 admin 전용 — §8)
+kubectl -n kube-system get tlsoption default -o yaml
+# 합격: spec에 minVersion: VersionTLS12 · sniStrict: true · clientAuth{secretNames: [cloudflare-origin-pull-ca], clientAuthType: RequireAndVerifyClientCert}
+kubectl get tlsoption -A
+# 합격: 이름 default 정확히 1개(2개면 옵션 통째 폐기 = sniStrict·clientAuth 소실, §8)
+kubectl -n kube-system logs deploy/traefik --since=10m \
+  | grep -E 'CAFiles is required|invalid certificate|does not exist|Failed to extract CA|unknown client auth|Default TLS Options defined in multiple'
+# 합격: 0줄(--tail은 옛 로그를 보여 무의미 · 일반 error는 T098 전 OTLP 잡음이라 게이트에 쓰지 않는다)
+
+# ④ AOP 양성 — edge 프로브의 액세스 로그 줄에 TLSClientSubject가 있어야 한다.
+#    ⚠ TLSOption 반영 시각 + idleTimeout(기본 180초) **이후**의 프로브만 유효하다 — 옛 keep-alive 연결은 옛 TLS 설정으로 산다.
+curl.exe -sI https://auth.joshuatech.dev/__probe-404
+kubectl -n kube-system logs deploy/traefik --since=5m | grep __probe-404 | tail -1
+# 합격: "TLSClientSubject":"CN=origin-pull.cloudflare.net,O=Cloudflare Inc.,L=San Francisco,ST=CA,C=US" · TLSVersion 1.3
+#   (traefik. 호스트는 api@internal이라 이 로그가 남지 않는다 — auth 등 8 호스트로 판정한다, §9.1)
+
+# ⑤ AOP 음성(승격 뒤 정상) — 노드 내부 무인증서 직접 TLS는 거절돼야 한다. 판정은 http 코드가 아니라 -v의 TLS alert로 한다.
+ssh … ubuntu@<노드 A> "curl -skv --resolve traefik.joshuatech.dev:443:10.0.7.78 https://traefik.joshuatech.dev \
+  -o /dev/null -w 'exit=%{exitcode} http=%{http_code}\n' 2>&1 | grep -Ei 'TLS alert|exit='"
+ssh … ubuntu@<노드 A> "curl -skv --tls-max 1.2 --resolve traefik.joshuatech.dev:443:10.0.7.78 https://traefik.joshuatech.dev \
+  -o /dev/null -w 'exit=%{exitcode} http=%{http_code}\n' 2>&1 | grep -Ei 'TLS alert|exit='"
+# 합격: http=000 + 아래 판별표의 "인증서 부재" 줄. 302/404 같은 숫자가 나오면 clientAuth가 실려 있지 않은 것이다(→ ③).
+```
+
+**⑤ 판별표 — `curl -v`의 TLS alert 리터럴로 원인을 가른다**(2026-09-11 실측):
+
+| stderr 리터럴 | 뜻 | 판정 |
+|---|---|---|
+| TLS 1.3: `tlsv13 alert certificate required` — curl -v 표기 `TLS alert, unknown (628)`, exit 56 | post-handshake에서 서버가 클라이언트 인증서를 요구했는데 없음 | **인증서 부재** = 승격 뒤 **정상** |
+| TLS 1.2: `TLS alert, handshake failure (552)`, exit 35 | 핸드셰이크 중 거절 | **인증서 부재** = 승격 뒤 **정상** |
+| `TLS alert, unknown CA (560)` · `bad certificate` | 제시한 인증서가 CA `origin-pull.cloudflare.net`과 불일치(관찰 단계 자체 서명 실측) | **인증서 불일치** — 관찰 단계(Verify)에서도 똑같이 실패한다 |
+| `TLS alert, unrecognized name (624)` | SNI가 와일드카드 SAN과 불일치(`no-such.example.invalid`) | **SNI 불일치** = sniStrict 정상 |
+
+curl exit 56/35는 참고값이고 판정은 alert·거절 여부로 한다(계약 §오리진 보호 3중 2.). 워크스테이션에서 공인 IP로 걸면 NSG 때문에 늘 000이며
+거절과 구분되지 않는다 — 반드시 노드 안에서 실행한다.
+
+### 9.3 판별 실험 ①② — 승격 전 마지막 점검 · clientAuth 재투입 절차 전용
+
+①②는 **clientAuth가 빠진 상태에서만 성립한다** — ①이 무인증서 curl이라 승격된 현재 상태에서는 거절되는 것이 정상이고, 그것은 실패가 아니라
+D5(ii) ⑤의 합격이다. 그래서 지금은 두 경우에만 쓴다: **되돌리기 뒤 재투입**(§7의 0단으로 sniStrict를 뺐다가 다시 켤 때 · §6 판정 ②로
+clientAuth를 pre-t043 사본으로 내렸다가 다시 올리기 직전의 마지막 점검)과 T042 실행 기록(§9.1)의 재현. **526 진단**은 §9.2 D5(ii) ①로 옮겼다.
 
 `/api/certificates`는 DynamicCerts와 DefaultCertificate를 **합쳐서** 반환하므로 판별에 쓸 수 없다.
 소스가 보장하는 판별은 **SNI 두 개 비교**다. 워크스테이션은 Cloudflare 대역 밖이라 NSG에서 먼저 막혀 늘 000이므로 **노드 A 안에서** 실행한다
@@ -356,13 +448,15 @@ ssh … ubuntu@<노드 A> "curl -skv --resolve no-such.example.invalid:443:10.0.
 
 **①②가 둘 다 성립할 때만 sniStrict를 켠다** — 재투입에도 같은 규율이다. ②에서 와일드카드가 나오면 어딘가에
 `defaultCertificate`가 설정된 것이므로 켜지 않고 원인을 찾는다. 이미 켜져 있는 동안에는 ②가 `000`이므로 이 판별을 하려면
-0단(§7)으로 sniStrict를 먼저 빼야 한다.
+0단(§7)으로 sniStrict를 먼저 빼야 하고, 승격 뒤에는 ①도 `000`(인증서 부재 거절)이므로 **clientAuth까지 뺀 사본(pre-t043)에서만** ①②가 읽힌다.
 보조 판별: 차트 값 `logs.general.level: DEBUG`를 한시 적용하면 편입은 `Adding certificate for domain(s) …`, 폴백 사용은
 `Serving default certificate for request: …`로 직접 보인다(확인 후 INFO 복귀 — 이것은 `tlsOptions`와 달리 **Traefik 롤아웃을 유발한다**).
 
-투입·재투입 전에는 **노드 A에 현재 파일 사본을 반드시 먼저 보존한다**(1분 롤백). 적용 순서는 T038 헤더가 못박은 대로
-**T042(와일드카드가 동적 인증서가 된 것 확인) → sniStrict → T043(CA Secret) → clientAuth**이고, 앞의 둘은 끝났다 —
-남은 것은 T043의 CA Secret과 `clientAuth`다.
+투입·재투입 전에는 **노드 A에 현재 파일 사본을 반드시 먼저 보존한다**(1분 롤백 — clientAuth 없는 사본은 `traefik-config.pre-t043.yaml`).
+적용 순서는 T038 헤더가 못박은 대로 **T042(와일드카드가 동적 인증서가 된 것 확인) → sniStrict → T043(CA Secret) → clientAuth**이고,
+**네 단계 모두 끝났다**(sniStrict 2026-09-10 · CA Secret 2026-09-11 `06:39:01Z` · clientAuth 관찰 `06:49:41Z` → 승격 `2026-09-11T07:48:23Z` —
+기록은 모노레포 런북 §3 T043). 되돌리기는 반대 순서이며 **clientAuth 제거 → Secret 삭제**, **sniStrict 제거 → TLSStore 삭제**를 각각
+뒤집지 않는다(§7 · 계약 §오리진 보호 3중 2.).
 
 ---
 
@@ -376,7 +470,9 @@ ssh … ubuntu@<노드 A> "curl -skv --resolve no-such.example.invalid:443:10.0.
   ③ 설계 §14.3-1의 edge 검증 호스트 교체(§5)를 문면에 반영.
   ④ **`validate.sh` 교차 파일 단언** — `platform/traefik/`의 TLSStore는 `default`/`kube-system` 1개이고
      `spec.certificates[].secretName`이 `platform/cert-manager-issuers/`의 Certificate `spec.secretName`과 **문자열 일치**할 것 ·
-     `spec.defaultCertificate` 키 존재 시 FAIL(하이브리드 금지) · `platform/traefik/`에 kind `TLSOption` 존재 시 FAIL(R7 소유권).
+     `spec.defaultCertificate` 키 존재 시 FAIL(하이브리드 금지) · `platform/traefik/`에 kind `TLSOption` 존재 시 FAIL(R7 소유권) ·
+     `platform/traefik/`에 kind `Secret` 존재 시 FAIL(T047 후보 — AOP 루트 CA Secret `cloudflare-origin-pull-ca`의 정본은 모노레포
+     `infra/bootstrap/cloudflare-origin-pull-ca.yaml`(K3s AddOn)이고 gitops에 두지 않는다, 계약 §오리진 보호 3중 2.).
      자격·라이브 접근이 필요 없는 순수 트리 검사다.
      **현재 정적 검사 실태(2026-09-10 재확인)**: 이 파일은 검사 1에서 **이미 스키마 검증되고 있다.**
      `validate.sh`는 `-schema-location`에 datree CRDs-catalog를 항상 넘기고(`tests/validate.sh:201`·`:351`),
@@ -384,8 +480,8 @@ ssh … ubuntu@<노드 A> "curl -skv --resolve no-such.example.invalid:443:10.0.
      `spec.additionalProperties: false` · `certificates[].required: [secretName]` · 항목도 `additionalProperties: false`라
      **키 오타는 `-strict`에서 FAIL한다.** (이전 문면의 "kubeconform이 이 파일을 skip 한다"는 **오류였다** —
      `-schema-location` 없이 맨몸 kubeconform을 돌린 결과를 옮겨 적은 것이다.)
-     그래서 위 세 단언의 실제 몫은 스키마가 **못 잡는** 것들이다: 교차 파일 이름 일치 · `defaultCertificate` 존재
-     (스키마에 있는 정상 필드라 통과한다) · 두 번째 TLSStore/TLSOption. 덧붙여 스키마는 GitHub raw에서 받으므로
+     그래서 위 네 단언의 실제 몫은 스키마가 **못 잡는** 것들이다: 교차 파일 이름 일치 · `defaultCertificate` 존재
+     (스키마에 있는 정상 필드라 통과한다) · 두 번째 TLSStore/TLSOption · 이 디렉터리 안의 Secret(kind 자체는 유효하다). 덧붙여 스키마는 GitHub raw에서 받으므로
      오프라인·403이면 `-ignore-missing-schemas`가 조용히 건너뛴다 → 저장소 안 벤더링은 "공백 메우기"가 아니라
      **결정성 개선** 항목이다.
      (이 PR에서 `tests/validate.sh`를 고치지 않는다 — T033 산출물이고 게이트 PR의 범위를 넘는다.)
@@ -408,3 +504,10 @@ ssh … ubuntu@<노드 A> "curl -skv --resolve no-such.example.invalid:443:10.0.
   `platform/cert-manager-issuers/README.md` §9 · 이 문단)은 **PR-5에서 함께 고쳤다.**
   값 자체를 바꾸는 것은 아직 남았다 — 2027-02-10 전에 별도 PR로 `renewBeforePercentage`를 올린다.
   근본 해법은 cert-2를 `status.renewalTime` 기준으로 바꾸는 것(converge).
+- **Argo UI 고아 경고 정상 목록** — AppProject `platform`이 `orphanedResources.warn: true`라 `platform-traefik`(destination `kube-system`)이
+  선언하지 않은 `kube-system` 객체가 Argo UI에 고아로 뜬다. **정상이며 지우지 않는다**(선례: `platform/cert-manager-issuers/README.md` §3).
+  · `kube-system/Secret cloudflare-origin-pull-ca` — AOP 루트 CA(공개 인증서 · K3s AddOn · 정본 모노레포 `infra/bootstrap/cloudflare-origin-pull-ca.yaml`,
+    그 파일 헤더가 이 절을 가리킨다). **Argo UI에 고아로 보여도 지우지 않는다 — 지우면 443 전면 중단**이다: clientAuth가 실린 채 Secret이 없으면
+    Traefik이 `CAFiles is required`로 TLSOption 등록에 실패해 websecure 전 호스트가 죽는다(파드는 Ready 유지 — 능동 확인 필수).
+    제거는 계약 §오리진 보호 3중 2.의 순서(clientAuth 제거·재설치 → `tlsoption default` spec의 `clientAuth`가 빈 값임을 확인 → 그다음에야 Secret)로만 한다.
+  · `kube-system/Secret wildcard-joshuatech-dev-tls` — cert-manager가 만드는 서빙 Secret(`platform/cert-manager-issuers/` 소유). 지우면 자체 서명 복귀 = 전 호스트 526(§2).

@@ -50,8 +50,8 @@
 #       · TLSOption 중복 → `delete(tlsOptions, tls.DefaultTLSConfigName)`(`kubernetes.go:1380`)로 **옵션 객체 자체가 사라지고**
 #         집계기가 **내장 기본값**을 대신 넣는다(`tlsmanager.go:34-38` `DefaultTLSOptions`). 내장 기본의 `MinVersion`도
 #         `VersionTLS12`라 그 값은 실질적으로 유지되고, **내장 기본이 없는 설정만 소실**된다 —
-#         2026-09-10 `sniStrict` 투입으로 **지금 그 대상이 실재한다**(TLSOption이 중복되면 sniStrict가 조용히 사라진다).
-#         `clientAuth`(T043)가 더해지면 둘 다 사라진다. R7이 막으려는 보안 회귀는 이쪽이다.
+#         2026-09-10 `sniStrict` 투입에 이어 2026-09-11 `clientAuth`(AOP `RequireAndVerifyClientCert`) 승격으로 **지금 그 대상이 둘 실재한다**:
+#         TLSOption이 중복되면 sniStrict·clientAuth가 **둘 다 조용히 사라진다**(= AOP 검증 해제 — 현재형). R7이 막으려는 보안 회귀는 이쪽이다.
 #       · TLSStore 중복 → `delete(tlsStores, tls.DefaultTLSStoreName)`(`:1450`)은 **Store 설정(`defaultCertificate`·`defaultGeneratedCert`)만** 지운다.
 #         `buildCertificates`가 그 앞에서 이미 `tlsConfigs`를 채웠고 그 맵은 그대로 반환되므로, `certificates:` 목록의
 #         인증서는 `Stores:["default"]`를 달고 DynamicCerts에 편입된다(TLS Manager가 빈 `Store{}`를 다시 만든다).
