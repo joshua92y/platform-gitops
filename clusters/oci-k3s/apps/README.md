@@ -8,7 +8,7 @@ project: 플랫폼 컴포넌트 → `platform`, 앱 → `dev`·`prod`, `platform
 
 | 파일 | Application | source.path | 비고 |
 |---|---|---|---|
-| `platform-argocd.yaml` | `platform-argocd` | `bootstrap/argocd` | T041 PR-B1. Argo CD 자기 관리 — **finalizer 없음** |
+| `platform-argocd.yaml` | `platform-argocd` | `bootstrap/argocd` | T041 PR-B1. Argo CD 자기 관리 — **finalizer 없음** · T043 PR-1부터 Ingress `argo.joshuatech.dev`(`bootstrap/argocd/ingress.yaml`)도 이 소스에 포함 |
 | `platform-policies.yaml` | `platform-policies` | `platform/policies` | T041 PR-B2. **유일한 라이브 위험 구간**(argocd·cloudflared ns에 `default-deny`가 걸린다) · 적용은 운영자 수동 트리거 · **finalizer 없음** |
 
 아래 17개는 T041 PR-C가 추가했다. wave·도착 네임스페이스는 계약 §sync-wave 단일 표에서 **읽어서** 넣으며 여기 옮겨 적지 않는다. 이 17개는 모두 finalizer(`resources-finalizer.argocd.argoproj.io`)를 갖는다 — finalizer를 빼는 것은 위 두 개뿐이다(cascade가 Argo CD 자신과 Namespace 14개를 지울 수 있어서).
@@ -33,13 +33,13 @@ project: 플랫폼 컴포넌트 → `platform`, 앱 → `dev`·`prod`, `platform
 | `platform-reloader.yaml` | `platform-reloader` | `platform/reloader` | 뼈대 — T046(VD-9 scoped 모드) |
 | `platform-traefik.yaml` | `platform-traefik` | `platform/traefik` | **T042 PR-4로 채워졌다.** 지금 sync하는 것은 TLSStore `default`(ns `kube-system`) 1장뿐 — 와일드카드를 동적 인증서(`spec.certificates[]`)로 적재한다. Traefik 본체는 K3s 관리(HelmChartConfig, T038). 계약 §디렉터리의 kind 화이트리스트는 Middleware·TLSOption·TLSStore지만 **TLSOption은 이 디렉터리에 두지 않는다** — 아래 각주 참조. Middleware는 아직 없다 |
 
-**각주 — `platform/traefik/`에 TLSOption을 두지 않는 이유(정본과 provider 조건 구분은 `platform/traefik/README.md` §8).** 이름이 `default`인 TLSStore/TLSOption은 ns와 무관하게 전역 id로 승격되고, 두 개 이상 존재하면 Traefik이 그 이름의 항목을 삭제한다. 다만 **삭제되는 대상이 다르다.** TLSOption 중복은 옵션 객체 자체를 지우고 서버가 내장 기본값으로 되돌아가는데, 내장 기본에 `minVersion: VersionTLS12`는 있고 `sniStrict`·`clientAuth`는 **없다** — 그래서 그 둘만 조용히 사라진다. `sniStrict`는 2026-09-10 모노레포 `infra/bootstrap/traefik-config.yaml`의 `tlsOptions.default`에 실제로 투입됐으므로 이것은 가정이 아니라 **살아 있는 보안 설정**이다. 반대로 TLSStore 중복은 Store 설정(`defaultCertificate`·`defaultGeneratedCert`)만 지우고 `certificates:` 목록은 살아남아 계속 서빙된다. 양쪽 다 TLS 핸드셰이크는 성공하고 Error 로그 한 줄만 남으므로 **동작으로는 드러나지 않는다.** 그래서 소유권을 못박는다 — TLSOption `default`는 모노레포 HelmChartConfig 단독, TLSStore `default`는 `platform/traefik/` 단독, 각각 정확히 한 곳. 계약 `gitops-repo.md` §디렉터리는 **kind 화이트리스트**이고 같은 줄이 HelmChartConfig를 Traefik 자체 설정의 정본으로 지목하므로 이 배치는 계약과 충돌하지 않는다. (단 이 "내장 기본값 복귀"는 중복이 **같은 provider**(Kubernetes CRD) 안에서 일어날 때다 — 서로 다른 provider가 각각 `default`를 주면 집계기가 지우기만 하고 기본값을 넣지 않아 그 옵션에 의존하는 **라우터 초기화가 통째로 실패한다**. 오늘 배치는 둘 다 CRD provider라 결론은 바뀌지 않는다.)
+**각주 — `platform/traefik/`에 TLSOption을 두지 않는 이유(정본과 provider 조건 구분은 `platform/traefik/README.md` §8).** 이름이 `default`인 TLSStore/TLSOption은 ns와 무관하게 전역 id로 승격되고, 두 개 이상 존재하면 Traefik이 그 이름의 항목을 삭제한다. 다만 **삭제되는 대상이 다르다.** TLSOption 중복은 옵션 객체 자체를 지우고 서버가 내장 기본값으로 되돌아가는데, 내장 기본에 `minVersion: VersionTLS12`는 있고 `sniStrict`·`clientAuth`는 **없다** — 그래서 그 둘만 조용히 사라진다. `sniStrict`는 2026-09-10에, `clientAuth`(AOP `RequireAndVerifyClientCert`)는 2026-09-11 승격으로 모노레포 `infra/bootstrap/traefik-config.yaml`의 `tlsOptions.default`에 **둘 다 실제로 투입됐으므로** 이것은 가정이 아니라 **살아 있는 보안 설정**이다 — 중복으로 둘이 사라지면 edge 클라이언트 인증서 검증(AOP)이 조용히 해제된다. 반대로 TLSStore 중복은 Store 설정(`defaultCertificate`·`defaultGeneratedCert`)만 지우고 `certificates:` 목록은 살아남아 계속 서빙된다. 양쪽 다 TLS 핸드셰이크는 성공하고 Error 로그 한 줄만 남으므로 **동작으로는 드러나지 않는다.** 그래서 소유권을 못박는다 — TLSOption `default`는 모노레포 HelmChartConfig 단독, TLSStore `default`는 `platform/traefik/` 단독, 각각 정확히 한 곳. 계약 `gitops-repo.md` §디렉터리는 **kind 화이트리스트**이고 같은 줄이 HelmChartConfig를 Traefik 자체 설정의 정본으로 지목하므로 이 배치는 계약과 충돌하지 않는다. (단 이 "내장 기본값 복귀"는 중복이 **같은 provider**(Kubernetes CRD) 안에서 일어날 때다 — 서로 다른 provider가 각각 `default`를 주면 집계기가 지우기만 하고 기본값을 넣지 않아 그 옵션에 의존하는 **라우터 초기화가 통째로 실패한다**. 오늘 배치는 둘 다 CRD provider라 결론은 바뀌지 않는다.)
 
 앱 Application(`<pod>-<env>`)은 후속 PR에서 이 디렉터리에 추가된다.
 
 ## `platform-argocd` — 자기 관리 Application이 하는 일
 
-root(app-of-apps)가 이 디렉터리를 읽어 child `platform-argocd`를 만들고, 그 Application이 `bootstrap/argocd`(Argo CD 본체 + AppProject 5종 + Argo CRD 어노테이션 패치)를 서버 사이드 적용으로 **인수**한다.
+root(app-of-apps)가 이 디렉터리를 읽어 child `platform-argocd`를 만들고, 그 Application이 `bootstrap/argocd`(Argo CD 본체 + AppProject 5종 + Argo CRD 어노테이션 패치 + Ingress `argo.joshuatech.dev`(T043))를 서버 사이드 적용으로 **인수**한다.
 
 **인수의 의미 — 소유권만 옮긴다.** 대상 객체는 운영자가 T040·T041 PR-A에서 `kubectl apply --server-side --field-manager=operator-bootstrap` 로 이미 넣어 둔 것들이다. 이 단계는 그 객체들의 필드 소유자를 `operator-bootstrap` → `argocd-controller` 로 바꿀 뿐, 워크로드를 새로 만들거나 다시 굴리지 않는다(렌더 결과가 같으면 no-op). Argo CD의 SSA 경로는 항상 force conflicts 이므로(gitops-engine `pkg/utils/kube/resource_ops.go:469` — `o.ForceConflicts = serverSideApply`) 필드 소유권 충돌이 오류로 표면화되지 않고 그대로 넘어간다.
 
