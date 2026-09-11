@@ -8,7 +8,8 @@
 #   - 백엔드는 Service argocd-server 의 포트 **`http`(80→8080)** 다. `https`/443 을 적으면 Traefik 이 평문 8080(argocd-cmd-params-cm
 #     `server.insecure: "true"`)에 TLS 를 시도해 502 가 난다(포트 443 또는 이름 https* → 백엔드 TLS 규칙).
 #   - `router.entrypoints: websecure` 는 **필수**다. 차트 40.1.x 는 어느 엔트리포인트도 asDefault 가 아니라, 생략하면 이 라우터가
-#     traefik(8080)·metrics(9100)·web(8000) 엔트리포인트에도 붙는다(클러스터 내부에서 Access 미경유 평문 경로).
+#     traefik(8080)·metrics(9100)·web(8000) 엔트리포인트에도 붙는다 — 클러스터 내부에서 파드 IP:8080·9100 에 SNI argo.joshuatech.dev 로
+#     직접 TLS 하면 Access 를 지나지 않고 UI/API 에 닿는다(`router.tls` 때문에 평문은 아니며, web(8000) 은 엔트리포인트 리다이렉트라 서빙되지 않는다).
 #   - `router.tls: "true"` 는 websecure 의 `http.tls=true` 와 등가라 중복이지만 FR-011 문면이므로 둔다. `router.tls.options` 는 적지 않는다 —
 #     옵션 이름이 없는 라우터는 kube-system TLSOption `default`(minVersion · sniStrict · T043 clientAuth)를 받는다.
 #   - `spec.tls` 없음: 인증서는 TLSStore default 의 certificates 목록(와일드카드 *.joshuatech.dev, T042)이 SNI 로 고른다.
