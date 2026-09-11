@@ -15,7 +15,7 @@ Namespace·PSA·NetworkPolicy는 `platform/policies/`, Application `platform-tra
 
 > **이 저장소에 비밀은 없다.** 인증서 Secret은 cert-manager가 만들고 Argo CD는 만들지도 지우지도 않는다(Application이 `prune: false`).
 
-**현재 상태(2026-09-11)** — **T043 완료.** PR-4 머지(gitops main `4f23abd`)로 prod 와일드카드가 실려 `auth.joshuatech.dev`가 526 → **404**로
+**현재 상태(2026-09-11)** — **T043 라이브 반영 완료(AOP 승격 `RequireAndVerifyClientCert` · Argo CD Ingress)** — 잔여 검증(+180초 양성 재확인·러너)과 실행 기록은 모노레포 런북 §3 T043(M5). PR-4 머지(gitops main `4f23abd`)로 prod 와일드카드가 실려 `auth.joshuatech.dev`가 526 → **404**로
 바뀌었고 v2 호스트 526은 0건, 모노레포 쪽 `sniStrict`는 2026-09-10 **투입 완료**(§9.1). 이어서 2026-09-11에 AOP를
 **`RequireAndVerifyClientCert`로 승격**했다 — kube-system Secret `cloudflare-origin-pull-ca` 설치 `06:39:01Z` → 관찰 단계
 `VerifyClientCertIfGiven` 설치 `06:49:41Z` → 승격 설치 `2026-09-11T07:48:23Z`(정본은 모노레포 `infra/bootstrap/traefik-config.yaml`·
@@ -84,7 +84,7 @@ edge는 오리진이 내미는 인증서의 **체인과 SAN을 검증**하고, �
 526이든 AOP 장애든 443이 끊기면 **Argo CD UI도 함께 죽는다**(T042 시점에는 Ingress가 없어 무관했다). 그때 UI는
 `kubectl -n argocd port-forward svc/argocd-server 8080:80`으로 우회한다(런북 §3 T040 방식 — Traefik 443을 지나지 않는다).
 어느 쪽이든 복구의 정본은 UI가 아니라 **git revert + kubectl**이다 — `selfHeal: true` 때문에 순서가 고정돼 있다(§7).
-증상 구분: **526 = 오리진 서버 인증서 계열**(이 절·§7), **525 또는 520 = AOP(클라이언트 인증서) 계열**(어느 코드인지는 미실측 — 런북 VD-7;
+증상 구분: **526 = 오리진 서버 인증서 계열**(이 절·§7), **525 또는 520 = AOP(클라이언트 인증서) 계열이 유력**(어느 코드인지는 미실측 — 런북 VD-7; 단 525는 §2 표의 sniStrict 매칭 실패에서도 나오므로 먼저 §9.2 D5(ii) ①(서버 인증서·notAfter)·③(TLSOption spec)으로 갈라낸다;
 첫 조치는 §6 판정 ②) — 판별표는 §9.2 D5(ii).
 
 ---
@@ -185,7 +185,7 @@ Cloudflare Access가 **edge에서** 302를 돌려주므로 요청이 오리진�
 sniStrict 투입(2026-09-10) 뒤에도 와일드카드 SAN이 `auth.joshuatech.dev`를 덮으므로 이 검증은 그대로 유효하다 —
 투입 직후 실측도 `404`(526 아님)로 변화가 없었다(§9.1). AOP 승격(2026-09-11) 뒤에도 `auth`는 404를 유지했다 — edge가 Cloudflare
 클라이언트 인증서를 내밀므로 이 검증은 **443 생존 판정**(§9.2 D5(ii) ②)으로 계속 쓴다. 단 여기서 보이는 것은 서버 인증서 계열(526)뿐이고,
-AOP 계열은 525 또는 520으로 나타난다(어느 쪽인지 미실측 — VD-7).
+AOP 계열은 525 또는 520으로 나타난다(어느 쪽인지 미실측 — VD-7; 525는 §2 표의 sniStrict 매칭 실패에서도 나오므로 §9.2 D5(ii) ①·③으로 먼저 갈라낸다).
 
 ---
 
@@ -205,8 +205,8 @@ AOP 계열은 525 또는 520으로 나타난다(어느 쪽인지 미실측 — V
 > Argo CD UI는 `port-forward`로 우회한다(§2).
 >
 > **T043 뒤의 판정 순서**
-> ① **526 = 오리진 서버 인증서 계열** → 이 레버가 아니라 근본 복구(§7 + forward-fix). `notAfter`부터 본다(§9.2 D5(ii) ①).
-> ② **525 또는 520 = AOP(클라이언트 인증서) 계열**(어느 코드인지는 미실측 — 런북 VD-7) → 이 레버는 **무관**하다: `full`은 edge의
+> ① **526 = 오리진 서버 인증서 계열** → 먼저 근본 복구(§7 + forward-fix); 레버는 526 뒤에 사용자 트래픽이 있고 근본 복구가 길어질 때만(지금은 해당 없음). `notAfter`부터 본다(§9.2 D5(ii) ①).
+> ② **525 또는 520 = AOP(클라이언트 인증서) 계열이 유력**(어느 코드인지는 미실측 — 런북 VD-7; 525는 sniStrict 매칭 실패(§2 표)일 수도 있으니 §9.2 D5(ii) ①·③으로 먼저 갈라낸다) → 이 레버는 **무관**하다: `full`은 edge의
 >    오리진 **서버** 인증서 검증만 끄고, 오리진(Traefik)이 edge의 클라이언트 인증서를 요구·거절하는 쪽은 바꾸지 않는다.
 >    첫 조치는 모노레포 `infra/bootstrap/traefik-config.yaml`의 **clientAuth 없는 사본(`traefik-config.pre-t043.yaml`) 재설치**
 >    (그 파일 헤더 절차 1~2 · 반영 약 15초 · 롤아웃 없음 — 30초 안에 끝난다)이고, Secret `cloudflare-origin-pull-ca`는 그 뒤에도
@@ -381,12 +381,12 @@ kube-system Secret `cloudflare-origin-pull-ca`(키 `ca.crt`, 정본 모노레포
 #    서버 플라이트로 오므로 승격 뒤에도 그대로다. 526 진단 시 1순위(§7 — 만료된 인증서도 계속 서빙된다).
 ssh … ubuntu@<노드 A> "echo | openssl s_client -connect 10.0.7.78:443 -servername traefik.joshuatech.dev 2>/dev/null \
   | openssl x509 -noout -issuer -enddate"
-# 합격: issuer=C=US, O=Let's Encrypt, CN=YE2 · notAfter=Dec  8 08:59:09 2026 GMT(갱신되면 뒤로 밀린다)
+# 합격: issuer=C = US, O = Let's Encrypt, CN = YE2 · notAfter=Dec  8 08:59:09 2026 GMT(갱신되면 뒤로 밀린다; OpenSSL 3.x 출력은 ' = ' 구분자)
 #   (TLS 1.3에서는 s_client 자체가 핸드셰이크 성공처럼 보이고 그 뒤 alert가 온다 — 인증서 출력은 그 전에 끝나므로 판정에 지장이 없다.)
 
 # ② 443 생존 — edge 경유 auth 루트(§5). 보조: 공개 CT 로그(crt.sh)의 와일드카드 발급 이력.
 curl -sI https://auth.joshuatech.dev | head -1
-# 합격: 404(오리진 Traefik이 만든 코드 = 서버 인증서·AOP 둘 다 통과). 526 = 서버 인증서 계열(§7) · 525/520 = AOP 계열(§6 판정 ②).
+# 합격: 404(오리진 Traefik이 만든 코드 = 서버 인증서·AOP 둘 다 통과). 526 = 서버 인증서 계열(§7) · 525/520 = AOP 계열이 유력(§6 판정 ② — 525는 sniStrict 매칭 실패일 수도 있어 ①·③으로 먼저 갈라낸다).
 
 # ③ TLSOption 반영 — spec + 로그 grep 6패턴(⚠ traefik.io는 운영자 admin 전용 — §8)
 kubectl -n kube-system get tlsoption default -o yaml
@@ -437,7 +437,7 @@ clientAuth를 pre-t043 사본으로 내렸다가 다시 올리기 직전의 마�
 ```bash
 # ① SNI 일치 → LE 와일드카드가 나와야 한다 = DynamicCerts 매칭 성공
 #   ⚠ `expire date`를 반드시 함께 본다 — Traefik은 만료된 인증서도 계속 서빙하므로(§7)
-#     발급자만 보면 "정상"으로 오독한다. 526 진단 시에는 이 줄이 1순위다.
+#     발급자만 보면 "정상"으로 오독한다. (승격 뒤 526 진단은 §9.2 D5(ii) ① — 이 curl 은 클라이언트 인증서 없이는 거절되므로 여기 ①은 재투입 절차 전용이다.)
 ssh … ubuntu@<노드 A> "curl -skv --resolve traefik.joshuatech.dev:443:10.0.7.78 \
   https://traefik.joshuatech.dev -o /dev/null 2>&1 | grep -Ei 'subject:|issuer:|subjectAltName|expire date|start date'"
 

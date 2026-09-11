@@ -58,7 +58,7 @@
 #         즉 이 파일 형태(= `certificates:` 단독)는 중복 상황에서도 **와일드카드 서빙이 유지된다** — 안전한 방향이다.
 #     양쪽 모두 Error 로그를 남긴다: `Default TLS Options/Stores defined in multiple namespaces: [...]`.
 #     **그래도 각각 정확히 1개** 규율은 유지한다 — TLSOption 쪽 소실이 무증상 보안 회귀이고, 진단 시 두 경우를 혼동하면
-#     "와일드카드가 사라졌다"(실제로는 유지)와 "minVersion이 사라졌다"(실제 회귀)를 서로 바꿔 찾게 된다.
+#     "와일드카드가 사라졌다"(실제로는 유지)와 "sniStrict·clientAuth가 사라졌다"(실제 회귀 = AOP 검증 해제; minVersion은 내장 기본과 같아 실질 유지)를 서로 바꿔 찾게 된다.
 #     TLSOption `default`의 정본은 모노레포 `infra/bootstrap/traefik-config.yaml`(HelmChartConfig, T038)이고,
 #     TLSStore `default`의 정본은 이 파일이다 — 각각 정확히 한 곳. 계약 `gitops-repo.md` §디렉터리는
 #     **kind 화이트리스트**이고 같은 줄이 HelmChartConfig를 Traefik 자체 설정의 정본으로 지목하므로 이 배치는 계약과
@@ -66,7 +66,7 @@
 #     현재 차트 값이 `tlsStore: {}`(빈 맵)이라 경쟁 CR이 하나도 없어 깨끗하게 인수한다.
 #   · **`sniStrict`는 이 파일이 아니라 모노레포에 있다**(D5 = T042 단계 9) — `infra/bootstrap/traefik-config.yaml`의
 #     `valuesContent` → `tlsOptions.default`. 여기서 켤 수 있는 값이 아니다.
-#     **2026-09-10 17:24 KST 투입 완료**: 이 파일이 머지된 뒤(gitops main 4f23abd) 노드 A 안에서 판별 실험 ①②(README §9)를
+#     **2026-09-10 17:24 KST 투입 완료**: 이 파일이 머지된 뒤(gitops main 4f23abd) 노드 A 안에서 판별 실험 ①②(README §9.3)를
 #     통과한 것을 확인하고 켰다. 적용 뒤 SNI 불일치는 `000`(핸드셰이크 거절)이 됐고 파드 롤아웃은 나지 않았다.
 #     ⚠ 되돌릴 때는 순서가 반대다 — `sniStrict` 제거(모노레포 → 노드 A)가 **먼저**, TLSStore 삭제가 그다음이다(README §7).
 #   · Secret 자체와 Certificate: `platform/cert-manager-issuers/` 소유. Namespace·PSA·NetworkPolicy: `platform/policies/` 소유.
