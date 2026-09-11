@@ -38,7 +38,8 @@
 #      T040 시점에는 운영자가 수동 생성한다(README ①, cloudflared README ①과 같은 방식). T041에서 Argo CD가 SSA로 인수.
 #   2) 자기 관리 Application `platform-argocd`(source = 이 디렉터리, wave는 계약 단일 표): T041 PR-B1.
 #      (AppProject 5종은 위 base로 이 디렉터리에 포함된다 — T041 PR-A에서 바뀐 점.)
-#   3) Ingress `argo.joshuatech.dev`(T043) · Authentik OIDC(argocd-cm `oidc.config`·`url`) · RBAC(argocd-rbac-cm) · 알림(argocd-notifications-cm): 뒤 태스크.
+#   3) Authentik OIDC(argocd-cm `oidc.config`·`url`) · RBAC(argocd-rbac-cm) · 알림(argocd-notifications-cm): T084(SSO).
+#      (Ingress `argo.joshuatech.dev` 는 T043 부터 이 디렉터리의 ingress.yaml 이 만든다 — "만들지 않는 것" 에서 제외.)
 #   4) install.yaml의 빈 Secret `argocd-secret`·`argocd-notifications-secret`은 그대로 둔다 — 서버가 런타임에 채우므로 삭제 패치 금지(research 함정).
 #      이 저장소에 비밀 값은 없다.
 #
@@ -53,8 +54,10 @@ resources:
   # renovate: datasource=github-tags depName=argoproj/argo-cd currentValue=v3.5.2
   - https://raw.githubusercontent.com/argoproj/argo-cd/e258ee23c3e52266d407572f4bcdfe7d9ed36cb5/manifests/install.yaml
   # AppProject 5종(platform · dev · prod · tests + default 봉인) — 머리 주석 "AppProject 5종을 base로 포함한다" 참조.
-  # 렌더링 결과는 install.yaml 40문서 + AppProject 5 = 45문서다. 이 base의 `namespace: argocd`는 아래 필드가 다시 확정한다.
+  # 렌더링 결과는 install.yaml 40문서 + AppProject 5 + Ingress 1(T043) = 46문서다. 이 base의 `namespace: argocd`는 아래 필드가 다시 확정한다.
   - ../../clusters/oci-k3s/projects
+  # Ingress argo.joshuatech.dev(T043) — 근거·형태는 그 파일 머리 주석. 렌더링 결과는 45 + 1 = 46문서.
+  - ingress.yaml
 
 # 이미지 digest 핀 — 인프라 규칙(태그만으로 참조하지 않는다) · FR-037. 렌더링 결과는 `<name>@sha256:…`(kustomize images[].digest는
 # 태그를 대체하고, `newTag` 병기는 validate 4a가 모든 kustomization에서 금지한다). 사람용 버전은 여기 주석이 정본:

@@ -5,7 +5,7 @@ kind: ConfigMap
 metadata:
   name: argocd-cmd-params-cm
 data:
-  # TLS 종료는 Traefik(T043 Ingress `argo.joshuatech.dev`)이 한다 — 서버 TLS off(research D11). T043 전 접근은 port-forward http(README ⑥).
+  # TLS 종료는 Traefik(Ingress `argo.joshuatech.dev` — T043 ingress.yaml)이 한다 — 서버 TLS off(research D11). 기본 접근은 Cloudflare Access(GitHub) → Ingress; port-forward http 는 대체 경로(README ⑥).
   server.insecure: "true"
   # Server-Side Diff 전역 — SSA(모든 Application 의 ServerSideApply=true, validate 2)와 짝. 다른 field manager 가 넣은 필드(ESO Merge 키 ·
   # 컨트롤러 default)로 생기는 가짜 OutOfSync 를 없앤다(research D3 · plan A11). 3.1+ Stable.
