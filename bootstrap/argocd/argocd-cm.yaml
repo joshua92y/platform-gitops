@@ -2,7 +2,7 @@
 # install.yaml@e258ee23 의 argocd-cm 에 이미 들어 있는 기본값 `resource.exclusions`(Endpoints · EndpointSlice · Lease · TokenReview 류 ·
 # CertificateSigningRequest · cert-manager CertificateRequest · Cilium · Kyverno)와 `resource.customizations.ignoreResourceUpdates.*` 는
 # 여기서 건드리지 않으므로 그대로 남는다(계약 T040 문면 "resource.exclusions 유지" · research 함정 "덮어쓰지 말고 추가만").
-# 아직 넣지 않는 것: url · oidc.config · admin.enabled(SSO 검증 뒤) — 뒤 태스크(T043 · SSO).
+# 아직 넣지 않는 것: url · oidc.config · admin.enabled(SSO 검증 뒤) — T084(SSO: url=https://argo.joshuatech.dev · oidc.config · admin.enabled). T043 은 Ingress 만(ingress.yaml).
 # 정정(T042 PR-0): 이 줄은 원래 kustomize.buildOptions 도 "뒤 태스크(T043 · SSO)"로 미뤄 두었으나, 그 값은 SSO 와 무관하고 T042 에서 들어왔다.
 #   이유 — 저장소의 첫 `helmCharts:` 사용자가 T042 cert-manager(kustomize helmCharts 로 OCI 차트를 인플레이트 · 설계 D1)다.
 #   이 값이 없으면 repo-server 가 helmCharts 를 인플레이트하지 못해 `platform-cert-manager` 가 렌더 실패로 굳는다

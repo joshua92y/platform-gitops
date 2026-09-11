@@ -1,0 +1,45 @@
+# bootstrap/argocd/ingress.yaml — Argo CD UI/API 공개 진입점 `argo.joshuatech.dev` (T043)
+#
+# 정본 계약: 모노레포 specs/003-platform-foundation/contracts/hostnames-and-access.md(호스트 argo. · Access 앱 `argo` GitHub IdP · TLSOption default)
+#   · spec FR-011(표준 networking.k8s.io Ingress · ingressClassName traefik · router.tls true · spec.tls 생략)
+#   · contracts/network-policy.md :82(kube-system(traefik) → argocd 8080 — platform/policies `allow-from-traefik`, 이미 라이브)
+#   · contracts/gitops-repo.md :10-11(argocd/ = remote base + patches + ingress.yaml).
+# 형태 근거(Traefik v3.7.8 ingress provider · Argo CD v3.5.2):
+#   - 백엔드는 Service argocd-server 의 포트 **`http`(80→8080)** 다. `https`/443 을 적으면 Traefik 이 평문 8080(argocd-cmd-params-cm
+#     `server.insecure: "true"`)에 TLS 를 시도해 502 가 난다(포트 443 또는 이름 https* → 백엔드 TLS 규칙).
+#   - `router.entrypoints: websecure` 는 **필수**다. 차트 40.1.x 는 어느 엔트리포인트도 asDefault 가 아니라, 생략하면 이 라우터가
+#     traefik(8080)·metrics(9100)·web(8000) 엔트리포인트에도 붙는다 — 클러스터 내부에서 파드 IP:8080·9100 에 SNI argo.joshuatech.dev 로
+#     직접 TLS 하면 Access 를 지나지 않고 UI/API 에 닿는다(`router.tls` 때문에 평문은 아니며, web(8000) 은 엔트리포인트 리다이렉트라 서빙되지 않는다).
+#   - `router.tls: "true"` 는 websecure 의 `http.tls=true` 와 등가라 중복이지만 FR-011 문면이므로 둔다. `router.tls.options` 는 적지 않는다 —
+#     옵션 이름이 없는 라우터는 kube-system TLSOption `default`(minVersion · sniStrict · T043 clientAuth)를 받는다.
+#   - `spec.tls` 없음: 인증서는 TLSStore default 의 certificates 목록(와일드카드 *.joshuatech.dev, T042)이 SNI 로 고른다.
+#   - gRPC-Web(`argocd login … --grpc-web`)은 HTTP/1.1 POST(application/grpc-web+proto)라 이 Ingress 하나로 UI·CLI 가 된다.
+#     네이티브 gRPC(h2c) 라우트는 두지 않는다 — Cloudflare Access 가 gRPC 를 지원하지 않아 edge 에서 성립하지 않는다
+#     (research ARGOCD-D11 의 2-rule IngressRoute 는 spec FR-011 보다 낡은 결정 — converge 정정 대상). 필요해지면 별도 객체로 추가한다(T084 결정 항목).
+#   - metadata.namespace 를 적지 않는다 — kustomization.yaml 의 `namespace: argocd` 가 붙인다(패치 원칙과 동일).
+#   - CLI 로그인은 Access 앞단 때문에 헤더(cf-access-token 또는 Service Auth 쌍)가 따로 필요하다 — T084 실측 항목. T043 수용 기준은 브라우저 UI.
+# 되돌리기: 이 파일 제거 PR 을 머지해도 platform-argocd 는 prune:false 라 객체가 남는다 → 운영자 `kubectl -n argocd delete ingress argocd-server`.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: argocd-server
+  labels:
+    app.kubernetes.io/name: argocd-server
+    app.kubernetes.io/part-of: argocd
+    app.kubernetes.io/component: server
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: argo.joshuatech.dev
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: argocd-server
+                port:
+                  name: http
