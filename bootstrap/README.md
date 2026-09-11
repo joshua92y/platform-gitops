@@ -1,21 +1,22 @@
 # bootstrap/ — Argo CD 설치 · root app 운영자 절차 (T040 · T041 PR-A)
 
-계약 gitops-repo.md §디렉터리: `argocd/` = remote base(install.yaml, 커밋 SHA 핀) + patches, `root-app.yaml` = Application "root" → `clusters/oci-k3s/apps`(유일한 수동 apply).
-이 디렉터리는 Argo CD **자체**와 root Application, 그리고 T041 PR-A부터 **AppProject 5종**(base `../clusters/oci-k3s/projects`)을 소유한다.
-나머지(네임스페이스·PSA 라벨·컴포넌트 Application·Ingress·SSO)는 T041 이후 태스크의 몫이며, 그 경계는 `argocd/kustomization.yaml` 머리 주석에 있다.
+계약 gitops-repo.md §디렉터리: `argocd/` = remote base(install.yaml, 커밋 SHA 핀) + patches + `ingress.yaml`(T043), `root-app.yaml` = Application "root" → `clusters/oci-k3s/apps`(유일한 수동 apply).
+이 디렉터리는 Argo CD **자체**와 root Application, T041 PR-A부터 **AppProject 5종**(base `../clusters/oci-k3s/projects`), T043부터 **Ingress `argo.joshuatech.dev`**(`argocd/ingress.yaml`)를 소유한다.
+나머지(네임스페이스·PSA 라벨·컴포넌트 Application·SSO)는 T041 이후 태스크의 몫이며, 그 경계는 `argocd/kustomization.yaml` 머리 주석에 있다.
 
 | 파일 | 내용 |
 |---|---|
-| `argocd/kustomization.yaml` | `namespace: argocd` + install.yaml@`e258ee23…`(v3.5.2 커밋) + **base `../../clusters/oci-k3s/projects`**(AppProject 5) + 이미지 digest 2개 + 패치: dex 6·applicationset 8·upstream NetworkPolicy 5 삭제, requests/GOMEMLIMIT 5종, `argocd-cmd-params-cm`, `argocd-cm`, CRD 삭제 보호 3 |
+| `argocd/kustomization.yaml` | `namespace: argocd` + install.yaml@`e258ee23…`(v3.5.2 커밋) + **base `../../clusters/oci-k3s/projects`**(AppProject 5) + `ingress.yaml`(T043) + 이미지 digest 2개 + 패치: dex 6·applicationset 8·upstream NetworkPolicy 5 삭제, requests/GOMEMLIMIT 5종, `argocd-cmd-params-cm`, `argocd-cm`, CRD 삭제 보호 3 |
 | `argocd/argocd-cmd-params-cm.yaml` | `server.insecure` · `controller.diff.server.side` · processors/parallelism 4키 |
 | `argocd/argocd-cm.yaml` | `timeout.reconciliation 180s` · `application.resourceTrackingMethod annotation` · Application 헬스 Lua(`resource.exclusions` 기본 유지) · **`kustomize.buildOptions: --enable-helm`**(T042 PR-0 — repo-server의 **모든** kustomize 빌드에 걸리는 전역 값이라 저장소의 어떤 kustomization이라도 원격 차트를 pull 할 수 있게 된다. 실효 통제·후속 의존 T047은 그 파일 머리 주석의 ⚠ 블록) |
 | `argocd/resources-*.yaml` | controller(StatefulSet) 256Mi/1Gi · repo-server 128Mi/512Mi · server 128Mi/512Mi · redis 32Mi/128Mi · notifications 64Mi/256Mi + GOMEMLIMIT(Go 4종) |
 | `argocd/patch-crd-sync-options.yaml` | Argo CD CRD 3종(applications·appprojects·applicationsets)에 `Delete=false,Prune=false` — strategic merge(install.yaml CRD에 annotations 맵이 없어 JSON6902 add는 빌드 실패) |
+| `argocd/ingress.yaml` | Ingress `argo.joshuatech.dev` → `argocd-server:http`(websecure · `router.tls` · `spec.tls` 없음 · grpc-web — T043; 근거는 파일 머리 주석) |
 | `root-app.yaml` | Application `root`(project **`platform`** — T041 PR-A에서 `default`에서 이관; 순서는 파일 머리 주석과 아래 ⑧) |
 
 - **이 저장소에 비밀은 없다.** 초기 admin 비밀번호는 클러스터가 만들고(④) 운영자 비밀번호 관리자에만 옮긴다.
-- 순서: ① ns 수동 생성 → ② `apply --server-side -k` → ③ 롤아웃 확인 → ④ admin 비밀번호 → ⑤ root 적용 → ⑥ 접근(port-forward) → **⑧ AppProject 투입·root 이관(T041 PR-A)**. ⑦은 되돌리기.
-  - **T040을 처음부터 다시 하는 경우(재부트스트랩·T114)**: ②의 `apply --server-side -k bootstrap/argocd` 한 번이 Argo CD 40객체와 AppProject 5를 함께 넣으므로 ⑧의 AppProject 투입은 생략하고 root 이관(⑧의 2단계)만 하면 된다.
+- 순서: ① ns 수동 생성 → ② `apply --server-side -k` → ③ 롤아웃 확인 → ④ admin 비밀번호 → ⑤ root 적용 → ⑥ 접근(Access → `argo.joshuatech.dev`; port-forward는 대체) → **⑧ AppProject 투입·root 이관(T041 PR-A)**. ⑦은 되돌리기.
+  - **T040을 처음부터 다시 하는 경우(재부트스트랩·T114)**: ②의 `apply --server-side -k bootstrap/argocd` 한 번이 Argo CD 40객체와 AppProject 5, Ingress 1(T043)을 함께 넣으므로 ⑧의 AppProject 투입은 생략하고 root 이관(⑧의 2단계)만 하면 된다.
 - **라이브 변경은 이 절차의 운영자만** 한다(admin kubeconfig). 에이전트·tester는 `agent-view` 토큰으로 읽기만 한다.
 - 모든 명령은 **이 브랜치가 PR로 main에 머지된 뒤**, main을 최신화한 로컬 클론에서 실행한다(브랜치 상태를 클러스터에 넣지 않는다). 아래 `$REPO`는 그 클론의 절대 경로.
 
@@ -50,9 +51,10 @@ T041의 자기 관리 Application도 SSA로 같은 객체를 다루므로 처음
 워크스테이션의 kubectl(내장 kustomize)이 `raw.githubusercontent.com`에 닿아야 한다(원격 base).
 
 ```bash
-# (선택) 렌더링 사전 확인 — 문서 45개(59 − 삭제 19 + AppProject 5), 삭제 대상 객체 이름 0, NetworkPolicy 0
-kubectl kustomize "$REPO/bootstrap/argocd" | grep -c '^kind:'                                   # 45 (T041 PR-A 전에는 40)
+# (선택) 렌더링 사전 확인 — 문서 46개(59 − 삭제 19 + AppProject 5 + Ingress 1), 삭제 대상 객체 이름 0, NetworkPolicy 0
+kubectl kustomize "$REPO/bootstrap/argocd" | grep -c '^kind:'                                   # 46 (T043 전에는 45, T041 PR-A 전에는 40)
 kubectl kustomize "$REPO/bootstrap/argocd" | grep -c '^kind: AppProject'                        # 5 (default platform dev prod tests)
+kubectl kustomize "$REPO/bootstrap/argocd" | grep -c '^kind: Ingress'                           # 1 (argo.joshuatech.dev — T043)
 kubectl kustomize "$REPO/bootstrap/argocd" | grep -c -E '^  name: argocd-(dex-server|applicationset-controller)(-network-policy)?$'   # 0
 kubectl kustomize "$REPO/bootstrap/argocd" | grep -c '^kind: NetworkPolicy'                     # 0 (upstream NP 5장 제거 — 정본은 T041 platform/policies)
 

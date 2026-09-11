@@ -2,6 +2,7 @@
 #
 # 정본 계약: 모노레포 specs/003-platform-foundation/contracts/gitops-repo.md §디렉터리
 #   "remote base(install.yaml, `?ref=<commit sha>`로 핀 — 태그 금지) + patches(dex·applicationset 비활성, requests, ServerSideApply)"
+#   + ingress.yaml(Ingress `argo.joshuatech.dev` — T043, 계약 :11)
 # 근거: research.md R2 — ARGOCD-D1(install.yaml 단일 파일 원격 base) · D2($patch: delete) · D3(server-side diff) ·
 #       D4(Application 헬스 Lua) · D10(소형 requests/limits · GOMEMLIMIT · processors) · D11(server.insecure) · D12(timeout.reconciliation)
 #
@@ -56,7 +57,7 @@ resources:
   # AppProject 5종(platform · dev · prod · tests + default 봉인) — 머리 주석 "AppProject 5종을 base로 포함한다" 참조.
   # 렌더링 결과는 install.yaml 40문서 + AppProject 5 + Ingress 1(T043) = 46문서다. 이 base의 `namespace: argocd`는 아래 필드가 다시 확정한다.
   - ../../clusters/oci-k3s/projects
-  # Ingress argo.joshuatech.dev(T043) — 근거·형태는 그 파일 머리 주석. 렌더링 결과는 45 + 1 = 46문서.
+  # Ingress argo.joshuatech.dev(T043) — 근거·형태는 그 파일 머리 주석(문서 수 총계는 위 한 줄만).
   - ingress.yaml
 
 # 이미지 digest 핀 — 인프라 규칙(태그만으로 참조하지 않는다) · FR-037. 렌더링 결과는 `<name>@sha256:…`(kustomize images[].digest는
