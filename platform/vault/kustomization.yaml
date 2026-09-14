@@ -1,6 +1,223 @@
-# platform/vault/ — Vault(시크릿 원천)
-# sync-wave: 계약 gitops-repo.md §sync-wave 단일 표 참조(wave 번호는 표에만 기재 — 중복 금지).
-# 빈 뼈대(T003) — 실제 매니페스트는 T031+에서 작성한다.
+# platform/vault/ — HashiCorp Vault 2.0.4 (chart 0.34.1 · Raft 1 replica · OCI KMS auto-unseal) (T044 G1)
+#
+# 정본 계약(모노레포 specs/003-platform-foundation/contracts/):
+#   - gitops-repo.md §Application 규약(**삭제 보호**: Vault PVC에 `argocd.argoproj.io/sync-options: Delete=false,Prune=false`)
+#     · §sync-wave 단일 표(vault의 wave 번호는 그 표에만 — 여기 다시 적지 않는다) · §이미지(platform/ 이미지는 태그에 `@sha256` 병기)
+#     · §ClusterSecretStore 표(role 이름 = SA 이름 · audiences [vault] · token_ttl 1h/4h) — Vault **내부** 설정(kv 마운트 ·
+#       auth/kubernetes · 정책 6 · role 6)은 여기가 아니라 모노레포 `infra/vault/` OpenTofu가 소유한다.
+#   - network-policy.md §ns 표(`vault` = PSA **restricted**) · §허용 매트릭스(ingress 8200 ← traefik·external-secrets·monitoring /
+#     egress 53 · 6443 · 443 · IMDS 80) · §워크로드 강화(helm 컴포넌트는 values에 securityContext 4항목 **명시**)
+#   - hostnames-and-access.md :31(`vault.joshuatech.dev` = Vault UI · Access 앱 `vault` GitHub IdP) · :59(seal 확인 = port-forward)
+#
+# ⚠ **UI로 `vault operator init`을 하지 않는다 — 운영자 워크스테이션 `vault` CLI만.** 절차 정본: 모노레포 docs/runbooks/vault-unseal.md
+#   · 실행 기록: docs/runbooks/bootstrap.md §4 T044.
+#
+# 설치 방식 = kustomize `helmCharts` 인플레이트(cert-manager 선례). 전제: argocd-cm `kustomize.buildOptions: --enable-helm`(T042 PR-0, 라이브).
+#   인플레이트는 helm 릴리스가 아니다(`helm list -n vault` 비어 있음이 정상). 로컬 재현: `kustomize build --enable-helm platform/vault`(helm 필요).
+#   ⚠ hashicorp 차트는 **HTTPS helm repo**다 — `repo:`에 `oci://`를 붙이지 않는다(cert-manager는 OCI라 붙였다; 규칙이 반대다).
+#   ⚠ 이 차트의 `values.schema.json`에는 `additionalProperties: false`가 **한 곳도 없다**(cert-manager는 28곳). 키 오타는 조용히 무시되고
+#     렌더는 성공한다 — 유일한 방어는 렌더 결과 대조다(README §2).
+#
+# 이 디렉터리가 만들지 "않는" 것:
+#   1) Namespace `vault`·PSA 라벨·NetworkPolicy → `platform/policies/`(정책 객체는 거기에만; validate 5.0·5.1). 차트 정책은 아래에서 false로 명시.
+#   2) Application `platform-vault` → `clusters/oci-k3s/apps/platform-vault.yaml`(T041부터 라이브). 이 PR은 건드리지 않는다(검사 7.1).
+#   3) ClusterSecretStore·ExternalSecret → `secrets/`(T045).
+#   4) 시크릿 값: 없다. seal의 key OCID·KMS 엔드포인트는 **자격이 아니라 식별자**다 — OCI 호출은 인스턴스 프린시펄 x509 서명으로만 인가되고
+#      권한은 `target.key.id` 조건이 붙은 IAM 정책이 정한다(README §0). env 우회는 구조적으로 불가능하다: Vault가 seal 스탠자에
+#      `WithDisallowEnvVars(true)`를 넘겨 `VAULT_OCIKMS_*`를 무시한다.
+#
+# 되돌리기(순서 고정 — README §5 · 런북 §11과 같다): revert 머지 → 렌더 0(Application은 `prune: false`라 객체가 남는다) →
+#   ① `kubectl -n vault delete ingress vault`(공개 진입점 먼저 — G2 이후에만 존재) → ② `kubectl -n vault delete sts vault --cascade=orphan` →
+#   ③ 남은 pod/vault-0 삭제 → ④ Service·ConfigMap·SA·RBAC 수동 정리 → ⑤ **PVC `data-vault-0`과 PV는 절대 지우지 않는다**
+#   (local-path reclaimPolicy Delete → 노드 A 디스크 데이터 소멸; 복구 = Raft 스냅샷 + **같은 KMS 키**뿐).
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-resources: []
+
+# ⚠ 전역 `namespace:` 변환기를 두지 않는다(cert-manager와 같은 이유). 차트의 ns 객체는 `helmCharts[].namespace`로 렌더되고,
+#   `system:auth-delegator` ClusterRoleBinding의 subject ns까지 재작성하는 두 번째 메커니즘을 만들 이유가 없다.
+#   아래 순수 매니페스트는 각자 `metadata.namespace: vault`를 명시한다(platform/cloudflared·system-upgrade는 변환기를 쓰니 복사 주의).
+#   ingress.yaml(vault.joshuatech.dev)은 init 완료 뒤 G2 PR에서 추가한다(설계 D7 — 초기화 전 공개 진입점을 만들지 않는다).
+resources:
+  - serviceaccount-vault-backup.yaml
+
+helmCharts:
+  - name: vault
+    repo: https://helm.releases.hashicorp.com   # HTTPS helm repo — `oci://` 접두 금지
+    version: 0.34.1                             # appVersion 2.0.4. 대조용 실측(값 고정 아님): index.yaml tgz sha256
+                                                #   df4c37fac32496892ff1e1d6fd7954d3a402cc7b1b2b4c2226af11b8a57564c4 (2026-09-14)
+                                                # ⚠ kustomize는 `charts/vault`가 이미 있으면 버전을 보지 않고 pull을 건너뛴다 →
+                                                #   bump는 repo-server 재시작(또는 charts/ 제거) 뒤에 실제 반영된다(README §2).
+    releaseName: vault                          # **필수**. fullname 헬퍼가 릴리스 이름을 그대로 써서 Service/STS/SA/ConfigMap이 `vault`·
+                                                # `vault-config`가 된다 — platform-backup.sh `VAULT_SERVICE=vault`, cluster.tests
+                                                # `port-forward svc/vault`, PVC `data-vault-0`이 전부 이 값에 걸려 있다.
+    namespace: vault
+    skipTests: true                             # 차트 `templates/tests/server-test.yaml`은 끄는 value가 없고(values.yaml에 `tests:` 키 없음)
+                                                # `helm.sh/hook: test` Pod를 무조건 렌더한다. Argo CD는 test hook을 적용하지 않지만, 그 Pod는
+                                                # securityContext가 없어 PSA restricted에 걸리는 객체이므로 렌더 자체에서 제외한다 → 로컬 렌더 =
+                                                # 적용 대상과 동일(G1 9장 · G2 10장, README §6). 2026-09-14 실측: skipTests 없이는 10장/11장.
+    valuesInline:
+      global:
+        enabled: true
+        tlsDisable: true          # 리스너 평문(8200) — TLS 종단은 Traefik(websecure) + Cloudflare AOP. cluster.tests·reboot.tests·
+                                  # platform-backup.sh가 전부 http로 하드코딩돼 있어 선택이 아니라 통과 조건. Service 포트 이름도 이 값으로 `http`.
+
+      injector:
+        enabled: false            # ⚠ 기본값은 "-"(= global.enabled 상속 = **true**). 명시하지 않으면 injector Deployment·Service·RBAC·
+                                  # certs Secret과 **클러스터 범위 MutatingWebhookConfiguration**이 함께 배포된다(failurePolicy Ignore라
+                                  # 조용히 성공해 더 위험). 시크릿 주입은 ESO만(ADR 0010).
+      csi:
+        enabled: false            # 기본값도 false지만 계약 의도를 코드에 남긴다.
+      ui:
+        enabled: false            # 이 키는 Service `vault-ui`를 하나 더 만들 뿐이다. UI 자체는 아래 HCL `ui = true`로 8200의 /ui에서
+                                  # 서빙되고 Ingress는 Service `vault`를 백엔드로 쓴다(research VAULT-D2 편차 — converge 인계).
+
+      server:
+        image:
+          repository: hashicorp/vault
+          # 이 차트에는 cert-manager의 `image.digest` 키가 **없고** StatefulSet은 `image: {{repo}}:{{tag}}` 한 줄만 렌더한다 →
+          # 계약 §이미지의 digest 병기는 태그 문자열에 이어 붙이는 형태가 유일하다(`repo:tag@digest`는 유효한 OCI 참조).
+          # digest = 멀티아치 **인덱스** digest(노드 2대 arm64), 2026-09-14 registry-1.docker.io 실측. bump PR이 함께 갱신한다.
+          # ⚠ 이 값을 지켜 주는 자동 검사는 없다 — validate 4b는 블록 표기라 `image:` 스칼라 정규식에 매칭조차 하지 않는다(README §2).
+          # ImagePullBackOff/InvalidImageName이면 `"2.0.4"`로 되돌리고 digest는 주석 기록만 남긴다(설계 D6 폴백).
+          tag: "2.0.4@sha256:5be49781ecf78bfe775c5309c6a4d9f4e9e040b6c885c99eb2b12fb69855e1a2"
+
+        # 차트 기본값 OnDelete를 **유지**한다: HCL(ConfigMap) 변경이 파드를 자동 재시작시키지 않는 편이 "KMS 장애 중 pod 재시작 금지"
+        # 규율과 맞다. 대가는 조용한 드리프트 → config 체크섬을 함께 켠다.
+        # ⚠ 설정 변경 = PR 머지 **+ 운영자 `kubectl -n vault delete pod vault-0`** 두 단계(README §3 · 런북 §10).
+        updateStrategyType: OnDelete
+        includeConfigAnnotation: true
+
+        networkPolicy:
+          enabled: false          # 켜면 `namespaceSelector: {}`(전 ns) → 8200·8201 ingress가 렌더되어 계약과 cluster.tests np-4를 동시에
+                                  # 깬다. validate 5.0은 **원본 파일만** 보므로 helm 렌더 결과의 이 위반은 잡지 못한다 — 라이브 np-4가 유일한 그물.
+
+        nodeSelector:
+          role: platform          # **가용성의 필수 조건**(편의가 아니다). OCI 동적 그룹 `joshuatech-node-a`의 matching_rule은 노드 A 인스턴스
+                                  # OCID 1개뿐(infra/oci/iam.tf:110-118)이라, 노드 B에 뜨면 인스턴스 프린시펄 federation은 되지만 어떤 KMS
+                                  # 정책에도 속하지 않아 Encrypt가 NotAuthorizedOrNotFound → seal 설정 실패 = **프로세스 즉사**.
+
+        service:
+          enabled: true
+          port: 8200              # 명시해야 validate 5.4b(HELM_PORT_KEYS `vault .server.service.port 8200`)가 **실제로 대조한다**
+          targetPort: 8200        # (키가 없으면 검사가 조용히 건너뛴다). 계약 §포트 표·정책 매트릭스와 3중 일치 — 변경 금지.
+          publishNotReadyAddresses: true   # 기본값 명시: 봉인·미초기화(NotReady)에서도 엔드포인트가 남아야 port-forward와 UI 도달이 된다.
+          active:
+            enabled: false        # replicas=1에 무의미. selector `vault-active: "true"`는 unseal 뒤에야 붙어 봉인 중 엔드포인트 0
+          standby:
+            enabled: false        # (Ingress 백엔드로 쓰면 바로 그때 503). 객체 2장 감소.
+
+        ingress:
+          enabled: false          # Ingress는 ingress.yaml 순수 매니페스트(선례 bootstrap/argocd/ingress.yaml, 백엔드 포트 **이름**).
+
+        authDelegator:
+          enabled: true           # ClusterRoleBinding → system:auth-delegator. auth/kubernetes TokenReview에 필수(Vault가 자기 파드의
+                                  # SA 토큰을 리뷰어로 자동 사용 → token_reviewer_jwt를 tofu 상태에 두지 않는다).
+        serviceAccount:
+          create: true
+          serviceDiscovery:
+            enabled: true         # Role/RoleBinding(pods get/watch/list/update/patch) — service_registration "kubernetes"가 요구.
+
+        # securityContext: ns `vault`가 PSA **restricted**이므로 계약 §워크로드 강화의 4항목은 admission 통과 조건이다.
+        # ⚠ 차트 헬퍼는 값이 주어지면 기본값을 **병합이 아니라 대체**한다 → pod 쪽 기본값(runAsUser 100 / runAsGroup 1000 / fsGroup 1000)을
+        #   여기서 다시 적는다(빠뜨리면 SKIP_CHOWN=true와 겹쳐 /vault/data 쓰기 실패 가능). `readOnlyRootFilesystem`은 넣지 않는다
+        #   (args가 /tmp/storageconfig.hcl에 쓴다). `IPC_LOCK` 불필요: HCL `disable_mlock = true` + 이미지 SKIP_SETCAP=true(2.0.2부터 요구 제거).
+        statefulSet:
+          securityContext:
+            pod:
+              runAsNonRoot: true
+              runAsUser: 100
+              runAsGroup: 1000
+              fsGroup: 1000
+              seccompProfile:
+                type: RuntimeDefault
+            container:
+              allowPrivilegeEscalation: false
+              runAsNonRoot: true
+              capabilities:
+                drop:
+                  - ALL
+              seccompProfile:
+                type: RuntimeDefault
+
+        resources:                # 차트 기본은 `{}` — 명시하지 않으면 plan A14 예산 대조가 성립하지 않는다.
+          requests:               # A14 노드 A 행 "Vault·ESO 0.5 GiB"의 Vault 몫. T097 실측으로 교정.
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            memory: 512Mi         # CPU limit은 두지 않는다(저장소 관례 · validate 5.5와 같은 취지)
+
+        dataStorage:
+          enabled: true
+          size: 5Gi
+          storageClass: local-path   # 기본 SC에 기대지 않고 못박는다(WaitForFirstConsumer → nodeSelector와 함께 PV도 노드 A).
+          annotations:
+            # 계약 §삭제 보호. 차트가 이 값을 volumeClaimTemplates[0].metadata.annotations로 렌더하고 StatefulSet 컨트롤러가 템플릿을
+            # DeepCopy하므로 PVC `data-vault-0`에 그대로 전파된다 → cluster.tests argo-4(ns vault의 **모든** PVC)를 만족한다.
+            # ⚠ volumeClaimTemplates는 STS 생성 후 **불변** — 첫 apply에 없으면 이후 sync가 거부되고 되돌리기가 비싸다.
+            # 이 어노테이션은 Argo 관리 밖 PVC의 '표식'일 뿐 실제 보호가 아니다(README §5 · 런북 §11).
+            argocd.argoproj.io/sync-options: Delete=false,Prune=false
+        auditStorage:
+          enabled: false          # 감사는 `vault audit enable file file_path=stdout`(alloy-logs). 켜면 어노테이션 없는 PVC `audit-vault-0`이
+                                  # 생겨 argo-4가 FAIL한다.
+        # persistentVolumeClaimRetentionPolicy는 적지 않는다: 차트가 `semverCompare ">= 1.23-0"` 뒤에 두는데 helm 기본
+        # Capabilities.KubeVersion이 v1.20이라 `helmCharts[].kubeVersion` 없이는 조용히 사라진다. K8s 기본값이 이미 Retain/Retain이라
+        # 동작은 같고, 거짓 안전감만 제거한다(설계 D2).
+
+        ha:
+          enabled: true
+          replicas: 1
+          # ⚠ `server.ha.config`는 **건드리지 않는다**(차트 기본 consul HCL 그대로). ConfigMap과 /vault/config 마운트의 렌더 조건이
+          #   `standalone.config or ha.config`인데 볼륨 정의만 `ha.raft.config`도 인정한다 — 빈 문자열로 바꾸면 ConfigMap이 사라지고
+          #   볼륨만 남아 파드가 ContainerCreating(configmap "vault-config" not found)에 갇힌다. raft가 켜지면 실제 HCL은 아래 raft.config다.
+          disruptionBudget:
+            enabled: false        # replicas=1이면 차트 헬퍼가 maxUnavailable을 **0**으로 고정(override 불가) → 자발적 축출 전면 차단 =
+                                  # 앞으로 노드 A `kubectl drain`이 영구 대기. SUC Plan은 cordon만 쓰므로 업그레이드는 무해하지만 지뢰를 남기지 않는다.
+          raft:
+            enabled: true
+            setNodeId: true
+            # HCL 주의사항:
+            #  (1) 차트 헬퍼가 이 문자열을 `tpl`로 한 번 렌더한다 → `{{ }}`를 쓰지 않는다.
+            #  (2) 기본 raft config를 통째로 대체하므로 `service_registration "kubernetes" {}`를 **직접 다시 넣는다**(빠지면 파드 라벨
+            #      vault-active/vault-sealed가 영영 붙지 않는다 — 증상이 조용하다).
+            #  (3) `disable_mlock`이 없으면 헬퍼가 자동으로 붙이지만 task 문면대로 명시한다(Vault 2.x는 integrated storage에서 명시 필수).
+            #      노드 A 스왑 0 실측이 전제(VD-06).
+            #  (4) api_addr/cluster_addr는 적지 않는다 — 차트가 env VAULT_API_ADDR/VAULT_CLUSTER_ADDR로 주입한다.
+            #  ⚠ `x_forwarded_for_*`는 **의도적으로 넣지 않는다**(research VAULT-D3 편차, 설계 D9): authorized_addrs가 비어 있지 않으면
+            #    Vault가 XFF 래퍼를 설치하고, 그 래퍼는 remote 주소를 보기 전에 헤더 부재를 검사해 reject_not_present일 때 400을 돌려준다.
+            #    헤더 없는 경로 = readinessProbe(127.0.0.1) · port-forward seal-status · platform-backup.sh · ESO · metrics 스크레이프 전부.
+            #    실제 클라이언트 IP는 Cloudflare Access 로그와 Traefik 액세스 로그(CF-Connecting-IP keep)에 남는다.
+            #  ⚠ seal 3값은 **운영자가 `tofu -chdir=infra/oci output -raw …`로 채운다**(에이전트는 읽을 수 없다). 값이 틀리면 sealed가
+            #    아니라 **프로세스 즉사(CrashLoopBackOff)** 다. `auth_type_api_key = "false"` = 인스턴스 프린시펄(true면 ~/.oci/config를 찾다 실패).
+            #  ⚠ `disable_hostname = true`가 없으면 게이지에 호스트명 접두가 붙어 알림 `VaultSealed`(vault_core_unsealed == 0)가 성립하지 않는다.
+            config: |
+              ui = true
+
+              listener "tcp" {
+                address         = "[::]:8200"
+                cluster_address = "[::]:8201"
+                tls_disable     = true
+
+                telemetry {
+                  unauthenticated_metrics_access = true
+                }
+              }
+
+              storage "raft" {
+                path = "/vault/data"
+              }
+
+              seal "ocikms" {
+                key_id              = "<OPERATOR-FILL: tofu -chdir=infra/oci output -raw kms_key_id>"
+                crypto_endpoint     = "<OPERATOR-FILL: tofu -chdir=infra/oci output -raw kms_crypto_endpoint>"
+                management_endpoint = "<OPERATOR-FILL: tofu -chdir=infra/oci output -raw kms_management_endpoint>"
+                auth_type_api_key   = "false"
+              }
+
+              service_registration "kubernetes" {}
+
+              telemetry {
+                prometheus_retention_time = "1m"
+                disable_hostname          = true
+              }
+
+              disable_mlock = true
