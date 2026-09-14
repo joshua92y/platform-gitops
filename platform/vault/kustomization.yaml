@@ -21,7 +21,7 @@
 # 이 디렉터리가 만들지 "않는" 것:
 #   1) Namespace `vault`·PSA 라벨·NetworkPolicy → `platform/policies/`(정책 객체는 거기에만; validate 5.0·5.1). 차트 정책은 아래에서 false로 명시.
 #   2) Application `platform-vault` → `clusters/oci-k3s/apps/platform-vault.yaml`(T041부터 라이브). 이 PR은 건드리지 않는다(검사 7.1).
-#   3) ClusterSecretStore·ExternalSecret → `secrets/`(T045).
+#   3) ClusterSecretStore 5개 → `platform/external-secrets/`(T045) · ExternalSecret → `secrets/<ns>/`(계약 gitops-repo.md §디렉터리).
 #   4) 시크릿 값: 없다. seal의 key OCID·KMS 엔드포인트는 **자격이 아니라 식별자**다 — OCI 호출은 인스턴스 프린시펄 x509 서명으로만 인가되고
 #      권한은 `target.key.id` 조건이 붙은 IAM 정책이 정한다(README §0). env 우회는 구조적으로 불가능하다: Vault가 seal 스탠자에
 #      `WithDisallowEnvVars(true)`를 넘겨 `VAULT_OCIKMS_*`를 무시한다.
@@ -58,8 +58,8 @@ helmCharts:
     valuesInline:
       global:
         enabled: true
-        tlsDisable: true          # 리스너 평문(8200) — TLS 종단은 Traefik(websecure) + Cloudflare AOP. cluster.tests·reboot.tests·
-                                  # platform-backup.sh가 전부 http로 하드코딩돼 있어 선택이 아니라 통과 조건. Service 포트 이름도 이 값으로 `http`.
+        tlsDisable: true          # 리스너 평문(8200) — TLS 종단은 Traefik(websecure) + Cloudflare AOP. cluster.tests·reboot.tests는 http를
+                                  # 하드코딩하고 platform-backup.sh는 VAULT_ADDR_SCHEME 기본값이 http라(T044 확정 = http 유지) 선택이 아니라 통과 조건. Service 포트 이름도 이 값으로 `http`.
 
       injector:
         enabled: false            # ⚠ 기본값은 "-"(= global.enabled 상속 = **true**). 명시하지 않으면 injector Deployment·Service·RBAC·
@@ -83,7 +83,7 @@ helmCharts:
 
         # 차트 기본값 OnDelete를 **유지**한다: HCL(ConfigMap) 변경이 파드를 자동 재시작시키지 않는 편이 "KMS 장애 중 pod 재시작 금지"
         # 규율과 맞다. 대가는 조용한 드리프트 → config 체크섬을 함께 켠다.
-        # ⚠ 설정 변경 = PR 머지 **+ 운영자 `kubectl -n vault delete pod vault-0`** 두 단계(README §3 · 런북 §10).
+        # ⚠ 설정·이미지·resources 등 파드 템플릿 변경 전부 = PR 머지 **+ 운영자 `kubectl -n vault delete pod vault-0`** 두 단계(README §2 단계 6 · §3 · 런북 §10).
         updateStrategyType: OnDelete
         includeConfigAnnotation: true
 
@@ -159,9 +159,9 @@ helmCharts:
         auditStorage:
           enabled: false          # 감사는 `vault audit enable file file_path=stdout`(alloy-logs). 켜면 어노테이션 없는 PVC `audit-vault-0`이
                                   # 생겨 argo-4가 FAIL한다.
-        # persistentVolumeClaimRetentionPolicy는 적지 않는다: 차트가 `semverCompare ">= 1.23-0"` 뒤에 두는데 helm 기본
-        # Capabilities.KubeVersion이 v1.20이라 `helmCharts[].kubeVersion` 없이는 조용히 사라진다. K8s 기본값이 이미 Retain/Retain이라
-        # 동작은 같고, 거짓 안전감만 제거한다(설계 D2).
+        # persistentVolumeClaimRetentionPolicy는 적지 않는다: 차트가 `semverCompare ">= 1.23-0" .Capabilities.KubeVersion` 뒤에 두는데 그 기본값은
+        # helm 버전 의존이다(helm 3.x 기본 v1.20 → 조용히 사라짐 · helm 4 실측 v1.37 → 렌더됨; 로컬 4.3.0·Argo CD v3.5.2 repo-server 번들 4.2.1 모두 helm 4).
+        # `helmCharts[].kubeVersion`을 고정하기 전에는 두지 않는다. K8s 기본값이 이미 Retain/Retain이라 동작은 같고, 거짓 안전감만 제거한다(설계 D2).
 
         ha:
           enabled: true

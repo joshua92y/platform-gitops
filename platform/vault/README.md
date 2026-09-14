@@ -6,7 +6,7 @@ kustomize `helmCharts` 인플레이트다(§1). 이 디렉터리는 **G1 PR 시�
 
 | 파일 | 내용 |
 |---|---|
-| `kustomization.yaml` | `helmCharts` 한 항목(HTTPS helm repo 인플레이트) + `valuesInline` 전량 + raft/seal HCL. seal 3값은 `<OPERATOR-FILL: …>` 자리표시자이고 운영자가 머지 전에 채운다(§3). 이 디렉터리가 만들지 않는 것의 경계는 머리 주석에 있다 |
+| `kustomization.yaml` | `helmCharts` 한 항목(HTTPS helm repo 인플레이트) + `valuesInline` 전량 + raft/seal HCL. seal 3값(key OCID · crypto/management 엔드포인트 — 식별자, §0)은 운영자가 `tofu output`으로 읽은 값을 채운 상태로 머지한다(커밋 a429a3f); 채우는 절차와 `OPERATOR-FILL` 0행 게이트는 §3. 이 디렉터리가 만들지 않는 것의 경계는 머리 주석에 있다 |
 | `serviceaccount-vault-backup.yaml` | SA `vault-backup`(K8s RBAC 0). 노드 A `platform-backup.sh`가 Raft 스냅샷을 뜰 때 Vault Kubernetes auth에 내미는 신원 |
 | `ingress.yaml` | **아직 없다.** `vault.joshuatech.dev` → Service `vault` 포트 **이름** `http`. init 완료 뒤 G2 PR에서 이 파일과 `resources:` 한 줄, 이 README의 해당 절을 함께 추가한다 |
 
@@ -22,7 +22,7 @@ kustomize `helmCharts` 인플레이트다(§1). 이 디렉터리는 **G1 PR 시�
 - 로컬 재현(리뷰어용, helm 필요):
   ```bash
   kustomize build --enable-helm platform/vault | kubeconform -strict -ignore-missing-schemas -summary
-  # G1: 문서 10개 = 적용 대상 9개 + helm test hook Pod 1개(Argo CD가 무시한다 — kind/name 목록과 근거는 §6) · G2 뒤 Ingress 1개 추가
+  # G1: 문서 9개(= 적용 대상 전부; `helmCharts[].skipTests: true`로 helm test hook Pod는 렌더에서 제외 — kind/name 목록과 근거는 §6) · G2 뒤 Ingress 1개 추가 = 10개
   ```
   렌더하면 `platform/vault/charts/`(차트 사본)가 생긴다. `.gitignore`의 `charts/`(T042 PR-0)가 잡으므로 `git add`에 끌려오지 않는다.
 
@@ -55,7 +55,7 @@ kustomize `helmCharts` 인플레이트다(§1). 이 디렉터리는 **G1 PR 시�
   차트의 `server.networkPolicy`가 `false`인 이유다.
 - Application `platform-vault` → `clusters/oci-k3s/apps/platform-vault.yaml`(T041부터 라이브). 이 PR은 건드리지 않는다 —
   검사 7.1이 `source.path = platform/vault`를 대조한다.
-- ClusterSecretStore · ExternalSecret → `secrets/`(T045).
+- ClusterSecretStore 5개 → `platform/external-secrets/`(T045) · ExternalSecret → `secrets/<ns>/`(플랫폼 ns, store `vault-platform`; 계약 gitops-repo.md §디렉터리).
 - Vault **내부** 설정(kv v2 마운트 · auth/kubernetes · 정책 6 · role 6) → 모노레포 `infra/vault/` OpenTofu.
 - 감사 장치(`sys/audit`) → 런북의 CLI 1회 `vault audit enable file file_path=stdout`(설계 D5). gitops도 tofu도 소유하지 않는다 —
   `sys/audit`는 list·enable·disable이 전부 sudo라 tofu가 소유하면 매 plan의 refresh가 sudo를 요구한다.
@@ -71,7 +71,7 @@ management 엔드포인트는 **자격증명이 아니라 식별자**다.
   HCL 전체를 Secret 볼륨으로 옮기는 대안은 GitOps 추적성·selfHeal·Argo 헬스를 모두 잃으므로 채택하지 않았다.
 - 이 저장소에 OCID가 들어가는 **최초 사례**다. 허용되는 것은 `kustomization.yaml` 안의 key OCID(`ocid1`-`key` 접두) 1건뿐이고
   테넌시·컴파트먼트·사용자 OCID는 **0건**이어야 한다. PR마다 게이트 둘: `gitleaks dir . --no-banner --redact --exit-code 1` → exit 0,
-  `grep -rn 'ocid1\.' .` → 히트가 `platform/vault/kustomization.yaml` 1건뿐(자리표시자 상태의 G1 파일에서는 0건).
+  `grep -rn 'ocid1\.' .` → 히트가 `platform/vault/kustomization.yaml` 1건뿐(seal 값 투입 전 초안에서는 0건).
 
 - **전역 `namespace:` 변환기가 없다** — 차트 객체는 `helmCharts[].namespace: vault`로 렌더되고, 수기 매니페스트는 각자
   `metadata.namespace: vault`를 적는다. 변환기를 두면 `system:auth-delegator` ClusterRoleBinding의 subject ns까지 다시 쓰는
@@ -129,11 +129,14 @@ fail-closed다 — cert-manager와 같은 기존 상태이며 T047(CI runner에 
    매니페스트 리스트 digest여야 한다(노드 2대가 arm64 Ampere A1). 얻는 법: `docker buildx imagetools inspect hashicorp/vault:<tag>`의
    첫 `Digest:` 줄, 또는 registry API(`GET /v2/hashicorp/vault/manifests/<tag>`에 Accept `application/vnd.oci.image.index.v1+json` ·
    `application/vnd.docker.distribution.manifest.list.v2+json`, 응답 헤더 `Docker-Content-Digest`).
-4. 로컬 렌더로 `image: hashicorp/vault:<tag>@sha256:<digest>` 줄(STS + test Pod, 2줄)과 문서 수(§6의 기대값)를 확인해 PR 본문에.
+4. 로컬 렌더로 `image: hashicorp/vault:<tag>@sha256:<digest>` 줄(StatefulSet 1줄 — `skipTests`로 test Pod는 렌더되지 않는다)과 문서 수(§6의 기대값)를 확인해 PR 본문에.
 5. **머지 뒤 라이브 반영을 확인한다 — `charts/` 캐시 함정.** kustomize는 `charts/vault`가 이미 있으면 **버전을 보지 않고** pull을
    건너뛰고, Argo repo-server는 최초 init 1회만 작업 트리를 청소한다(cert-manager README §3, 2026-09-10 사후 감사). 그래서 살아 있는
    repo-server는 옛 차트를 계속 쓴다. hard refresh로는 풀리지 않는다(git 리비전만 다시 읽는다). §6의 `get sts … image`가 옛 값이면
    repo-server를 재시작하거나 그 `charts/`를 지운다. 같은 캐시가 태그 재푸시 공격도 같은 만큼 늦춘다.
+6. **OnDelete이므로 머지만으로는 파드가 바뀌지 않는다.** Argo는 Synced/Healthy를 그대로 보고하고 파드는 옛 바이너리로 돈다(무신호).
+   KMS 정상(`VaultSealed` 미발화)을 확인한 뒤 `kubectl -n vault delete pod vault-0` → 재기동 후
+   `kubectl -n vault get pod vault-0 -o jsonpath='{.status.containerStatuses[0].imageID}'`가 새 digest, seal-status `sealed:false`(런북 §10).
 
 `server.image.tag`의 digest 병기가 containerd에서 거부되면(ImagePullBackOff · InvalidImageName) `"2.0.4"`로 되돌리고 digest는
 주석 기록으로만 남긴다(설계 D6 폴백 — 수용 여부는 첫 배포 VD-12에서 실측).
@@ -144,7 +147,7 @@ fail-closed다 — cert-manager와 같은 기존 상태이며 T047(CI runner에 
 
 | 키 | 값 | 이유 |
 |---|---|---|
-| `global.tlsDisable` | `true` | 리스너 평문 8200. TLS 종단은 Traefik websecure + Cloudflare AOP. cluster.tests·reboot.tests·platform-backup.sh가 http로 하드코딩돼 있어 선택이 아니라 통과 조건. Service 포트 이름이 이 값으로 `http`가 된다 |
+| `global.tlsDisable` | `true` | 리스너 평문 8200. TLS 종단은 Traefik websecure + Cloudflare AOP. cluster.tests·reboot.tests는 http를 하드코딩하고 platform-backup.sh는 `VAULT_ADDR_SCHEME` 기본값이 http라(T044 확정 = http 유지) 선택이 아니라 통과 조건. Service 포트 이름이 이 값으로 `http`가 된다 |
 | `injector.enabled` | `false` | 기본값 `"-"`는 `global.enabled` 상속 = true. 명시하지 않으면 injector Deployment·Service·RBAC·certs Secret과 **클러스터 범위 MutatingWebhookConfiguration**(failurePolicy Ignore — 조용히 성공해 더 위험)이 함께 온다. 주입은 ESO만(ADR 0010) |
 | `csi.enabled` | `false` | 기본값과 같지만 계약 의도를 코드에 남긴다 |
 | `ui.enabled` | `false` | 이 키는 Service `vault-ui`를 하나 더 만들 뿐이다. UI는 HCL `ui = true`로 8200 `/ui`에서 서빙되고 Ingress(G2)는 Service `vault`를 쓴다(research VAULT-D2 편차 — converge 인계) |
@@ -164,7 +167,7 @@ fail-closed다 — cert-manager와 같은 기존 상태이며 T047(CI runner에 
 | `server.auditStorage.enabled` | `false` | 감사는 stdout(§4). 켜면 어노테이션 없는 PVC `audit-vault-0`이 생겨 argo-4가 FAIL |
 | `server.ha.disruptionBudget.enabled` | `false` | replicas=1이면 차트가 `maxUnavailable: 0`으로 고정(override 불가) → 앞으로 노드 A `kubectl drain`이 영구 대기. SUC Plan은 cordon만 쓰므로 업그레이드는 무해하지만 지뢰를 남기지 않는다 |
 | `server.ha.config` | 차트 기본(건드리지 않음) | ConfigMap과 `/vault/config` 마운트의 렌더 조건이 `standalone.config or ha.config`다. 빈 문자열로 바꾸면 ConfigMap이 사라지고 볼륨만 남아 ContainerCreating(`configmap "vault-config" not found`)에 갇힌다. raft가 켜지면 실제 HCL은 `ha.raft.config`다 |
-| `persistentVolumeClaimRetentionPolicy` | 적지 않음 | 차트가 `semverCompare ">= 1.23-0"` 뒤에 두는데 helm 기본 KubeVersion이 v1.20이라 `helmCharts[].kubeVersion` 없이는 조용히 사라진다. K8s 기본이 이미 Retain/Retain이라 동작은 같고 거짓 안전감만 없앤다(설계 D2) |
+| `persistentVolumeClaimRetentionPolicy` | 적지 않음 | 차트가 `semverCompare ">= 1.23-0" .Capabilities.KubeVersion` 뒤에 두는데 그 기본값은 helm 버전 의존이다 — helm 3.x 기본 v1.20에서는 조용히 사라지고 helm 4(로컬 4.3.0 · Argo CD v3.5.2 repo-server 번들 4.2.1)에서는 렌더된다. 버전 의존 필드라 `helmCharts[].kubeVersion` 고정 전에는 두지 않는다. K8s 기본이 이미 Retain/Retain이라 동작은 같고 거짓 안전감만 없앤다(설계 D2) |
 
 **raft HCL(`server.ha.raft.config`)** — 차트 헬퍼가 `tpl`로 한 번 렌더하므로 `{{ }}`를 쓰지 않는다.
 
@@ -178,8 +181,9 @@ fail-closed다 — cert-manager와 같은 기존 상태이며 T047(CI runner에 
   헤더 없는 경로가 readinessProbe(127.0.0.1) · port-forward seal-status · platform-backup.sh · ESO · metrics 스크레이프 **전부**라
   한 줄로 모든 내부 경로가 동시에 깨진다. 실제 클라이언트 IP는 Cloudflare Access 로그와 Traefik 액세스 로그(`CF-Connecting-IP`)에 남는다.
 - **seal 3값**(`key_id` · `crypto_endpoint` · `management_endpoint`)은 운영자가 `tofu -chdir=infra/oci output -raw kms_key_id` ·
-  `kms_crypto_endpoint` · `kms_management_endpoint`로 읽어 `<OPERATOR-FILL: …>` 자리에 채운다 — 에이전트는 읽을 수 없다.
-  머지 전 게이트: `Select-String -Path platform/vault/kustomization.yaml -Pattern 'OPERATOR-FILL'` → 0행.
+  `kms_crypto_endpoint` · `kms_management_endpoint`로 읽어 넣은 값이다(에이전트는 읽을 수 없다). 키 교체(rotation) PR도 같은 출처로 갱신한다.
+  머지 전 게이트: `Select-String -Path platform/vault/kustomization.yaml -Pattern 'OPERATOR-FILL'` → 0행 유지 · key OCID의 5번째 세그먼트(`gjvjsruaaadoq`)가
+  두 엔드포인트 호스트 접두와 같다(같은 볼트의 키).
   ⚠ 값이 틀리면 sealed 대기가 **아니라 프로세스 즉사(CrashLoopBackOff)** 다 — Vault는 seal 설정 실패 시 시작 자체를 중단하고
   seal-status는 연결 거부가 된다. 반대로 이미 unseal된 파드는 KMS 장애 중에도 계속 서비스한다 — "KMS 장애 중 pod 재시작 금지"의 진짜 근거.
 - `auth_type_api_key = "false"` = 인스턴스 프린시펄. `true`면 `~/.oci/config`를 찾다 실패한다.
@@ -203,6 +207,8 @@ fail-closed다 — cert-manager와 같은 기존 상태이며 T047(CI runner에 
 SA `vault-backup` 토큰으로 Vault role `vault-backup`에 로그인해야 뜨는데, 그 role은 모노레포 `infra/vault` apply가 만든다.
 즉 G1 머지 ~ `infra/vault` apply 사이에는 prepare가 실패하고, 그 실패는 일요일 03:00–05:00 KST 창 밖에서도 재트리거된다.
 **배포(G1 머지) · init · 감사 장치 · `infra/vault` apply · 백업 1회 성공은 같은 운영자 세션에서 끝낸다.**
+세션이 다음 일요일 03:00 KST 창을 넘길 위험이 보이면 즉시 `kubectl label node <A> <B> plan.upgrade.cattle.io/k3s-server=disabled plan.upgrade.cattle.io/k3s-agent=disabled --overwrite`
+(`platform/system-upgrade/README.md` §비상 정지) → `infra/vault` apply·백업 1회 성공 뒤 라벨을 제거한다.
 
 ---
 
@@ -252,9 +258,12 @@ kubectl -n vault get sts,svc,cm,sa,pvc,pod -o wide
 #   · pvc data-vault-0 Bound · pod vault-0 NODE = 노드 A(role=platform)
 kubectl -n vault get sts vault -o jsonpath='{.spec.template.spec.containers[0].image}'
 #   hashicorp/vault:2.0.4@sha256:5be49781…e1a2 — digest 병기(§2)
+kubectl -n vault get pod vault-0 -o jsonpath='{.status.containerStatuses[0].imageID}'
+#   STS spec이 아니라 실행 중 파드의 digest — OnDelete라 둘이 다를 수 있다(§2 단계 6)
 kubectl -n vault get pvc data-vault-0 -o jsonpath='{.metadata.annotations}'
 #   argocd.argoproj.io/sync-options: Delete=false,Prune=false 포함
-kubectl get mutatingwebhookconfigurations | Select-String vault     # 0행 — injector 없음
+kubectl -n vault get deploy,sa,svc | Select-String injector          # 0행 — injector 없음(켜지면 Deployment/SA vault-agent-injector · Service vault-agent-injector-svc가 생긴다)
+#   (admin kubeconfig 전용) kubectl get mutatingwebhookconfigurations | Select-String vault   # 0행 — agent-view는 admissionregistration.k8s.io 읽기 권한이 없다(rbac-agent-view.yaml)
 kubectl -n vault get pdb,networkpolicy
 #   PDB 0 · NetworkPolicy는 platform/policies 소유분만(2026-09-14 기준 9장 — default-deny · allow-dns · allow-kube-api ·
 #   allow-apiserver-webhook · allow-imds · allow-egress-external-443 · allow-from-traefik · allow-from-external-secrets ·
@@ -293,8 +302,10 @@ kustomize build --enable-helm platform/vault | grep -E 'image:|Delete=false|name
 - **고아 경고 1건은 정상이다.** PVC `data-vault-0`은 StatefulSet 컨트롤러가 만들지 Argo 트리에 없다. AppProject `platform`이
   `orphanedResources.warn: true`라 Argo UI에 경고로 뜬다 — 드리프트가 아니고 **지우지 않는다**(§5 ⑤).
 - **`system:auth-delegator` ClusterRoleBinding의 폭발 반경.** SA `vault`가 클러스터 전체 범위의 TokenReview·SubjectAccessReview를
-  부를 수 있다 = 어떤 ns의 SA 토큰이든 검증할 수 있는 권한이다. auth/kubernetes에 필수라 끄는 value가 없고, 차트도 대안을 주지 않는다.
-  Vault 파드가 뚫리면 이 권한으로 토큰 유효성을 조회할 수 있다(발급은 불가). 수용한다.
+  부를 수 있다: TokenReview = 손에 넣은 어떤 ns의 SA 토큰이든 유효성·주체(user/uid/groups)를 확인, SubjectAccessReview = 토큰 없이도
+  임의 주체(user·group·SA)가 어떤 동사를 허용받는지 질의(클러스터 전체 RBAC 정찰). 둘 다 토큰 발급·권한 부여는 불가.
+  `server.authDelegator.enabled: false`로 끌 수는 있지만 auth/kubernetes의 TokenReview 호출자는 어차피 같은 ClusterRole이 필요해
+  다른 SA(+`token_reviewer_jwt`를 tofu 상태에 보관)로 옮겨질 뿐 폭발 반경은 줄지 않는다 — 그래서 SA `vault` 자신에 두고 수용한다.
 - **단일 stdout 감사 = fail-closed.** Vault는 모든 감사 장치에 쓰기가 실패하면 **전 요청을 거부**한다. 장치가 stdout 하나라
   노드 A 디스크 포화(컨테이너 로그 로테이션 실패)가 곧 Vault 전면 정지다. 두 번째 장치를 임시 FS에 두는 '보험'은 감사 유실 경로라
   넣지 않고, `NodeDiskLow`(FR-040)를 조기 경보로 쓴다(런북 §9).
