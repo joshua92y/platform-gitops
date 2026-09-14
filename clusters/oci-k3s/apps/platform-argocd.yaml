@@ -1,7 +1,7 @@
 # clusters/oci-k3s/apps/platform-argocd.yaml — Argo CD 자기 관리 Application (T041 PR-B1)
 #
 # 역할: root(app-of-apps)가 이 파일을 읽어 child Application `platform-argocd`를 만들고, 그 Application 이
-#   `bootstrap/argocd`(= Argo CD 본체 + AppProject 5종 + Argo CRD 어노테이션 패치)를 서버 사이드 적용으로 **인수**한다.
+#   `bootstrap/argocd`(= Argo CD 본체 + AppProject 5종 + Argo CRD 어노테이션 패치 + Ingress argo.joshuatech.dev(T043))를 서버 사이드 적용으로 **인수**한다.
 #   운영자가 T040·T041 PR-A 에서 `kubectl apply --server-side --field-manager=operator-bootstrap -k bootstrap/argocd` 로
 #   이미 넣어 둔 객체들의 **필드 소유권만** `operator-bootstrap` → `argocd-controller` 로 넘어간다.
 #   워크로드를 새로 만들거나 다시 굴리지 않는다(렌더 결과가 같으면 no-op).
