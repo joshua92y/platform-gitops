@@ -207,9 +207,9 @@ helmCharts:
               }
 
               seal "ocikms" {
-                key_id              = "<OPERATOR-FILL: tofu -chdir=infra/oci output -raw kms_key_id>"
-                crypto_endpoint     = "<OPERATOR-FILL: tofu -chdir=infra/oci output -raw kms_crypto_endpoint>"
-                management_endpoint = "<OPERATOR-FILL: tofu -chdir=infra/oci output -raw kms_management_endpoint>"
+                key_id              = "ocid1.key.oc1.ap-chuncheon-1.gjvjsruaaadoq.ab4w4ljrjk4tfx75c47dgyeibp4pxgh3pn3pttsudq2p2hcbsjifvacwspda"
+                crypto_endpoint     = "https://gjvjsruaaadoq-crypto.kms.ap-chuncheon-1.oci.oraclecloud.com"
+                management_endpoint = "https://gjvjsruaaadoq-management.kms.ap-chuncheon-1.oci.oraclecloud.com"
                 auth_type_api_key   = "false"
               }
 
