@@ -1,0 +1,30 @@
+# store `k8s-data-ca`가 ns `data`에서 읽을 수 있는 범위(계약 §ClusterSecretStore 표 k8s-data-ca 행 · tasks.md T045 문면 그대로).
+# ⚠ RBAC는 Secret **객체 단위**다 — 키 단위로는 제한하지 못한다. 그래서 이 Role만으로도 CNPG `pg-main-ca` 전체(**ca.key 포함**)가
+#   SA `eso-ca-reader` 신원으로 이미 읽힌다. ca.key가 앱 ns로 복제되지 않게 막는 것은 이 파일이 아니라 ExternalSecret 쪽
+#   (validate 3.4: `property: ca.crt`만 · `dataFrom` 금지 · 하네스 T031)과 store `k8s-data-ca`의 `conditions.namespaces`뿐이다.
+#   ca.key가 새면 서버·streaming_replica 인증서 위조가 가능해 `sslmode=verify-full`이 무력화된다.
+#   이 파일의 리뷰가 막는 것은 **resourceNames 밖으로 범위가 넓어지는 것**이다 — `resourceNames`를 빼거나 이름을 늘리면
+#   ns `data`의 다른 Secret(DB·Kafka 자격, pg-main-server/replication의 tls.key 등)까지 열린다.
+#   RBAC 범위에는 자동 검사가 없다(validate 3.4는 ES 쪽만 본다) → 이 파일의 리뷰가 그 경계의 방어선이다.
+# ⚠ 문면 유지 + 실효 없음(설계 D12 · 계약 각주):
+#   · `list`·`watch`: resourceNames가 붙은 규칙은 이름 없는 요청을 인가하지 못한다. ESO kubernetes provider는 Get만 쓴다.
+#   · `selfsubjectrulesreviews create`: 클러스터 스코프 리소스라 Role로는 부여되지 않고, 기본 ClusterRole `system:basic-user`가
+#     `system:authenticated` 전원에게 이미 준다(VD-7로 실측). store Ready 판정이 이 리뷰 1회이므로 동작에는 지장이 없다.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: eso-ca-reader, namespace: data }
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, list, watch]
+    resourceNames: [pg-main-ca, jt-kafka-cluster-ca-cert]
+  - apiGroups: [authorization.k8s.io]
+    resources: [selfsubjectrulesreviews]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: eso-ca-reader, namespace: data }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: eso-ca-reader }
+subjects:
+  - { kind: ServiceAccount, name: eso-ca-reader, namespace: external-secrets }
