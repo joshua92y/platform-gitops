@@ -11,7 +11,7 @@ kustomize `helmCharts` 인플레이트다(§1). Ingress(`vault.joshuatech.dev`)�
 | `ingress.yaml` | `vault.joshuatech.dev` → Service `vault` 포트 **이름** `http`(G2, init 완료 뒤 추가). websecure 전용 · TLSOption `default` 상속(T043 AOP) · `spec.tls` 없음 · `/` Prefix라 US4 전까지 Access + AOP가 `/v1/*`의 유일 방어선 |
 
 > **머지 순서: G0 → G1 → G2**(설계 D7). G0(AppProject `platform`의 `sourceRepos`에서 hashicorp helm repo 줄 삭제)이 먼저
-> 머지되고 20 Application이 Synced/Healthy를 유지하는 것을 확인한 뒤에 이 PR(G1)을 연다. 순서를 강제하는 기계 장치는 없으므로
+> 머지되고 20 Application이 Synced/Healthy를 유지하는 것을 확인한 뒤에 G1(컴포넌트)을 열고, init 완료 뒤에야 G2(Ingress)를 연다. 순서를 강제하는 기계 장치는 없으므로
 > cert-manager T042와 같이 draft PR + 본문 체크박스로 지킨다.
 > **G1 머지 = 즉시 자동 sync = `vault-0` 기동 = SUC prepare 게이트 시작(§4)이다.** `vault operator init`을 곧바로 칠 수 있는
 > 운영자 세션에서만 머지한다 — 초기화되지 않은 Vault가 떠 있는 시간을 최소로 한다.
@@ -223,7 +223,7 @@ Application `platform-vault`는 `prune: false` + `Prune=confirm` + `Delete=confi
 1. revert PR 머지 → `kustomization.yaml`이 `resources: []` 뼈대로 복귀 → 렌더 0 → hard refresh. 객체는 그대로 남는다.
 2. 운영자가 수동 삭제, **이 순서로**(admin kubeconfig):
    ```powershell
-   # ① 공개 진입점 먼저 — G2 이후에만 존재한다
+   # ① 공개 진입점 먼저
    kubectl -n vault delete ingress vault
    # ② StatefulSet만 지우고 파드는 남긴다
    kubectl -n vault delete sts vault --cascade=orphan
@@ -270,9 +270,10 @@ kubectl -n vault get pdb,networkpolicy
 #   allow-scrape-from-monitoring). 차트가 만든 정책이 하나라도 보이면 `server.networkPolicy.enabled`를 확인한다
 kubectl -n vault get ingress vault -o jsonpath='{.spec.rules[0].host} {.spec.rules[0].http.paths[0].backend.service.name}:{.spec.rules[0].http.paths[0].backend.service.port.name}{"\n"}'
 #   vault.joshuatech.dev vault:http (G2)
-kubectl -n vault logs vault-0 --tail=200 | Select-String 'none were found|ocikms|error'
+kubectl -n vault logs vault-0 --tail=200 | Select-String 'none were found|ocikms|\[ERROR\]'
 #   2.0.4 배너에는 `Seal Type` 줄이 **없다**(2026-09-17 실측) — seal 종류는 seal-status의 `type`으로 본다. 미초기화면 5초마다
-#   `stored unseal keys are supported, but none were found` WARN(= auto-unseal seal 구성됨 + init 전) · error 0행.
+#   `[WARN]  failed to unseal core: error="stored unseal keys are supported, but none were found"`(= auto-unseal seal 구성됨 + init 전;
+#   이 WARN 줄에 `error=`가 들어 있으므로 패턴은 `[ERROR]` 레벨로 좁힌다) · init·unseal 뒤에는 WARN도 `[ERROR]`도 0행.
 #   CrashLoopBackOff면 seal 3값 → nodeSelector(노드 A인가) → IMDS 80/KMS 443 egress 순으로 본다(런북)
 ```
 
@@ -290,9 +291,10 @@ curl.exe -s http://127.0.0.1:18200/v1/sys/seal-status
 ```bash
 kustomize build --enable-helm platform/vault | yq -N '.kind + " " + .metadata.name'
 # G2 실측(2026-09-17, helm v4.3.0 · kustomize v5.8.1, `skipTests: true`) = 문서 **10장**:
-#   Ingress vault · ServiceAccount vault · ServiceAccount vault-backup · Role vault-discovery-role · RoleBinding vault-discovery-rolebinding ·
-#   ClusterRoleBinding vault-server-binding · ConfigMap vault-config · Service vault · Service vault-internal · StatefulSet vault
-#   ⚠ `skipTests` 없이는 Pod vault-server-test(`helm.sh/hook: test`)가 10번째로 렌더된다 — 차트 `templates/tests/server-test.yaml`은
+#   ServiceAccount vault · ServiceAccount vault-backup · Role vault-discovery-role · RoleBinding vault-discovery-rolebinding ·
+#   ClusterRoleBinding vault-server-binding · ConfigMap vault-config · Service vault · Service vault-internal · StatefulSet vault · Ingress vault
+#   (yq 출력 순서 = kustomize legacy kind 정렬 — Ingress가 마지막)
+#   ⚠ `skipTests` 없이는 Pod vault-server-test(`helm.sh/hook: test`)가 추가로 렌더된다(G1 10장 · G2 11장) — 차트 `templates/tests/server-test.yaml`은
 #   mode≠external이면 무조건 렌더하고 끄는 value가 없다(values.yaml에 `tests:` 키 없음). Argo CD는 test hook을 적용하지 않지만
 #   그 Pod는 securityContext가 없어 PSA restricted에 걸리는 객체라 정본 렌더에서 제외한다(G1 시점 9장 + G2 Ingress = 10장).
 kustomize build --enable-helm platform/vault | grep -E 'image:|Delete=false|namespaceSelector'
