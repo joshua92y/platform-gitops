@@ -230,7 +230,14 @@ oci network nsg rules list --nsg-id <nsg-cluster OCID> --all --query 'length(dat
 
 ## ⑨ T045 뒤 ExternalSecret 전환 (예고)
 
-ESO와 `ClusterSecretStore vault-platform`이 생기면(T045) 수동 Secret을 `secrets/cloudflared/`의 ExternalSecret으로 바꾼다.
+> ⚠ **2026-09-17 정정(T045 G0) — 아래에 있던 옛 전환 순서("수동 Secret을 지운다 → ExternalSecret 머지 → `rollout restart`")는 폐기했다. 실행하지 않는다.**
+> 이 Secret은 SSH·K8s API의 유일한 접근 경로(터널)의 자격이다. 지운 채로 파드가 교체되면 운영자가 잠긴다.
+> T045 설계의 확정 방식: **기존 Secret을 지우지 않고** ExternalSecret(`creationPolicy: Orphan` · `deletionPolicy: Retain`)이 인수한다.
+> 값은 라이브 Secret에서 Vault로 파이프 복사해 바이트 동일성을 먼저 보장하고, 인수 전후 UID·값 해시·ownerReferences 부재를 확인하며,
+> `rollout restart`는 하지 않는다(파드 1개만 교체하는 드릴로 확인). 정확한 매니페스트와 절차는 T045의 `secrets/cloudflared/` PR(G4)과
+> 모노레포 `docs/runbooks/bootstrap.md` §3 T045 절이 정본이며, 그 PR이 이 절을 최종 문면으로 교체한다.
+
+ESO와 `ClusterSecretStore vault-platform`이 생기면(T045) 수동 Secret을 `secrets/cloudflared/`의 ExternalSecret이 **인수**한다.
 전환 후에도 `deployment.yaml`은 그대로다(같은 Secret 이름·키를 본다).
 
 ```yaml
@@ -243,20 +250,19 @@ metadata:
 spec:
   refreshInterval: 5m
   secretStoreRef: { kind: ClusterSecretStore, name: vault-platform }
-  target: { name: cloudflared-tunnel, creationPolicy: Owner }
+  target: { name: cloudflared-tunnel, creationPolicy: Orphan, deletionPolicy: Retain }   # 확정 매니페스트는 G4 PR
   data:
     - secretKey: TUNNEL_TOKEN
-      remoteRef: { key: platform/cloudflare/tunnel, property: <T045에서 확정> }
+      remoteRef: { key: platform/cloudflare/tunnel, property: token }
 ```
 
-전환 순서:
+전환 순서(요약 — 정본은 위 정정문이 가리키는 곳):
 
-1. Vault에 `kv/platform/cloudflare/tunnel`을 넣는다(T045).
-2. 수동 Secret을 지운다 — `creationPolicy: Owner`는 남의 Secret을 인수하지 않는다:
-   `kubectl -n cloudflared delete secret cloudflared-tunnel`(실행 중인 pod의 env는 시작 시 주입된 값이라 영향 없다).
-3. ExternalSecret을 머지 → Argo CD Sync → `kubectl -n cloudflared get externalsecret cloudflared-tunnel`이 `SecretSynced`.
-4. `kubectl -n cloudflared rollout restart deploy/cloudflared` — cloudflared는 토큰을 시작 시에만 읽는다.
-   이 Deployment에는 `reloader.stakater.com/auto` 어노테이션이 없다(T046의 감시 대상 목록에도 없다) → 토큰 회전 때마다 이 수동 재시작이 필요하다.
+1. 라이브 Secret의 값을 Vault `kv/platform/cloudflare/tunnel`(키 `token`)로 파이프 복사하고 해시로 동일성을 확인한다(T045 시드 창).
+2. **수동 Secret은 지우지 않는다.** ExternalSecret을 머지하면 ESO가 같은 이름의 Secret을 인수한다(Orphan — ownerReference 없음).
+3. 인수 전후 Secret UID·값 해시가 같고 `ownerReferences`가 비어 있는지 확인한다. `rollout restart`는 하지 않는다.
+4. 파드 1개만 삭제해 새 파드가 같은 자격으로 터널에 등록되는지 본다(반대쪽 커넥터가 살아 있는 동안).
+   이 Deployment에는 `reloader.stakater.com/auto` 어노테이션이 없다(T046의 감시 대상 목록에도 없다) → 토큰 **회전** 때는 파드를 1개씩 수동으로 교체한다.
 
 ---
 
