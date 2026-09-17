@@ -1,14 +1,14 @@
-# platform/vault/ — 운영자 절차 (T044 G1)
+# platform/vault/ — 운영자 절차 (T044 G1·G2)
 
 HashiCorp Vault 2.0.4(차트 0.34.1)의 **서버 배포만** 소유한다 — Raft 스토리지 1 replica · OCI KMS auto-unseal ·
 리스너 평문 8200(TLS 종단은 Traefik websecure + Cloudflare AOP). 설치 방식은 `platform/cert-manager/`와 같은
-kustomize `helmCharts` 인플레이트다(§1). 이 디렉터리는 **G1 PR 시점의 모양**이며 Ingress는 G2에서 붙는다(§0).
+kustomize `helmCharts` 인플레이트다(§1). Ingress(`vault.joshuatech.dev`)는 init 완료 뒤 **G2 PR**로 붙였다(§0 — 초기화 전에는 공개 진입점을 두지 않았다).
 
 | 파일 | 내용 |
 |---|---|
 | `kustomization.yaml` | `helmCharts` 한 항목(HTTPS helm repo 인플레이트) + `valuesInline` 전량 + raft/seal HCL. seal 3값(key OCID · crypto/management 엔드포인트 — 식별자, §0)은 운영자가 `tofu output`으로 읽은 값을 채운 상태로 머지한다(커밋 a429a3f); 채우는 절차와 `OPERATOR-FILL` 0행 게이트는 §3. 이 디렉터리가 만들지 않는 것의 경계는 머리 주석에 있다 |
 | `serviceaccount-vault-backup.yaml` | SA `vault-backup`(K8s RBAC 0). 노드 A `platform-backup.sh`가 Raft 스냅샷을 뜰 때 Vault Kubernetes auth에 내미는 신원 |
-| `ingress.yaml` | **아직 없다.** `vault.joshuatech.dev` → Service `vault` 포트 **이름** `http`. init 완료 뒤 G2 PR에서 이 파일과 `resources:` 한 줄, 이 README의 해당 절을 함께 추가한다 |
+| `ingress.yaml` | `vault.joshuatech.dev` → Service `vault` 포트 **이름** `http`(G2, init 완료 뒤 추가). websecure 전용 · TLSOption `default` 상속(T043 AOP) · `spec.tls` 없음 · `/` Prefix라 US4 전까지 Access + AOP가 `/v1/*`의 유일 방어선 |
 
 > **머지 순서: G0 → G1 → G2**(설계 D7). G0(AppProject `platform`의 `sourceRepos`에서 hashicorp helm repo 줄 삭제)이 먼저
 > 머지되고 20 Application이 Synced/Healthy를 유지하는 것을 확인한 뒤에 이 PR(G1)을 연다. 순서를 강제하는 기계 장치는 없으므로
@@ -22,7 +22,7 @@ kustomize `helmCharts` 인플레이트다(§1). 이 디렉터리는 **G1 PR 시�
 - 로컬 재현(리뷰어용, helm 필요):
   ```bash
   kustomize build --enable-helm platform/vault | kubeconform -strict -ignore-missing-schemas -summary
-  # G1: 문서 9개(= 적용 대상 전부; `helmCharts[].skipTests: true`로 helm test hook Pod는 렌더에서 제외 — kind/name 목록과 근거는 §6) · G2 뒤 Ingress 1개 추가 = 10개
+  # G2: 문서 10개(= 적용 대상 전부; `helmCharts[].skipTests: true`로 helm test hook Pod는 렌더에서 제외 — kind/name 목록과 근거는 §6)
   ```
   렌더하면 `platform/vault/charts/`(차트 사본)가 생긴다. `.gitignore`의 `charts/`(T042 PR-0)가 잡으므로 `git add`에 끌려오지 않는다.
 
@@ -34,7 +34,7 @@ kustomize `helmCharts` 인플레이트다(§1). 이 디렉터리는 **G1 PR 시�
 브라우저 초기화 화면은 recovery key와 root 토큰을 화면과 다운로드 파일로 남긴다. 실행 기록은 모노레포
 `docs/runbooks/bootstrap.md` §4 T044 절에 남긴다.
 
-**이 디렉터리가 만드는 것**(Argo CD 적용 대상 = 로컬 렌더 결과, G1 기준 9장 — `helmCharts[].skipTests: true`로 helm test hook Pod를 렌더에서 제외한다. 대조 명령은 §6):
+**이 디렉터리가 만드는 것**(Argo CD 적용 대상 = 로컬 렌더 결과, G2 기준 10장 — `helmCharts[].skipTests: true`로 helm test hook Pod를 렌더에서 제외한다. 대조 명령은 §6):
 
 | 객체 | 출처 | 역할 |
 |---|---|---|
@@ -46,7 +46,7 @@ kustomize `helmCharts` 인플레이트다(§1). 이 디렉터리는 **G1 PR 시�
 | Service `vault-internal` | 차트 | headless. Raft·StatefulSet 내부용 |
 | StatefulSet `vault` | 차트 | 1 replica · OnDelete · PVC 템플릿 `data` → PVC `data-vault-0` |
 | ServiceAccount `vault-backup` | `serviceaccount-vault-backup.yaml` | 백업 스크립트의 Vault 로그인 신원. K8s RBAC 없음 |
-| Ingress `vault` | `ingress.yaml` | **G2 이후** |
+| Ingress `vault` | `ingress.yaml` | `vault.joshuatech.dev` → svc `vault` 포트 이름 `http`(G2). 봉인·미초기화 중에도 백엔드 엔드포인트가 남는 이유는 `publishNotReadyAddresses` |
 | (Pod `vault-server-test`) | 차트 `templates/tests/server-test.yaml` | **렌더도 적용도 되지 않는다.** helm test hook(`helm.sh/hook: test`)이며 끄는 value가 없어 kustomize `helmCharts[].skipTests: true`로 렌더에서 제외한다. Argo CD도 test hook을 적용하지 않지만, securityContext 없는 Pod를 정본 렌더에 남기지 않는다(§6) |
 
 **이 디렉터리가 만들지 않는 것**:
@@ -116,7 +116,7 @@ fail-closed다 — cert-manager와 같은 기존 상태이며 T047(CI runner에 
 
 **⚠ 이 차트의 `values.schema.json`에는 `additionalProperties: false`가 0곳이다**(cert-manager는 28곳이라 로컬 렌더가 즉시 실패했다).
 키 오타는 조용히 무시되고 렌더는 성공한다 — 예컨대 `injector.enabld: false`라고 쓰면 injector가 **배포된다.** 유일한 방어는
-렌더 결과 대조(§6의 kind/name 9장 + `image:`·`Delete=false`·`namespaceSelector` grep)이고, bump PR 본문에 그 출력을 붙인다.
+렌더 결과 대조(§6의 kind/name 10장 + `image:`·`Delete=false`·`namespaceSelector` grep)이고, bump PR 본문에 그 출력을 붙인다.
 
 **자동 검사가 없다.** validate 4b는 저장소 파일의 `image:` 스칼라 줄만 보는데 여기서는 `repository`/`tag` 블록 표기라 매칭조차
 하지 않는다. 차트 `version`만 올라가면 새 템플릿이 옛 바이너리를 당기는 상태가 조용히 성립한다.
@@ -268,8 +268,12 @@ kubectl -n vault get pdb,networkpolicy
 #   PDB 0 · NetworkPolicy는 platform/policies 소유분만(2026-09-14 기준 9장 — default-deny · allow-dns · allow-kube-api ·
 #   allow-apiserver-webhook · allow-imds · allow-egress-external-443 · allow-from-traefik · allow-from-external-secrets ·
 #   allow-scrape-from-monitoring). 차트가 만든 정책이 하나라도 보이면 `server.networkPolicy.enabled`를 확인한다
-kubectl -n vault logs vault-0 --tail=200 | Select-String 'Seal Type|ocikms|error'
-#   `Seal Type: ocikms` 1회 · error 0행. CrashLoopBackOff면 seal 3값 → nodeSelector(노드 A인가) → IMDS 80/KMS 443 egress 순으로 본다(런북)
+kubectl -n vault get ingress vault -o jsonpath='{.spec.rules[0].host} {.spec.rules[0].http.paths[0].backend.service.name}:{.spec.rules[0].http.paths[0].backend.service.port.name}{"\n"}'
+#   vault.joshuatech.dev vault:http (G2)
+kubectl -n vault logs vault-0 --tail=200 | Select-String 'none were found|ocikms|error'
+#   2.0.4 배너에는 `Seal Type` 줄이 **없다**(2026-09-17 실측) — seal 종류는 seal-status의 `type`으로 본다. 미초기화면 5초마다
+#   `stored unseal keys are supported, but none were found` WARN(= auto-unseal seal 구성됨 + init 전) · error 0행.
+#   CrashLoopBackOff면 seal 3값 → nodeSelector(노드 A인가) → IMDS 80/KMS 443 egress 순으로 본다(런북)
 ```
 
 seal 상태(agent-view에 `pods/portforward` create가 있다 — 별도 창):
@@ -285,12 +289,12 @@ curl.exe -s http://127.0.0.1:18200/v1/sys/seal-status
 
 ```bash
 kustomize build --enable-helm platform/vault | yq -N '.kind + " " + .metadata.name'
-# G1 실측(2026-09-14, helm v4.3.0 · kustomize v5.8.1, `skipTests: true`) = 문서 **9장**:
-#   ServiceAccount vault · ServiceAccount vault-backup · Role vault-discovery-role · RoleBinding vault-discovery-rolebinding ·
+# G2 실측(2026-09-17, helm v4.3.0 · kustomize v5.8.1, `skipTests: true`) = 문서 **10장**:
+#   Ingress vault · ServiceAccount vault · ServiceAccount vault-backup · Role vault-discovery-role · RoleBinding vault-discovery-rolebinding ·
 #   ClusterRoleBinding vault-server-binding · ConfigMap vault-config · Service vault · Service vault-internal · StatefulSet vault
 #   ⚠ `skipTests` 없이는 Pod vault-server-test(`helm.sh/hook: test`)가 10번째로 렌더된다 — 차트 `templates/tests/server-test.yaml`은
 #   mode≠external이면 무조건 렌더하고 끄는 value가 없다(values.yaml에 `tests:` 키 없음). Argo CD는 test hook을 적용하지 않지만
-#   그 Pod는 securityContext가 없어 PSA restricted에 걸리는 객체라 정본 렌더에서 제외한다. G2 뒤에는 Ingress vault가 더해져 10장.
+#   그 Pod는 securityContext가 없어 PSA restricted에 걸리는 객체라 정본 렌더에서 제외한다(G1 시점 9장 + G2 Ingress = 10장).
 kustomize build --enable-helm platform/vault | grep -E 'image:|Delete=false|namespaceSelector'
 # image: 1줄(StatefulSet, digest 병기) · Delete=false 1줄(volumeClaimTemplates) · namespaceSelector 0줄(차트 NetworkPolicy 없음)
 ```

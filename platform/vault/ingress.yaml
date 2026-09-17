@@ -1,0 +1,45 @@
+# platform/vault/ingress.yaml — Vault UI/API 공개 진입점 `vault.joshuatech.dev` (T044 G2)
+#
+# 정본 계약: 모노레포 contracts/hostnames-and-access.md :31(호스트 vault. · Access 앱 `vault` GitHub IdP · 뒤에서 Authentik OIDC는 US4)
+#   · spec FR-011(표준 networking.k8s.io Ingress · ingressClassName traefik · router.tls true · spec.tls 생략)
+#   · contracts/network-policy.md(kube-system(traefik) → vault 8200 — platform/policies `allow-from-traefik`, 이미 라이브)
+# 형태 근거(bootstrap/argocd/ingress.yaml 선례를 그대로 따른다):
+#   - 백엔드는 Service **`vault`**의 포트 **이름 `http`**다. 이유 셋:
+#       (a) `vault-active`는 selector `vault-active: "true"`(service_registration이 unseal 뒤 붙이는 라벨)를 요구해
+#           **초기화 전·봉인 중 엔드포인트 0 → 503** — UI가 필요한 바로 그 순간에 사라진다.
+#       (b) `vault`는 publishNotReadyAddresses: true라 NotReady여도 엔드포인트가 남는다.
+#       (c) 포트를 **이름**으로 쓰면 훗날 `global.tlsDisable`을 뒤집었을 때 차트가 포트 이름을 `https`로 바꿔 Ingress가 눈에 보이게
+#           깨지고 Traefik이 백엔드 TLS로 전환한다(번호 8200은 평문 요청을 TLS 리스너에 보내는 조용한 502).
+#   - `router.entrypoints: websecure`는 **필수**. 생략하면 이 라우터가 traefik(8080)·metrics(9100) 엔트리포인트에도 붙어
+#     Access를 지나지 않는 내부 경로가 생긴다.
+#   - `router.tls.options`는 적지 않는다 — 이름 없는 라우터는 kube-system TLSOption `default`(TLS12 · sniStrict ·
+#     clientAuth RequireAndVerifyClientCert, T043)를 받는다. `spec.tls` 없음: TLSStore default의 와일드카드가 SNI로 고른다.
+#   - ⚠ path `/` Prefix라 Access를 통과한 브라우저 세션에는 `/v1/*` API 전체가 열린다. US4에서 Authentik OIDC가 붙기 전까지
+#     **Cloudflare Access(GitHub IdP) + AOP가 유일한 방어선**(런북 §0).
+#   - ⚠ **UI로 `vault operator init`을 하지 않는다** — 브라우저 초기화 화면은 recovery key·root 토큰을 화면과 다운로드 파일로 남긴다.
+# 되돌리기: 이 파일 제거 PR을 머지해도 `platform-vault`는 prune:false라 객체가 남는다 → 운영자 `kubectl -n vault delete ingress vault`
+#   (전체 되돌리기 순서에서 **첫 번째** — kustomization.yaml 머리).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: vault
+  namespace: vault
+  labels:
+    app.kubernetes.io/name: vault
+    app.kubernetes.io/instance: vault
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: vault.joshuatech.dev
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: vault
+                port:
+                  name: http
