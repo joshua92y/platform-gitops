@@ -91,16 +91,17 @@
 | §정책 세트 `allow-dns` + §내부 매트릭스 `전 ns → kube-dns 53` | → `kube-system` kube-dns 53 UDP·TCP | `allow-dns` | 같은 13 | 13 |
 | §정책 세트 `allow-same-namespace` | 자기 ns 안 통신 | `allow-same-namespace` | `argocd` `data` `cnpg-system` `external-secrets` `cert-manager` `monitoring` `identity` | 7 |
 | §정책 세트 `allow-kube-api` + §외부 매트릭스 `위 10 ns → 노드 A private IP 6443` | → 노드 A/32 6443(K8s API) | `allow-kube-api` | `argocd` `vault` `external-secrets` `cert-manager` `cnpg-system` `data` `monitoring` `system-upgrade` `reloader` `cloudflared` | 10 |
-| §정책 세트 `allow-apiserver-webhook` + §외부 매트릭스의 `노드 A private IP → vault 8200` 행 및 `노드 A private IP 및 노드 A flannel 터널 장치 주소 → cert-manager · external-secrets · cnpg-system` 행 | ← 노드 A/32(webhook · port-forward) **+ 노드 A flannel-wg/32**(`cert-manager` · `cnpg-system`, T042 PR-A) ※ | `allow-apiserver-webhook` | `cert-manager` 10250 · `external-secrets` 10250 · `cnpg-system` 9443 · `vault` 8200 | 4 |
+| §정책 세트 `allow-apiserver-webhook` + §외부 매트릭스의 `노드 A private IP → vault 8200` 행 및 `노드 A private IP 및 노드 A flannel 터널 장치 주소 → cert-manager · external-secrets · cnpg-system` 행 | ← 노드 A/32(webhook · port-forward) **+ 노드 A flannel-wg/32**(`cert-manager` · `cnpg-system` = T042 PR-A · `external-secrets` = T045 G1p) ※ | `allow-apiserver-webhook` | `cert-manager` 10250 · `external-secrets` 10250 · `cnpg-system` 9443 · `vault` 8200 | 4 |
 | §정책 세트 `deny-imds` | IMDS만 제외한 egress 허용 1장 | `deny-imds` | `kube-system` 전용 | 1 |
 | §정책 세트 `allow-imds` + §외부 매트릭스 `vault → 169.254.169.254 80` | → IMDS 169.254.169.254:80 | `allow-imds` | `vault` 전용 | 1 |
 
 ※ `allow-apiserver-webhook` 행은 **한때** 매니페스트가 계약을 의도적으로 벗어난 유일한 행이었다. 지금은
 아니다 — 계약 정정(모노레포 `d5f8a82`, 2026-09-09 15:17:57)이 이 매니페스트를 담은 PR #13 머지(`cad608a`,
 15:21:51)보다 **3분 54초 먼저** 들어가 그 이탈은 해소됐고, 계약의 webhook 행 출발 열은 지금
-"노드 A private IP **및** 노드 A flannel 터널 장치 주소"다. 남은 것은 **잔여 1건(`external-secrets`)**뿐이며
-그 내용은 §8을 볼 것. 실측 근거와 메커니즘은 `policies-common.yaml`의 `allow-apiserver-webhook` 절 머리
-주석에 있다.
+"노드 A private IP **및** 노드 A flannel 터널 장치 주소"다. 마지막까지 남아 있던 **잔여 1건(`external-secrets`)도
+닫혔다** — T045 G1p에서 D6 = A로 확정해(2026-09-17) 기존 `10.0.7.78/32` + TCP 10250을 그대로 두고
+`10.42.0.0/32`를 **add-only**로 더했다. 이로써 webhook 3 ns가 계약 문면과 정확히 일치한다. 경위와 한계는
+§8, 실측 근거와 메커니즘은 `policies-common.yaml`의 `allow-apiserver-webhook` 절 머리 주석에 있다.
 
 ### 3.2 클러스터 내부 매트릭스 (M, 31장)
 
@@ -182,7 +183,7 @@ kustomize build platform/policies | yq -N 'select(.kind=="NetworkPolicy") | .met
 ```
 
 NetworkPolicy 93 = 공통 49 + 내부 31 + 외부 13. 이 수치가 바뀌면 계약 표가 먼저 바뀌었어야 한다.
-전체 lint는 저장소 루트에서 `bash tests/validate.sh`(검사 5.0–5.5가 이 디렉터리를 본다).
+전체 lint는 저장소 루트에서 `bash tests/validate.sh`(검사 5.0–5.6이 이 디렉터리를 본다).
 
 ---
 
@@ -285,7 +286,8 @@ kubectl delete networkpolicy -A -l app.kubernetes.io/part-of=platform-policies
 502로 죽어 있었다). **머지 시점에는 순서가 지켜졌다**: 계약 정정 커밋(모노레포 `d5f8a82`, 15:17:57)이
 매니페스트 PR #13 머지(`cad608a`, 15:21:51)보다 3분 54초 먼저 들어갔다. 그러니 "계약 정정 대기 중" ·
 "머지 선행 조건" · "매니페스트가 계약을 벗어난 상태"라고 적힌 문면을 어디서 보든 **그 문서가 낡은 것**이다.
-남은 것은 아래 표의 **잔여 1건(`external-secrets`)**뿐이고, 그것은 이탈이 아니라 미결 결정이다.
+아래 표의 **잔여 1건(`external-secrets`)**도 T045 G1p에서 닫혔다(D6 = A 확정, 2026-09-17) — 이제 이 행에
+미결은 없다. 다만 "닫혔다"가 "노드 간 경로를 측정했다"는 뜻은 아니다(아래 셀의 한계 항).
 
 | 공백 | 영향 | 처리 |
 |---|---|---|
@@ -294,7 +296,7 @@ kubectl delete networkpolicy -A -l app.kubernetes.io/part-of=platform-policies
 | Traefik metrics 9100(`kube-system`) 스크레이프 egress 행 없음 | Traefik 지표 누락 | 같은 태스크 |
 | cloudflared metrics 2000 스크레이프 행 없음 | 터널 지표 없음 | 같은 태스크 |
 | `cnpg-system` → `data` 8000(operator → instance status, 추정) 행 없음 | CNPG 운영 영향 가능 | CNPG 태스크에서 실측 |
-| ~~`allow-apiserver-webhook`의 ipBlock = 노드 A/32 — 노드 B 배치 webhook은 flannel-wg 주소로 도착할 수 있음~~ **해소(2026-09-09 · T042 PR-A)** — VD-W 실측: apiserver → 파드 IP 직접 dial의 출발 IP는 노드 A flannel-wg 주소 `10.42.0.0`(노드 A podCIDR의 네트워크 주소)이다 | (해소) cert-manager 10250 · cnpg-system 9443에 `10.42.0.0/32` **add-only** 추가 — 기존 `10.0.7.78/32`는 유지 | ~~계약 정정 대기~~ **해소(모노레포 `d5f8a82`, PR #13 머지 전)** — §정책 세트 `allow-apiserver-webhook` 행과 §외부 매트릭스 webhook 행의 출발 열에 "노드 A flannel 터널 장치 주소"가 들어갔고, webhook 행에 잘못 걸려 있던 port-forward 근거 문장은 삭제된 뒤 "이 정책의 두 행은 메커니즘이 다르다" 항으로 대체됐다 · **잔여 1건** `external-secrets`: 계약은 webhook 행에 이 ns도 열거하지만 매니페스트 규칙에는 flannel 주소가 없다. 이탈이 아니라 미결 결정이다 — ESO를 노드 A에 두면(T045 계획) kube-router의 LOCAL 예외로 flannel 주소 없이 통과할 수 있어 **필요한 값 자체가 달라진다**. T045에서 배치를 확정하고 파드 방화벽 체인의 `--src-type LOCAL` 행 존재를 확인한 뒤 결정 |
+| ~~`allow-apiserver-webhook`의 ipBlock = 노드 A/32 — 노드 B 배치 webhook은 flannel-wg 주소로 도착할 수 있음~~ **해소(2026-09-09 · T042 PR-A)** — VD-W 실측: apiserver → 파드 IP 직접 dial의 출발 IP는 노드 A flannel-wg 주소 `10.42.0.0`(노드 A podCIDR의 네트워크 주소)이다 | (해소) cert-manager 10250 · cnpg-system 9443(T042 PR-A) · external-secrets 10250(T045 G1p)에 `10.42.0.0/32` **add-only** 추가 — 기존 `10.0.7.78/32`는 유지 | ~~계약 정정 대기~~ **해소(모노레포 `d5f8a82`, PR #13 머지 전)** — §정책 세트 `allow-apiserver-webhook` 행과 §외부 매트릭스 webhook 행의 출발 열에 "노드 A flannel 터널 장치 주소"가 들어갔고, webhook 행에 잘못 걸려 있던 port-forward 근거 문장은 삭제된 뒤 "이 정책의 두 행은 메커니즘이 다르다" 항으로 대체됐다 · **잔여 1건 `external-secrets` 해소(T045 G1p · D6 = A, 2026-09-17)** — 계약이 webhook 행에 열거하는 세 ns 중 이 ns에만 flannel 주소가 없던 **미결 결정**을 add-only로 닫았다(기존 `10.0.7.78/32` + TCP 10250 유지). 값의 검증 수단은 **머지 전 노드 A 실측**(`ip -4 -o addr show flannel-wg`의 장치 주소 · `ip route get <다른 노드(B)의 파드 IP>`의 `src` = 노드 간 경로의 출발 주소)과 하네스 `np-set-5`(노드 객체 유도값 대조)이고, 기록은 모노레포 런북 `docs/runbooks/bootstrap.md` §3 T045 절이다. **증명 범위의 한계**: ESO와 API 서버가 모두 노드 A라 동일 노드에서는 kube-router의 LOCAL 예외로 flannel 주소 없이도 **통과한다** — 2026-09-17 G1 머지 후 · G1p 머지 전 server-side dry-run 실측(`exit 0` + `created (server dry run)`, 음성 대조 = `admission webhook "validate.externalsecret.external-secrets.io" denied the request`). 즉 **오늘의 성공은 이 추가와 무관하게 성립했다** — 이 ns의 flannel `/32`는 오늘 어떤 트래픽으로도 실증되지 않았고 **노드 간 webhook 경로는 미실측**이다. 그래서 이것은 기능 복구가 아니라 **계약 준수 + 파드가 노드 B로 옮겨져도 깨지지 않게 하는 선제 적용**이다(cnpg-system 행과 같은 취지). `platform-policies` Application은 `automated{prune:false, selfHeal:true}`라 **머지가 곧 적용**이다 |
 | ~~cert-manager `dns01RecursiveNameservers`가 1.1.1.1**/8.8.8.8** — 매트릭스에는 1.1.1.1/32 행만~~ **해소(커밋 2026-09-09 `8cb1149` · 확인 2026-09-10)** | (해소) 설계 결정 D2 = A로 values를 계약에 맞췄다 — `platform/cert-manager/kustomization.yaml`의 `dns01RecursiveNameservers`가 `"1.1.1.1:53"` **단독**이고 `dns01RecursiveNameserversOnly: true`가 짝이다. 계약 행 1개 · 정책 1장 · values 셋이 일치한다 | **규율**: 8.8.8.8이든 다른 리졸버든 되넣으려면 ① 계약 §외부 매트릭스에 행 추가 ② `policies-external.yaml`에 정책 1장 추가 ③ 그다음 values. values만 먼저 고치면 그 리졸버로 나가는 질의가 정책에 막혀 조용히 타임아웃하고, 증상은 "DNS-01이 pending에서 안 넘어간다"로만 보인다 |
 | `identity`에 `allow-kube-api` 없음(Authentik outpost의 in-cluster API 시도) | 오류 로그 가능(기능 영향 없음 추정) | Authentik 태스크에서 관찰 |
 | `agent-view`의 `applications` 권한: `tasks.md` T041 문면은 `argocd-applications-view` get·list, `hostnames-and-access.md` §클러스터(K8s)의 `agent-view-extra` 항은 get·list·watch | `kubectl get app -w` 거부 | converge에서 문면·계약 통일(현재는 `tasks.md` 문면을 따름) |
@@ -308,14 +310,16 @@ kubectl delete networkpolicy -A -l app.kubernetes.io/part-of=platform-policies
 | 상수 | 값 | 쓰이는 곳 |
 |---|---|---|
 | 노드 A private IP | `10.0.7.78` | `allow-kube-api`(6443) · `allow-apiserver-webhook` · `allow-egress-kubelet` · `allow-egress-ssh-nodes` |
-| 노드 A flannel-wg 주소 | `10.42.0.0` (= 노드 A `.spec.podCIDR` `10.42.0.0/24`의 **네트워크 주소**) | `allow-apiserver-webhook`(`cert-manager` 10250 · `cnpg-system` 9443) — apiserver가 **파드 IP로 직접 dial**할 때의 출발 IP(VD-W 실측 2026-09-09). 노드 재조인·재이미지 시 `.spec.podCIDR`과 **재대조**할 것 — 리스가 바뀌면 이 규칙은 조용히 무력해진다 |
+| 노드 A flannel-wg 주소 | `10.42.0.0` (= 노드 A `.spec.podCIDR` `10.42.0.0/24`의 **네트워크 주소**) | `allow-apiserver-webhook`(`cert-manager` 10250 · `external-secrets` 10250 · `cnpg-system` 9443) — apiserver가 **다른 노드의** 파드 IP로 직접 dial할 때의 출발 IP(같은 노드 경로의 `src`는 미실측. cert-manager·cnpg-system = VD-W 실측 2026-09-09 · external-secrets = T045 G1p D6 = A 2026-09-17, 값의 검증 수단은 머지 전 노드 A 실측(`flannel-wg` 장치 주소 · **다른 노드(B)의 파드 IP**로의 `ip route get` `src`)과 하네스 `np-set-5`이며 기록은 모노레포 런북 `docs/runbooks/bootstrap.md` §3 T045 절). 노드 재조인·재이미지 시 `.spec.podCIDR`과 **재대조**할 것 — 리스가 바뀌면 이 규칙은 조용히 무력해진다 |
 | 노드 B private IP | `10.0.10.193` | `allow-egress-kubelet` · `allow-egress-ssh-nodes` |
 | IMDS | `169.254.169.254` | `deny-imds`(except) · `allow-imds`(:80) · 외부 규칙 except |
 | 광역 egress `except` 4개 | `169.254.169.254/32` · `10.0.0.0/8` · `172.16.0.0/12` · `192.168.0.0/16` | `0.0.0.0/0` 규칙 전부 |
 | DNS-01 리졸버 | `1.1.1.1/32` (UDP·TCP 53) | `cert-manager/allow-egress-dns-1111` |
 
 노드 IP가 바뀌면 계약(`network-policy.md` · `hostnames-and-access.md`)을 먼저 고치고,
-`policies-common.yaml`·`policies-external.yaml`과 이 표를 함께 갱신한다.
+`policies-common.yaml`·`policies-external.yaml`과 이 표를 함께 갱신한다. `10.0.7.78`·`10.42.0.0`은
+`tests/validate.sh` 검사 5.6의 상수와 픽스처에도 있다 — 검사 5.6 쪽 복제본 목록은 `tests/README.md`의
+규칙을 따른다(정책 쪽 전체 사용처는 위 표의 "쓰이는 곳" 열이 정본이다).
 
 ### `10.42.0.0/32`의 전제 두 가지
 
@@ -328,4 +332,5 @@ kubectl delete networkpolicy -A -l app.kubernetes.io/part-of=platform-policies
   netns를 쓰는 것은 apiserver만이 아니다: 노드 A에 뜬 **hostNetwork 파드**(계약 §hostNetwork · 호스트
   네임스페이스 예외표의 node-exporter · SUC Plan Job)와 노드 A에 뜨는(스케줄되는) **`kube-system` 워크로드**
   (traefik · coredns · svclb 등)가 같은 netns를 쓴다. 셋 다 PSA `privileged` ns라 "노드 A의 비-특권
-  워크로드는 argocd·cloudflared뿐"이라는 셈(= default-deny가 걸린 13 ns만 센 것)에 들어가지 않는다.
+  워크로드는 argocd·cloudflared·vault(T044)·external-secrets(T045 G1) 넷이고 넷 다 `restricted`"라는
+  셈(= default-deny가 걸린 13 ns만 센 것)에 들어가지 않는다.

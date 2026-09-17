@@ -1,0 +1,49 @@
+# 부정 픽스처 5.6 (render) — **원본은 정확하지만 kustomize 렌더 결과가 넓어지는** 경우.
+#   Argo CD가 적용하는 것은 렌더 결과이므로 5.6은 원본 파일과 렌더 결과를 모두 본다.
+#   이 파일(원본)의 4장은 계약과 정확히 일치하고, 같은 디렉터리의 kustomization.yaml이 patches로
+#   external-secrets 규칙의 from에 0.0.0.0/0을 더한다 → 렌더 소스에서만 5.6 POL-webhook-src FAIL.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: allow-apiserver-webhook, namespace: cert-manager }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - ipBlock: { cidr: 10.0.7.78/32 }
+        - ipBlock: { cidr: 10.42.0.0/32 }
+      ports: [{ protocol: TCP, port: 10250 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: allow-apiserver-webhook, namespace: external-secrets }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - ipBlock: { cidr: 10.0.7.78/32 }
+        - ipBlock: { cidr: 10.42.0.0/32 }
+      ports: [{ protocol: TCP, port: 10250 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: allow-apiserver-webhook, namespace: cnpg-system }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - ipBlock: { cidr: 10.0.7.78/32 }
+        - ipBlock: { cidr: 10.42.0.0/32 }
+      ports: [{ protocol: TCP, port: 9443 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: allow-apiserver-webhook, namespace: vault }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ ipBlock: { cidr: 10.0.7.78/32 } }]
+      ports: [{ protocol: TCP, port: 8200 }]

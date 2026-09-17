@@ -1,0 +1,65 @@
+# 부정 픽스처 5.6 (render-shape) — 렌더에서 **이름·ns가 바뀌거나 `kind: List`로 숨은** 경우.
+#   원본 파일 4장은 계약과 정확히 일치하므로 원본 기준 검사(5.0·5.2·5.6 file)는 모두 통과한다.
+#   Argo CD가 적용하는 것은 렌더 결과이므로 5.6은 렌더 소스에서 다음 둘을 본다:
+#     (a) 표 밖 ns에 allow-apiserver-webhook이 나타났는가 — `kind: List` 풀림 · patches의 ns 변경
+#     (b) 표의 4개 ns 각각에 allow-apiserver-webhook이 남아 있는가 — patches의 이름·ns 변경으로 사라지는 경우
+#   kustomization.yaml이 cnpg-system 정책을 ns `monitoring`으로 옮기고 external-secrets 정책의 이름을
+#   `allow-anything`으로 바꾼다. 아래 `kind: List`는 원본 파일 검사에는 보이지 않고 렌더에서만 풀린다.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: allow-apiserver-webhook, namespace: cert-manager }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - ipBlock: { cidr: 10.0.7.78/32 }
+        - ipBlock: { cidr: 10.42.0.0/32 }
+      ports: [{ protocol: TCP, port: 10250 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: allow-apiserver-webhook, namespace: external-secrets }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - ipBlock: { cidr: 10.0.7.78/32 }
+        - ipBlock: { cidr: 10.42.0.0/32 }
+      ports: [{ protocol: TCP, port: 10250 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: allow-apiserver-webhook, namespace: cnpg-system }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - ipBlock: { cidr: 10.0.7.78/32 }
+        - ipBlock: { cidr: 10.42.0.0/32 }
+      ports: [{ protocol: TCP, port: 9443 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: allow-apiserver-webhook, namespace: vault }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ ipBlock: { cidr: 10.0.7.78/32 } }]
+      ports: [{ protocol: TCP, port: 8200 }]
+---
+# 표 밖 ns(data)의 동명 정책을 kind: List 안에 숨겼다 — 최상위 kind가 List라 원본 기준 검사(5.0·5.2·5.6)는
+# 이 안을 보지 않는다. kustomize가 풀어 놓은 렌더 결과에서만 드러난다.
+apiVersion: v1
+kind: List
+items:
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata: { name: allow-apiserver-webhook, namespace: data }
+    spec:
+      podSelector: {}
+      policyTypes: [Ingress]
+      ingress: [{}]

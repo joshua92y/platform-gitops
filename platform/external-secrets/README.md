@@ -224,12 +224,18 @@ cert-controller가 런타임에 둘을 채운다. 희망 상태에 그 필드 �
 `external-secrets.io/component` 라벨에 의존하므로 **라벨을 깎는 kustomize 변환을 넣지 않는다.**
 
 **API 서버 → webhook 경로**는 `platform/policies`의 `allow-apiserver-webhook`(ns `external-secrets`, 10250)이 연다.
-2026-09-17 현재 그 정책의 출발 주소는 `10.0.7.78/32` **하나뿐**이고, 노드 A의 flannel-wg `/32`(cert-manager T042 PR-A가
-`cert-manager` ns에 넣은 것과 같은 성격)는 **아직 없다** — **G1p**가 `platform/policies`에 add-only로 넣는다
-(계약 `network-policy.md`). 정책 파일은 이 디렉터리가 만들지 않는다.
+**G1p**(T045)로 노드 A의 flannel-wg `/32`(cert-manager T042 PR-A가 `cert-manager` ns에 넣은 것과 같은 성격)가
+기존 `10.0.7.78/32` 옆에 **add-only**로 들어갔다. 다만 **동일 노드 경로는 그 전에도 통과했다** — G1 머지 후·G1p 머지 전,
+즉 이 ns에 flannel `/32`가 없는 상태에서 아래 프로브가 통과했다(2026-09-17 실측). 노드 간 webhook 경로는 여전히
+미실측이다(아래 ⚠). 정책 파일은 이 디렉터리가 만들지 않는다(계약 `network-policy.md`).
 
 **admission이 실제로 동작하는지의 판정 기준**: 유효한 ESO CR을 `kubectl apply --dry-run=server`로 던져
 **종료 코드 0 + `… created (server dry run)`** 이 나오는 것(운영자 전용 — §7). 오류 메시지 없음만으로는 판정하지 않는다.
+음성 대조도 함께 본다: **webhook 검증 규칙을 어긴**(예: `data`·`dataFrom` 둘 다 없음 — CRD 스키마는 통과한다)
+ExternalSecret을 같은 방식으로 던져 `admission webhook "validate.externalsecret.external-secrets.io" denied the request`가
+돌아오면 **webhook에 도달했다는 증거**다(도달하지 못하면 거절이 아니라 연결 오류·타임아웃이 난다).
+⚠ 진짜 **스키마** 위반(타입 오류 등)은 API 서버가 webhook에 넘기기 전에 거절하므로 이 문구가 나오지 않는다 —
+그런 객체를 고르면 "webhook 미도달"로 오판한다. 스키마는 통과하고 webhook 규칙만 어기는 객체를 쓴다.
 
 **⚠ 한계 — 노드 간 webhook 경로는 이 배포로 실측되지 않는다.** ESO Deployment 3개는 `role: platform`(노드 A)이고
 API 서버도 노드 A다. 그래서 위 프로브가 통과해도 그것은 **동일 노드 host→pod 경로**의 증거일 뿐이다.
@@ -392,8 +398,11 @@ kubectl -n argocd get app platform-external-secrets -o jsonpath='{.status.sync.s
 
 ## 8. 인계
 
-- **G1p** — `platform/policies/policies-common.yaml`의 `allow-apiserver-webhook`(ns `external-secrets`)에 노드 A flannel-wg
-  출발 주소 `/32`를 add-only로 더한다(값은 실측으로 확정). 이 디렉터리는 정책을 만들지 않는다(§0).
+- ~~**G1p**~~ **완료** — `platform/policies/policies-common.yaml`의 `allow-apiserver-webhook`(ns `external-secrets`)에
+  노드 A flannel-wg 출발 주소 `10.42.0.0/32`를 add-only로 더했다(값은 머지 전 노드 A 실측으로 확정 — `flannel-wg`
+  장치 주소와 **다른 노드(B)의 파드 IP**로의 `ip route get` `src`). 동일 노드 경로는 그 전에도 통과했고
+  (2026-09-17 실측: dry-run `created (server dry run)` · 음성 대조 webhook denied) 노드 간 경로는 미실측이다 — §4.
+  이 디렉터리는 정책을 만들지 않는다(§0).
 - **G2** — ClusterSecretStore 5개 → `platform/secret-stores/`. `auth.kubernetes.serviceAccountRef.audiences: [vault]`가
   **필수**이고(Vault 1.21+ · 2.x — ESO 문서 기준), Vault role 이름 = SA 이름이다. 다섯 번째 `k8s-data-ca`는 Vault role이 없고
   이 디렉터리의 `eso-ca-reader` RBAC로 동작한다(store의 `conditions.namespaces`가 `ca.crt` 소비 ns를 좁히는 통제다 — §5).
