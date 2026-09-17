@@ -1,6 +1,140 @@
-# platform/external-secrets/ — External Secrets Operator(CRD 제공)
-# sync-wave: 계약 gitops-repo.md §sync-wave 단일 표 참조(wave 번호는 표에만 기재 — 중복 금지).
-# 빈 뼈대(T003) — 실제 매니페스트는 T031+에서 작성한다.
+# platform/external-secrets/ — External Secrets Operator 2.10.0 (chart 2.10.0 · appVersion v2.10.0) + eso-* SA 5 + eso-ca-reader RBAC (T045 G1)
+#
+# 정본 계약(모노레포 specs/003-platform-foundation/contracts/):
+#   - gitops-repo.md §sync-wave 단일 표(wave 번호는 그 표에만 — 여기 다시 적지 않는다) · §ClusterSecretStore 5개 표 · §이름·인증 규약
+#     · §삭제 보호(오퍼레이터 CRD 전부 `Delete=false,Prune=false` → 아래 `crds.annotations` 한 줄이 CRD 25장에 붙인다)
+#     · §이미지(태그에 `@sha256` 병기) · §워크로드 강화(helm 컴포넌트는 values에 securityContext 4항목 명시)
+#   - network-policy.md(ns `external-secrets` = PSA restricted · allow-apiserver-webhook 10250 · metrics 8080 ← monitoring ·
+#     egress → vault 8200 · kube-api 6443)
+#
+# 설치 방식 = kustomize `helmCharts` 인플레이트(cert-manager T042 · vault T044 선례). 전제: argocd-cm `kustomize.buildOptions: --enable-helm`.
+#   로컬 재현: `kustomize build --enable-helm platform/external-secrets`(helm 필요). 인플레이트는 helm 릴리스가 아니다.
+#   ⚠ 이 차트는 **HTTPS helm repo**다 — `repo:`에 `oci://`를 붙이지 않는다(vault와 같고 cert-manager와 반대).
+#   ⚠ `values.schema.json`에 `additionalProperties`가 **0곳**이다 — 키 오타는 조용히 무시되고 렌더는 성공한다.
+#     유일한 방어는 렌더 결과 대조다(README §2: digest 3줄 · `role: platform` 3건 · CRD 어노테이션 25건 · kubeconform Invalid 0).
+#   ⚠ 최상위 `namespace:` 변환기를 두지 않는다 — 두면 클러스터 범위 CR에도 metadata.namespace가 찍힌다(2026-09-17 스크래치 실측).
+#   ⚠ `skipTests` 불필요(이 차트에는 templates/tests가 없다). `installCRDs`·`crds.create*`는 적지 않는다(기본값 사용;
+#     `crds.createSecretStore`는 템플릿 참조 0건인 **죽은 키**라 699 KB secretstores CRD를 줄이지 못한다).
+#
+# 이 디렉터리가 만들지 "않는" 것:
+#   1) Namespace·PSA 라벨·NetworkPolicy → `platform/policies/`(차트의 networkPolicy 3종은 기본 false).
+#   2) ClusterSecretStore 5개 → `platform/secret-stores/`. 이유: Argo 내장 health Lua가 store Ready=False를 Degraded로 보고
+#      argocd-cm의 Application health Lua가 그것을 root로 전파한다. store는 Vault가 살아 있어야 Ready인데 Vault는 이 컴포넌트보다
+#      뒤 wave다 → 한 Application에 두면 Vault가 불가한 동안 이 Application이 Degraded가 되어 root sync가 여기서 멈춘다.
+#   3) ExternalSecret → 원본 `secrets/<ns>/`, 배달 `platform/secrets/`.
+#   4) 시크릿 값: 없다.
+#
+# 되돌리기(순서 고정 — README §6): revert 머지 → 렌더 0(`prune: false`라 객체가 남는다) →
+#   ① Deployment 3 삭제 → ② ValidatingWebhookConfiguration 2 삭제 → ③ **CRD 25장은 남긴다**(지우면 모든 CR cascade 삭제).
+#   ⚠ store·ES를 먼저 지워야 한다면 webhook이 Ready인 동안에 한다 — `failurePolicy: Fail`이 DELETE도 가로챈다.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-resources: []
+
+resources:
+  - serviceaccounts.yaml
+  - rbac-eso-ca-reader.yaml
+  # - rbac-token-create.yaml        # G2r에서 추가(아래 rbac.serviceAccountTokenCreate와 한 쌍 — 설계 D7)
+
+helmCharts:
+  - name: external-secrets
+    repo: https://charts.external-secrets.io   # HTTPS helm repo — `oci://` 금지
+    version: 2.10.0                            # 대조용 실측(값 고정 아님): index.yaml tgz sha256
+                                               #   b96e948fff3674638b5d3f9e43886f3796e04739c4b4127929aed2ddac7d1418 (2026-09-17)
+                                               # ⚠ `charts/` 캐시 키에는 **버전이 들어간다**(`charts/external-secrets-2.10.0/`) →
+                                               #   version bump는 캐시 미스라 즉시 새로 pull된다(2026-09-17 스크래치 실측: 2.9.0 → 2.10.0에서
+                                               #   디렉터리가 새로 생기고 렌더 `helm.sh/chart` 라벨이 바뀐다).
+                                               #   가려지는 것은 **같은 버전의 재푸시**뿐이고, 그때는 repo-server 재시작(또는 그 `charts/`
+                                               #   제거) 전까지 옛 사본이 계속 쓰인다(repo-server 쪽은 소스 문면 확인 · 라이브 미확인
+                                               #   — README §2 단계 5) → 위 tgz sha256이 그 경우의 유일한 대조 수단.
+    releaseName: external-secrets              # Deployment external-secrets / -webhook / -cert-controller · Service·Secret external-secrets-webhook
+    namespace: external-secrets
+    valuesInline:
+      crds:
+        annotations:
+          # 계약 §삭제 보호 + 하네스 argo-4(그룹이 external-secrets.io이거나 그것으로 끝나는 CRD 전부 = 25장, 정확 일치)
+          argocd.argoproj.io/sync-options: Delete=false,Prune=false
+        # `unsafeServeV1Beta1` 기본 false → v1beta1은 served:false라 계약의 'v1beta1 금지'를 CRD가 직접 강제한다.
+        # `conversion.enabled` 기본 false → CRD에 caBundle 주입 대상이 없다(= Argo 드리프트 없음).
+
+      # ── controller ───────────────────────────────────────────────────────────
+      replicaCount: 1
+      nodeSelector:
+        role: platform
+      image:
+        # 이 차트에는 `image.digest` 키가 없다 → 태그 문자열에 병기(vault 선례). digest = 멀티아치 **인덱스** digest(노드 2대 arm64).
+        # ⚠ image / webhook.image / certController.image는 **별개 트리**다 — 하나라도 빠뜨리면 그 Deployment만 태그 pin으로 남고
+        #   자동 검사가 없다(validate 4b는 helm 블록 표기를 보지 않는다). README §2의 grep = 3이 유일한 그물.
+        tag: "v2.10.0@sha256:814117b0fd6d121b03e8ba3b6db1cecbe7449a354fc0fc9c4faf73a37aa221b1"
+      securityContext:
+        # ns가 PSA restricted. 차트 기본값이 이미 통과하지만 계약 §워크로드 강화가 values 명시를 요구한다.
+        # 이 차트는 부분 지정 시 기본값과 **깊은 병합**이라(실측) readOnlyRootFilesystem·runAsUser 1000은 유지된다(vault 차트와 반대).
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop: [ALL]
+        seccompProfile:
+          type: RuntimeDefault
+      resources:                     # 차트 기본 `{}`. 값은 초기 추정 — plan A14 예산 대조용, T097 실측으로 교정(VD-18).
+        requests: { cpu: 20m, memory: 96Mi }
+        limits: { memory: 192Mi }    # CPU limit은 두지 않는다(저장소 관례)
+      rbac:
+        servicebindings:
+          create: false              # 미사용 ClusterRole 1장 제거
+        serviceAccountTokenCreate: true   # 차트 기본값 그대로 = G1은 차트 기본 RBAC를 유지한다
+        # ⚠ 전역 `serviceaccounts/token create` = ESO가 **임의 ns의 임의 SA** 토큰을 발급할 수 있다 — 여기에는
+        #   `argocd/argocd-application-controller`(`*/*/*`)도 포함되므로 **클러스터 admin 등가**다(README §5).
+        #   Vault role은 SA 이름·ns에 더해 audience `vault`를 바인드하지만, TokenRequest 호출자가 audience를 지정하므로 막지 못한다.
+        #   **G2r에서 축소**: 단독 PR에서 이 값을 false로 내리고 rbac-token-create.yaml(resourceNames 5개)을 함께 넣는다.
+        #   ⚠ G2r이 닫는 것은 **TokenRequest 경로**뿐이다 — 전역 `secrets` create+get으로 임의 SA의 레거시 토큰을 얻는 경로는 남는다(README §5).
+        #   여기서 함께 내리지 않는 이유 = 설계 D7(권한 축소와 컴포넌트를 한 머지에 묶지 않는다 — store Ready 실패 원인 분리).
+      metrics:
+        listen:
+          port: 8080                 # 명시해야 validate 5.4b(HELM_PORT_KEYS)가 실제로 대조한다(미설정이면 조용히 skip)
+        service:
+          enabled: false             # 차트 기본. T098(Alloy)이 Service discovery를 쓰면 그때 켠다.
+
+      # ── webhook ─────────────────────────────────────────────────────────────
+      webhook:
+        replicaCount: 1
+        port: 10250                  # 계약 §포트 각주 · PORT_TABLE · 정책 allow-apiserver-webhook과 3중 일치(Service는 443 → targetPort 10250)
+        failurePolicy: Fail          # 기본값 명시. ⚠ webhook이 죽으면 store·ES의 CREATE·UPDATE·**DELETE**가 전부 거부된다.
+        nodeSelector:
+          role: platform
+        image:
+          tag: "v2.10.0@sha256:814117b0fd6d121b03e8ba3b6db1cecbe7449a354fc0fc9c4faf73a37aa221b1"
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          capabilities:
+            drop: [ALL]
+          seccompProfile:
+            type: RuntimeDefault
+        resources:
+          requests: { cpu: 10m, memory: 48Mi }
+          limits: { memory: 128Mi }
+        # readinessProbe는 차트 기본 활성(8081 /readyz). ns 정책에 8081이 없다 — kubelet 프로브가 통과하는지는 VD-9.
+
+      # ── cert-controller ─────────────────────────────────────────────────────
+      certController:
+        replicaCount: 1
+        nodeSelector:
+          role: platform
+        image:
+          tag: "v2.10.0@sha256:814117b0fd6d121b03e8ba3b6db1cecbe7449a354fc0fc9c4faf73a37aa221b1"
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          capabilities:
+            drop: [ALL]
+          seccompProfile:
+            type: RuntimeDefault
+        resources:
+          requests: { cpu: 10m, memory: 48Mi }
+          limits: { memory: 128Mi }
+        # 빈 Secret `external-secrets-webhook`과 webhook 설정 2장의 caBundle을 런타임에 채운다. 희망 상태에 그 필드가 없으므로
+        # ignoreDifferences를 넣지 않는다(설계 D8 · VD-5). `enablePartialCache`(기본 true)는 `external-secrets.io/component` 라벨에
+        # 의존한다 — 라벨을 깎는 kustomize 변환을 넣지 않는다.
+        # 잔여 권한: 이 컴포넌트의 ClusterRole은 전역 secrets get/list/watch와 전역 `coordination.k8s.io/leases`
+        #   get·create·update·patch(이름 제한 없음 — 전 ns의 Lease에 쓰기 가능. `leaderElect` 기본 false라 이 렌더에서는 미사용)를
+        #   갖는다. 규칙 하나만 values로 뺄 수는 없다 — ClusterRole을 통째로 없애는 길이 `webhook.certManager` 전환(계약 변경,
+        #   범위 밖) 또는 `certController.rbac.create: false` + 수기 RBAC(미검증)다(README §5).
