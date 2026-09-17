@@ -1,4 +1,4 @@
-# platform/vault/ — HashiCorp Vault 2.0.4 (chart 0.34.1 · Raft 1 replica · OCI KMS auto-unseal) (T044 G1)
+# platform/vault/ — HashiCorp Vault 2.0.4 (chart 0.34.1 · Raft 1 replica · OCI KMS auto-unseal) (T044 G1·G2)
 #
 # 정본 계약(모노레포 specs/003-platform-foundation/contracts/):
 #   - gitops-repo.md §Application 규약(**삭제 보호**: Vault PVC에 `argocd.argoproj.io/sync-options: Delete=false,Prune=false`)
@@ -27,7 +27,7 @@
 #      `WithDisallowEnvVars(true)`를 넘겨 `VAULT_OCIKMS_*`를 무시한다.
 #
 # 되돌리기(순서 고정 — README §5 · 런북 §11과 같다): revert 머지 → 렌더 0(Application은 `prune: false`라 객체가 남는다) →
-#   ① `kubectl -n vault delete ingress vault`(공개 진입점 먼저 — G2 이후에만 존재) → ② `kubectl -n vault delete sts vault --cascade=orphan` →
+#   ① `kubectl -n vault delete ingress vault`(공개 진입점 먼저) → ② `kubectl -n vault delete sts vault --cascade=orphan` →
 #   ③ 남은 pod/vault-0 삭제 → ④ Service·ConfigMap·SA·RBAC 수동 정리 → ⑤ **PVC `data-vault-0`과 PV는 절대 지우지 않는다**
 #   (local-path reclaimPolicy Delete → 노드 A 디스크 데이터 소멸; 복구 = Raft 스냅샷 + **같은 KMS 키**뿐).
 apiVersion: kustomize.config.k8s.io/v1beta1
@@ -36,8 +36,9 @@ kind: Kustomization
 # ⚠ 전역 `namespace:` 변환기를 두지 않는다(cert-manager와 같은 이유). 차트의 ns 객체는 `helmCharts[].namespace`로 렌더되고,
 #   `system:auth-delegator` ClusterRoleBinding의 subject ns까지 재작성하는 두 번째 메커니즘을 만들 이유가 없다.
 #   아래 순수 매니페스트는 각자 `metadata.namespace: vault`를 명시한다(platform/cloudflared·system-upgrade는 변환기를 쓰니 복사 주의).
-#   ingress.yaml(vault.joshuatech.dev)은 init 완료 뒤 G2 PR에서 추가한다(설계 D7 — 초기화 전 공개 진입점을 만들지 않는다).
+#   ingress.yaml(vault.joshuatech.dev)은 init 완료 뒤 G2 PR에서 추가했다(설계 D7 — 초기화 전에는 공개 진입점을 만들지 않았다; init 2026-09-17).
 resources:
+  - ingress.yaml
   - serviceaccount-vault-backup.yaml
 
 helmCharts:
