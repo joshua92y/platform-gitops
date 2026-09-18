@@ -1,0 +1,18 @@
+# values `rbac.serviceAccountTokenCreate: false`의 짝(설계 D7). 전역 `serviceaccounts/token create`를 eso-* 5개로 좁힌다.
+# SA를 추가하면 resourceNames도 함께 — 빠뜨리면 그 store가 Ready=False로 즉시 드러난다(reason InvalidProviderConfig · 문면은 2갈래 — README §5).
+# 머지 후 5분 내 store 5장 reason=Valid를 확인하고 아니면 이 PR을 revert한다(VD-16).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: eso-token-create, namespace: external-secrets }
+rules:
+  - apiGroups: [""]
+    resources: [serviceaccounts/token]
+    verbs: [create]
+    resourceNames: [eso-platform, eso-dev, eso-prod, eso-data, eso-ca-reader]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: eso-token-create, namespace: external-secrets }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: eso-token-create }
+subjects:
+  - { kind: ServiceAccount, name: external-secrets, namespace: external-secrets }   # 차트의 컨트롤러 SA

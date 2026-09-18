@@ -278,9 +278,10 @@ Application `platform-secret-stores`는 `prune: false` + `Prune=confirm` + `Dele
 
 ## 4. 인계
 
-- **G2r** — `rbac.serviceAccountTokenCreate: false` + `rbac-token-create.yaml`(ns `external-secrets`의 Role,
+- ~~**G2r**~~ **완료** — `platform/external-secrets/`의 단독 PR로 닫았다(그 디렉터리 README §5·§8).
+  `rbac.serviceAccountTokenCreate: false` + `rbac-token-create.yaml`(ns `external-secrets`의 Role,
   `resourceNames: [eso-platform, eso-dev, eso-prod, eso-data, eso-ca-reader]`). ESO의 전역
-  `serviceaccounts/token create`(= 클러스터 admin 등가 경로)를 닫는 **단독 PR**이다. G1·G2와 섞지 않는 이유는
+  `serviceaccounts/token create`(= 클러스터 admin 등가 경로)를 닫는다. G1·G2와 섞지 않은 이유는
   설계 D7 — 권한 축소가 섞이면 store Ready 실패의 원인을 분리할 수 없다.
   **게이트(VD-16): 머지 뒤 5분 안에 store 5장이 `True Valid`를 유지해야 한다.** 잘못 좁히면 1차 신호는
   **vault store 4장이 동시에 `Ready=False` + `InvalidProviderConfig`** 다. 로그·Events 문면은 두 갈래다 —

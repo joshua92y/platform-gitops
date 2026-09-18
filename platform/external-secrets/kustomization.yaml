@@ -36,7 +36,9 @@ kind: Kustomization
 resources:
   - serviceaccounts.yaml
   - rbac-eso-ca-reader.yaml
-  # - rbac-token-create.yaml        # G2r에서 추가(아래 rbac.serviceAccountTokenCreate와 한 쌍 — 설계 D7)
+  - rbac-token-create.yaml          # G2r에서 살렸다(아래 `rbac.serviceAccountTokenCreate: false`와 **한 쌍** — 설계 D7).
+                                    # 둘은 같이 움직인다: 이 줄만 빼면 store 5장이 토큰을 못 받고,
+                                    # 값만 true로 되돌리면 전역 권한이 되살아난다.
 
 helmCharts:
   - name: external-secrets
@@ -83,13 +85,18 @@ helmCharts:
       rbac:
         servicebindings:
           create: false              # 미사용 ClusterRole 1장 제거
-        serviceAccountTokenCreate: true   # 차트 기본값 그대로 = G1은 차트 기본 RBAC를 유지한다
-        # ⚠ 전역 `serviceaccounts/token create` = ESO가 **임의 ns의 임의 SA** 토큰을 발급할 수 있다 — 여기에는
-        #   `argocd/argocd-application-controller`(`*/*/*`)도 포함되므로 **클러스터 admin 등가**다(README §5).
+        serviceAccountTokenCreate: false  # G2r에서 차트 기본값 true를 내렸다(G1은 차트 기본 RBAC 그대로였다).
+        # 이 키는 차트 `templates/rbac.yaml`의 규칙 **한 블록**만 켜고 끈다(2026-09-18 차트 2.10.0 원본 실측:
+        #   이 키를 참조하는 `{{- if }}`는 rbac.yaml 185행 **1곳뿐**이고 그 블록 안이 189행 `serviceaccounts/token`이다) —
+        #   컨트롤러 ClusterRole의 `"" serviceaccounts/token: create`. 같은 ClusterRole의 `serviceaccounts,namespaces get,list,watch`는
+        #   조건 밖이라 false로 내려도 그대로 남는다(ESO는 store가 가리키는 SA를 먼저 Get한다). cert-controller ClusterRole에는
+        #   `serviceaccounts/token`이 애초에 없다(차트 전체에서 이 리소스는 rbac.yaml 1곳뿐).
+        # ⚠ 전역이던 시절의 폭발 반경(= G1 머지 2026-09-17 ~ G2r 머지의 노출 창): ESO가 **임의 ns의 임의 SA** 토큰을 발급할 수 있었다 —
+        #   `argocd/argocd-application-controller`(`*/*/*`)도 포함되므로 **클러스터 admin 등가**였다(README §5).
         #   Vault role은 SA 이름·ns에 더해 audience `vault`를 바인드하지만, TokenRequest 호출자가 audience를 지정하므로 막지 못한다.
-        #   **G2r에서 축소**: 단독 PR에서 이 값을 false로 내리고 rbac-token-create.yaml(resourceNames 5개)을 함께 넣는다.
+        # 짝은 위 `resources:`의 rbac-token-create.yaml(ns external-secrets의 Role, resourceNames = eso-* 5개)이다 — 설계 D7.
         #   ⚠ G2r이 닫는 것은 **TokenRequest 경로**뿐이다 — 전역 `secrets` create+get으로 임의 SA의 레거시 토큰을 얻는 경로는 남는다(README §5).
-        #   여기서 함께 내리지 않는 이유 = 설계 D7(권한 축소와 컴포넌트를 한 머지에 묶지 않는다 — store Ready 실패 원인 분리).
+        #   G1과 한 PR로 묶지 않은 이유 = 설계 D7(권한 축소와 컴포넌트를 한 머지에 섞지 않는다 — store Ready 실패 원인 분리).
       metrics:
         listen:
           port: 8080                 # 명시해야 validate 5.4b(HELM_PORT_KEYS)가 실제로 대조한다(미설정이면 조용히 skip)
