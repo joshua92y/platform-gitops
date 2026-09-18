@@ -18,9 +18,12 @@
 #
 # 이 디렉터리가 만들지 "않는" 것:
 #   1) Namespace·PSA 라벨·NetworkPolicy → `platform/policies/`(차트의 networkPolicy 3종은 기본 false).
-#   2) ClusterSecretStore 5개 → `platform/secret-stores/`. 이유: Argo 내장 health Lua가 store Ready=False를 Degraded로 보고
-#      argocd-cm의 Application health Lua가 그것을 root로 전파한다. store는 Vault가 살아 있어야 Ready인데 Vault는 이 컴포넌트보다
-#      뒤 wave다 → 한 Application에 두면 Vault가 불가한 동안 이 Application이 Degraded가 되어 root sync가 여기서 멈춘다.
+#   2) ClusterSecretStore 5개 → `platform/secret-stores/`. 이유는 **health 격리**: Argo 내장 health Lua가 store Ready=False를
+#      Degraded로 보고 argocd-cm의 Application health Lua가 child의 health를 root로 전파한다. store는 Vault가 살아 있어야 Ready인데
+#      Vault는 이 컴포넌트보다 뒤 wave다 → 한 Application에 두면 Vault가 불가한 동안 이 Application 자체가 Degraded가 되고
+#      root health까지 Degraded가 된다. 분리하면 이 Application은 store 상태와 무관하게 Healthy로 남는다.
+#      (⚠ 2026-09-18 정정: root **sync**가 여기서 멈추지는 않는다 — 첫 operation의 그 wave task만 실패하고 retry부터
+#       ApplyOutOfSyncOnly가 이미 만들어진 CR을 걸러내 다음 wave로 진행한다. Argo v3.5.2 소스 판독·라이브 미실측 VD-11.)
 #   3) ExternalSecret → 원본 `secrets/<ns>/`, 배달 `platform/secrets/`.
 #   4) 시크릿 값: 없다.
 #

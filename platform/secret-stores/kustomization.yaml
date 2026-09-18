@@ -1,0 +1,12 @@
+# platform/secret-stores/kustomization.yaml — ClusterSecretStore 5개 (T045 G2)
+# 왜 별도 컴포넌트인가: platform/external-secrets/kustomization.yaml 머리 주석 2) + 설계 D2.
+#   부가 효과: ESO Application이 Healthy(= webhook Ready)가 된 뒤에 적용되므로 첫 sync의 admission 거부도 사라진다.
+# ⚠ 최상위 `namespace:` 변환기 금지(클러스터 범위 CR에 namespace가 찍혀 영구 OutOfSync).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - clustersecretstore-vault-platform.yaml
+  - clustersecretstore-vault-dev.yaml
+  - clustersecretstore-vault-prod.yaml
+  - clustersecretstore-vault-data.yaml
+  - clustersecretstore-k8s-data-ca.yaml

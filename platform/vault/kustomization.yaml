@@ -21,7 +21,7 @@
 # 이 디렉터리가 만들지 "않는" 것:
 #   1) Namespace `vault`·PSA 라벨·NetworkPolicy → `platform/policies/`(정책 객체는 거기에만; validate 5.0·5.1). 차트 정책은 아래에서 false로 명시.
 #   2) Application `platform-vault` → `clusters/oci-k3s/apps/platform-vault.yaml`(T041부터 라이브). 이 PR은 건드리지 않는다(검사 7.1).
-#   3) ClusterSecretStore 5개 → `platform/external-secrets/`(T045) · ExternalSecret → `secrets/<ns>/`(계약 gitops-repo.md §디렉터리).
+#   3) ClusterSecretStore 5개 → `platform/secret-stores/`(T045 G2, Application `platform-secret-stores`) · ExternalSecret → `secrets/<ns>/`(계약 gitops-repo.md §디렉터리).
 #   4) 시크릿 값: 없다. seal의 key OCID·KMS 엔드포인트는 **자격이 아니라 식별자**다 — OCI 호출은 인스턴스 프린시펄 x509 서명으로만 인가되고
 #      권한은 `target.key.id` 조건이 붙은 IAM 정책이 정한다(README §0). env 우회는 구조적으로 불가능하다: Vault가 seal 스탠자에
 #      `WithDisallowEnvVars(true)`를 넘겨 `VAULT_OCIKMS_*`를 무시한다.

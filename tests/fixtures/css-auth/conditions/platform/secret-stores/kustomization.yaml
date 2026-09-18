@@ -1,0 +1,5 @@
+# 부정 픽스처 — 검사 9.4가 원본 파일과 kustomize 렌더 결과 **양쪽**을 보는지 함께 확인한다(collect_rows 'all').
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - clustersecretstores.yaml
