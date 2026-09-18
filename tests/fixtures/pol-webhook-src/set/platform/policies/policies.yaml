@@ -1,0 +1,68 @@
+# 부정 픽스처 5.6 POL-webhook-src (set) — allow-apiserver-webhook의 출발 ipBlock **집합** 위반
+#   계약(network-policy.md §정책 세트 allow-apiserver-webhook 행 + §허용 매트릭스 노드 출발 행):
+#     cert-manager·external-secrets·cnpg-system = { 노드 A private/32, 노드 A flannel/32 } · vault = { 노드 A private/32 }
+#   이 트리에는 Namespace 목록도 나머지 정책 세트도 없으므로 5.1·5.2도 함께 FAIL한다
+#   (다른 정책 픽스처와 같은 최소 트리 관례 — 이 픽스처의 단언은 5.6만 본다).
+#
+#   ① external-secrets : flannel /32 누락                        → 5.6 POL-webhook-src
+#   ② cert-manager     : 계약 밖 /32 여분 + except 붙은 ipBlock   → 5.6 POL-webhook-src · 5.6 POL-webhook-peer
+#   ③ vault            : 8200 행에 flannel /32까지 있음(여분)     → 5.6 POL-webhook-src
+#   ④⑤⑥ cnpg-system  : 중복 cidr · podSelector peer 혼합 · endPort 범위
+#                        → 5.6 POL-webhook-src · 5.6 POL-webhook-peer · 5.6 POL-webhook-port
+#   ⑦ external-secrets : 계약 포트가 없는 둘째 규칙(ports 자체가 없음 = 전 포트 개방) → 5.6 POL-webhook-port
+#   ⑧ vault            : 계약 포트 + 여분 포트                                        → 5.6 POL-webhook-port
+#   여분 주소 10.0.0.10/32 · 10.0.0.0/24 는 다른 픽스처와 같은 가짜 값이다(실 노드 주소가 아니다).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: allow-apiserver-webhook, namespace: external-secrets }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    # ① private /32 하나뿐 — flannel /32 가 빠졌다
+    - from: [{ ipBlock: { cidr: 10.0.7.78/32 } }]
+      ports: [{ protocol: TCP, port: 10250 }]
+    # ⑦ 계약 포트를 갖지 않은 둘째 규칙 — ports가 없으면 전 포트 개방이다
+    - from: [{ ipBlock: { cidr: 10.0.7.78/32 } }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: allow-apiserver-webhook, namespace: cert-manager }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - ipBlock: { cidr: 10.0.7.78/32 }
+        - ipBlock: { cidr: 10.42.0.0/32 }
+        - ipBlock: { cidr: 10.0.0.10/32 }                        # ② 계약 밖 여분 /32
+        - ipBlock: { cidr: 10.0.0.0/24, except: [10.0.0.10/32] }  # ② 여분 + ipBlock except 금지
+      ports: [{ protocol: TCP, port: 10250 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: allow-apiserver-webhook, namespace: cnpg-system }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - ipBlock: { cidr: 10.0.7.78/32 }
+        - ipBlock: { cidr: 10.42.0.0/32 }
+        - ipBlock: { cidr: 10.42.0.0/32 }                        # ④ 중복 cidr(집합은 맞지만 하네스는 다중집합 비교)
+        - podSelector: {}                                         # ⑤ ipBlock 아닌 peer
+      ports: [{ protocol: TCP, port: 9443, endPort: 65535 }]      # ⑥ 포트 범위(9443~65535)
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: allow-apiserver-webhook, namespace: vault }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    # ③ vault 8200은 port-forward 도착 경로라 출발지가 private /32 하나뿐이다 — flannel /32는 여분
+    # ⑧ 계약 포트에 여분 포트가 붙었다(8201)
+    - from:
+        - ipBlock: { cidr: 10.0.7.78/32 }
+        - ipBlock: { cidr: 10.42.0.0/32 }
+      ports: [{ protocol: TCP, port: 8200 }, { protocol: TCP, port: 8201 }]

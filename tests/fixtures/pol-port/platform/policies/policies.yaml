@@ -1,4 +1,7 @@
 # 부정 픽스처 5.4 POL-port-table — vault ns 정책이 8201만 열어 각주 포트 8200이 ingress ports에 없음
+# 이름이 allow-apiserver-webhook이라 5.6도 함께 FAIL한다. 5.4의 시나리오(8200 미선언)와 5.6의 요구(8200 선언)는
+# 한 트리에서 동시에 만족할 수 없으므로 픽스처를 고치지 않고 validate.tests.sh가 그 두 줄을 함께 단언해 고정한다
+# (덤으로 5.6의 "계약 포트 밖 규칙"·"계약 포트 규칙 없음" 가지를 여기서 검사한다).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata: { name: allow-apiserver-webhook, namespace: vault }

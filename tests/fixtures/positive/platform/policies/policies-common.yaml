@@ -1,4 +1,5 @@
 # 긍정 픽스처 — 계약 network-policy.md §정책 세트(공통 5종 + 조건부 2종). 노드 A private IP는 가짜(10.0.0.10).
+# 예외: allow-apiserver-webhook 4장은 검사 5.6이 출발 주소 집합을 값까지 대조하므로 platform/policies의 실제 주소를 쓴다(아래 참조).
 # default-deny × 13 (kube-system 제외)
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -361,7 +362,9 @@ spec:
     - to: [{ ipBlock: { cidr: 10.0.0.10/32 } }]
       ports: [{ protocol: TCP, port: 6443 }]
 ---
-# allow-apiserver-webhook × 4 (ingress ← 노드 A private IP/32, ns별 포트)
+# allow-apiserver-webhook × 4 — 5.6이 출발 ipBlock 집합을 값까지 정확 일치로 검사하므로 이 4장만은
+#   platform/policies의 실제 주소를 쓴다(다른 규칙의 노드 A 주소는 계속 가짜 10.0.0.10이다):
+#   cert-manager·external-secrets·cnpg-system = { 노드 A private/32, 노드 A flannel/32 } · vault 8200 = { private/32 }
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata: { name: allow-apiserver-webhook, namespace: cert-manager }
@@ -369,7 +372,9 @@ spec:
   podSelector: {}
   policyTypes: [Ingress]
   ingress:
-    - from: [{ ipBlock: { cidr: 10.0.0.10/32 } }]
+    - from:
+        - ipBlock: { cidr: 10.0.7.78/32 }
+        - ipBlock: { cidr: 10.42.0.0/32 }
       ports: [{ protocol: TCP, port: 10250 }]
 ---
 apiVersion: networking.k8s.io/v1
@@ -379,7 +384,9 @@ spec:
   podSelector: {}
   policyTypes: [Ingress]
   ingress:
-    - from: [{ ipBlock: { cidr: 10.0.0.10/32 } }]
+    - from:
+        - ipBlock: { cidr: 10.0.7.78/32 }
+        - ipBlock: { cidr: 10.42.0.0/32 }
       ports: [{ protocol: TCP, port: 10250 }]
 ---
 apiVersion: networking.k8s.io/v1
@@ -389,7 +396,9 @@ spec:
   podSelector: {}
   policyTypes: [Ingress]
   ingress:
-    - from: [{ ipBlock: { cidr: 10.0.0.10/32 } }]
+    - from:
+        - ipBlock: { cidr: 10.0.7.78/32 }
+        - ipBlock: { cidr: 10.42.0.0/32 }
       ports: [{ protocol: TCP, port: 9443 }]
 ---
 apiVersion: networking.k8s.io/v1
@@ -399,7 +408,8 @@ spec:
   podSelector: {}
   policyTypes: [Ingress]
   ingress:
-    - from: [{ ipBlock: { cidr: 10.0.0.10/32 } }]
+    # vault 8200은 port-forward 도착 경로라 flannel /32를 넣지 않는다(넣으면 5.6이 여분으로 FAIL)
+    - from: [{ ipBlock: { cidr: 10.0.7.78/32 } }]
       ports: [{ protocol: TCP, port: 8200 }]
 ---
 # deny-imds — kube-system 전용(default-deny가 없으므로 이 한 장이 IMDS만 막는다: ports 없음이 의도)

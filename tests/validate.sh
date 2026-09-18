@@ -30,6 +30,8 @@
 #   5.3  POL-egress         모든 egress ipBlock 규칙에 ports + except 4개(IMDS·RFC 1918 3종); IMDS /32는 vault만
 #   5.4  POL-port           포트 출처 각주 ↔ 정책 포트 · helm values 포트 ↔ 정책 포트
 #   5.5  POL-limitrange     LimitRange에 default.cpu·max.cpu 없음
+#   5.6  POL-webhook-src    allow-apiserver-webhook(원본 + kustomize 렌더): 출발 ipBlock 집합·단일 TCP 포트 정확 일치
+#                           (cert-manager·external-secrets·cnpg-system = 노드 A private+flannel /32, vault 8200 = private /32)
 #   6    AUTHOR             봇 작성자 PR: 변경 파일 = apps/*/overlays/dev/kustomization.yaml, 변경 줄 = images[].digest 뿐
 #                           한계: 변경 줄이 `digest: sha256:<64hex>` 형식인지만 본다(값의 진위·서명은 보지 않음). 보증은 이 줄 검사와
 #                           같은 실행의 트리 검사(4a·kustomize build)의 결합이며, PR head의 스크립트로 돌리면 같은 PR에서 무력화될 수
@@ -77,7 +79,7 @@ REQUIRE_AUTHOR="${VALIDATE_REQUIRE_AUTHOR:-0}"
 GH_EVENT="${GITHUB_EVENT_NAME:-}"
 
 usage() {
-  sed -n '2,56p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,60p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 while [[ $# -gt 0 ]]; do
@@ -137,7 +139,7 @@ default-deny ALL13
 allow-dns ALL13
 allow-same-namespace argocd,data,cnpg-system,external-secrets,cert-manager,monitoring,identity
 allow-kube-api argocd,vault,external-secrets,cert-manager,cnpg-system,data,monitoring,system-upgrade,reloader,cloudflared
-allow-apiserver-webhook cert-manager,external-secrets,cnpg-system,vault
+allow-apiserver-webhook cert-manager,external-secrets,cnpg-system,vault EXCLUSIVE
 deny-imds kube-system EXCLUSIVE
 allow-imds vault EXCLUSIVE
 '
@@ -145,6 +147,19 @@ allow-imds vault EXCLUSIVE
 # network-policy.md §외부 egress 규칙 형식: except 4개
 EXCEPT_REQUIRED='169.254.169.254/32 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16'
 IMDS_CIDR='169.254.169.254/32'
+
+# network-policy.md §정책 세트 `allow-apiserver-webhook` 행 + §허용 매트릭스(노드 IP 출발 행)의 출발 주소 2개.
+# 두 값은 platform/policies/policies-common.yaml 머리의 「상수 ①·②」와 같은 값이다:
+#   ① 노드 A private IP/32            — 노드 A 호스트가 주 NIC로 나갈 때의 주소
+#   ② 노드 A flannel 터널 장치 주소/32 — API 서버가 **다른 노드의** 파드 IP로 직접 dial할 때의 출발 IP
+#      (= 노드 A `.spec.podCIDR`의 네트워크 주소. wireguard 백엔드의 소스 선택 결과 —
+#       계약 §정책 세트의 "이 정책의 두 행은 메커니즘이 다르다" 항)
+# 노드 재이미지·재조인으로 flannel 리스나 private IP가 바뀌면 **정책·이 두 상수·픽스처를 한 PR에서 함께** 바꾼다
+# (전체 목록은 tests/README.md 규칙 — 계약에는 값이 없다).
+# 라이브 쪽 대조는 모노레포 하네스 np-set-5가 노드 객체(InternalIP · `.spec.podCIDR`)에서 유도해 본다 —
+# 이 스크립트는 저장소 트리만 보므로 값을 상수로 적는다(두 값은 이미 platform/policies/ 매니페스트에 공개돼 있다).
+NODE_A_PRIVATE_CIDR='10.0.7.78/32'
+NODE_A_FLANNEL_CIDR='10.42.0.0/32'
 
 # network-policy.md §포트 출처 각주: <ns> <포트> <출처>. 각 포트는 그 ns의 어떤 NetworkPolicy ingress ports에 선언돼야 한다
 PORT_TABLE='
@@ -170,6 +185,18 @@ jt-prod 9100 pod-web-metrics
 jt-prod 9464 relay-outbox-metrics
 '
 
+# `allow-apiserver-webhook` 4장: <ns> <위 PORT_TABLE의 출처 키> <허용 출발 집합>.
+# 포트 숫자는 PORT_TABLE 한 곳에만 둔다(중복 기재 금지) — 여기서는 출처 키로 그 행을 가리킨다.
+#   flannel = { 노드 A private/32, 노드 A flannel/32 } — admission webhook(API 서버 → 파드 IP 직접 dial)
+#   private = { 노드 A private/32 }                     — vault 8200은 webhook이 아니라 port-forward 도착 경로다
+#                                                         (계약 §정책 세트의 `vault` 8200 행 각주)
+WEBHOOK_SRC_TABLE='
+cert-manager cert-manager-webhook flannel
+external-secrets eso-webhook flannel
+cnpg-system cnpg-webhook flannel
+vault vault private
+'
+
 # helm values에서 포트를 바꾸는 알려진 키: <platform/ 디렉터리> <values yq 경로> <각주 포트>.
 # 값이 설정돼 있으면 각주 포트와 같아야 한다(설정이 없으면 차트 기본값 = 각주 포트). 컴포넌트 배포 태스크가
 # 차트를 고르면서 키를 확정하면 여기에 행을 추가한다(그 밖의 port 류 키는 5.4c가 WARN으로 드러낸다).
@@ -193,6 +220,9 @@ RE_LOC_DATA='^platform/(cnpg-databases|kafka-topics|dragonfly|authentik|openfga)
 RE_LOC_APPS='^apps/'
 RE_LOC_AUTOMOUNT='^(apps/|platform/(cloudflared|dragonfly)(/|$))'
 RE_LOC_POLICIES='^platform/policies/'
+# 5.6 전용: 원본 파일(platform/policies/<file>)과 kustomize 렌더 소스(SRC_PATH = platform/policies)를 모두 잡는다
+RE_LOC_POLICIES_ALL='^platform/policies(/|$)'
+RE_CIDR='^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}/[0-9]{1,2}$'
 RE_DIGEST='^sha256:[0-9a-f]{64}$'
 RE_BOT_FILE='^apps/[^/]+/overlays/dev/kustomization\.yaml$'
 RE_BOT_LINE='^[[:space:]]*(-[[:space:]]*)?digest:[[:space:]]*sha256:[0-9a-f]{64}[[:space:]]*$'
@@ -265,6 +295,8 @@ need_tool() {
 # yq 추출 — 탭 대신 US(0x1f)로 필드를 구분한다(빈 필드 보존). 표현식은 mikefarah yq v4 문법
 # -----------------------------------------------------------------------------
 export YQ_SEP=$'\x1f'
+# 값 안에 쉼표가 들어갈 수 있는 목록(5.6의 cidr)은 RS(0x1e)로 잇는다 — 쉼표 join은 값 하나와 목록을 구분하지 못한다
+export YQ_SEP2=$'\x1e'
 
 # shellcheck disable=SC2016  # 아래 $ps·$ns·$n·$r·$c 는 yq 변수이지 셸 변수가 아니다
 # 주의: yq v4는 없는 경로를 traverse하면 그 키를 만들어 버린다(`.extract.key` 한 번이면 find 항목에도 `extract`가 생겨
@@ -280,6 +312,16 @@ YQ_NP='select(.kind == "NetworkPolicy") | [ (.metadata.namespace // "-"), (.meta
 YQ_NP_EGRESS_IPBLOCK='select(.kind == "NetworkPolicy") | (.metadata.namespace // "-") as $ns | (.metadata.name // "-") as $n | (.spec.egress // [])[] as $r | ($r.to // [])[] | select(.ipBlock != null) | .ipBlock | [ $ns, $n, (.cidr // "-"), ((.except // []) | join(",")), (($r.ports // []) | map((.port // "-") | tostring) | join(",")) ] | join(strenv(YQ_SEP))'
 # shellcheck disable=SC2016
 YQ_NP_INGRESS_PORTS='select(.kind == "NetworkPolicy") | (.metadata.namespace // "-") as $ns | (.metadata.name // "-") as $n | (.spec.ingress // [])[] | (.ports // [])[] | [ $ns, $n, ((.port // "-") | tostring) ] | join(strenv(YQ_SEP))'
+YQ_NP_WEBHOOK_POL='select(.kind == "NetworkPolicy" and .metadata.name == "allow-apiserver-webhook") | (.metadata.namespace // "-")'
+# ingress 규칙 1개 = 1행(10열): ns · 규칙 번호(1-기반) · ports[].port 목록(쉼표) · endPort를 가진 port 항목 수 ·
+#   **순수** ipBlock peer의 cidr 목록(RS 구분 — 값에 쉼표가 들어가도 값 단위로 비교하기 위해) ·
+#   순수 ipBlock이 아닌 peer 수(podSelector·namespaceSelector, 그리고 ipBlock과 selector를 **한 peer에** 섞은 항목) ·
+#   except를 가진 ipBlock 수 · protocol 집합(생략은 TCP) · 정수가 아닌 port 수(문자열·named port) ·
+#   **순수 ipBlock peer 수**(위 cidr 목록의 원소 수와 달라지면 빈 문자열이거나 값에 RS가 들어간 것이다).
+#   "순수"는 `has("ipBlock") and (keys | length) == 1` — API 서버는 ipBlock과 다른 peer를 한 항목에 쓰면 거절한다.
+#   (`.ipBlock.cidr` traverse는 has("ipBlock")로 거른 뒤에만 한다 — yq v4가 없는 경로를 만들어 버리는 것을 피한다)
+# shellcheck disable=SC2016
+YQ_NP_WEBHOOK_RULE='select(.kind == "NetworkPolicy" and .metadata.name == "allow-apiserver-webhook") | (.metadata.namespace // "-") as $ns | (.spec.ingress // []) | to_entries[] | (.value.from // []) as $from | (.value.ports // []) as $ports | ($from | map(select(has("ipBlock") and ((keys | length) == 1)))) as $pure | [ $ns, ((.key + 1) | tostring), ($ports | map((.port // "-") | tostring) | join(",")), ($ports | map(select(has("endPort"))) | length | tostring), ($pure | map(.ipBlock.cidr // "-") | join(strenv(YQ_SEP2))), (($from | length) - ($pure | length) | tostring), ($from | map(select(has("ipBlock")) | select(.ipBlock | has("except"))) | length | tostring), ($ports | map(.protocol // "TCP") | unique | join(",")), ($ports | map(select((.port | tag) != "!!int")) | length | tostring), ($pure | length | tostring) ] | join(strenv(YQ_SEP))'
 # shellcheck disable=SC2016
 YQ_NP_EGRESS_PORTS='select(.kind == "NetworkPolicy") | (.metadata.namespace // "-") as $ns | (.metadata.name // "-") as $n | (.spec.egress // [])[] | (.ports // [])[] | [ $ns, $n, ((.port // "-") | tostring) ] | join(strenv(YQ_SEP))'
 # shellcheck disable=SC2016
@@ -757,6 +799,134 @@ check_5_policies() {
     [[ $mcpu == "-" ]] || fail "5.5 POL-limitrange" "$x: max.cpu=$mcpu 금지"
   done < <(printf '%s' "$ROWS")
   finish_group "5.5 POL-limitrange" "LimitRange에 default.cpu·max.cpu 없음" "$f5"
+
+  # 5.6 allow-apiserver-webhook: 출발 ipBlock 집합 · peer · 포트(계약 §정책 세트의 allow-apiserver-webhook 행)
+  #   ns마다 계약 포트를 가진 ingress 규칙이 있어야 하고, 그 규칙은
+  #     (a) ports 집합이 정확히 {계약 포트}이며 endPort(포트 범위)가 없고
+  #     (b) from[]이 ipBlock 전용(except 없음)이고 cidr 집합이 위 표의 기대 집합과 정확히 같아야 한다.
+  #   계약 포트를 갖지 않은 ingress 규칙(ports 자체가 없는 전 포트 개방 포함)이 그 정책에 있으면 FAIL —
+  #   넓은 규칙이 곁에 붙으면 집합 검사가 무의미해진다.
+  #   대상은 **원본 파일 + platform/policies의 kustomize 렌더 결과**다: Argo CD가 적용하는 것은 렌더 결과이고,
+  #   `patches`·YAML merge key는 원본을 그대로 둔 채 렌더만 넓힐 수 있다(그때는 같은 위반이 file·rendered
+  #   두 소스 라벨로 각각 보고된다 — 검사 3·3.5의 all 관례와 같다).
+  #   ns 판정은 소스 종류마다 다르다:
+  #     - 원본 파일: 표 밖 ns의 같은 이름 정책은 5.2의 EXCLUSIVE가 잡는다(POLICY_SETS의 allow-apiserver-webhook 행).
+  #     - 렌더: 5.2가 원본만 보므로 5.6이 직접 본다 — (a) 표 밖 ns에 이 이름이 나타나면 FAIL(`kind: List` 풀림 ·
+  #       patches의 ns 변경), (b) `platform/policies` 렌더에 표의 4개 ns가 모두 있어야 한다(이름·ns를 바꿔
+  #       정책을 사라지게 하는 우회를 막는다). 경로를 정확 일치로 거는 이유는 중첩된 `platform/policies/tests`
+  #       렌더에는 정책이 없기 때문이다.
+  local f6=$N_FAIL wns wsrc wkind wport pns pport psrc rno pcsv ecnt ccsv npeer nexc protos nonint npure
+  local miss extra bad dup c key cnt nfile=0 nrend=0
+  local -A WPORT=() WEXP=() wseen=() wmatch=() cseen=() wsrcseen=()
+  while read -r wns wsrc wkind; do
+    [[ -n $wns ]] || continue
+    wport=''
+    while read -r pns pport psrc; do
+      [[ -n $pns ]] || continue
+      if [[ $pns == "$wns" && $psrc == "$wsrc" ]]; then wport=$pport; fi
+    done <<< "$PORT_TABLE"
+    if [[ -z $wport ]]; then
+      fail "5.6 POL-webhook-port" "내부 표 불일치: ns '$wns'의 출처 '$wsrc' 행이 §포트 출처 각주 표에 없음(PORT_TABLE과 WEBHOOK_SRC_TABLE을 함께 고친다)"
+      continue
+    fi
+    WPORT[$wns]=$wport
+    if [[ $wkind == flannel ]]; then
+      WEXP[$wns]="$NODE_A_PRIVATE_CIDR $NODE_A_FLANNEL_CIDR"
+    else
+      WEXP[$wns]="$NODE_A_PRIVATE_CIDR"
+    fi
+  done <<< "$WEBHOOK_SRC_TABLE"
+  collect_rows "$YQ_NP_WEBHOOK_POL" "5.6 POL-webhook-src" all "$RE_LOC_POLICIES_ALL"
+  while IFS="$YQ_SEP" read -r i ns; do
+    [[ -n $i ]] || continue
+    if [[ -z ${wsrcseen[$i]:-} ]]; then
+      wsrcseen[$i]=1
+      if [[ ${SRC_KIND[$i]} == rendered ]]; then nrend=$((nrend + 1)); else nfile=$((nfile + 1)); fi
+    fi
+    if [[ -z ${WPORT[$ns]:-} ]]; then
+      # 렌더에만 보이는 표 밖 ns — 5.2(원본 파일 기준)가 볼 수 없는 자리다
+      if [[ ${SRC_KIND[$i]} == rendered ]]; then
+        fail "5.6 POL-webhook-src" "${SRC_LABEL[$i]} NetworkPolicy/$ns/allow-apiserver-webhook: 표 밖 ns(렌더 결과에만 보인다 — kind: List 풀림 · patches의 ns 변경. 5.2의 EXCLUSIVE는 원본 파일만 본다)"
+      fi
+      continue
+    fi
+    wseen["$i/$ns"]=1
+  done < <(printf '%s' "$ROWS")
+  collect_rows "$YQ_NP_WEBHOOK_RULE" "5.6 POL-webhook-src" all "$RE_LOC_POLICIES_ALL"
+  while IFS="$YQ_SEP" read -r i ns rno pcsv ecnt ccsv npeer nexc protos nonint npure; do
+    [[ -n $i ]] || continue
+    [[ -n ${WPORT[$ns]:-} ]] || continue
+    x="${SRC_LABEL[$i]} NetworkPolicy/$ns/allow-apiserver-webhook #$rno"
+    if [[ ",$pcsv," != *",${WPORT[$ns]},"* ]]; then
+      if [[ -z $pcsv ]]; then
+        fail "5.6 POL-webhook-port" "$x: 계약 포트 ${WPORT[$ns]} 밖의 ingress 규칙 — ports 없음(전 포트 개방)"
+      else
+        fail "5.6 POL-webhook-port" "$x: 계약 포트 ${WPORT[$ns]} 밖의 ingress 규칙 — ports [$pcsv]"
+      fi
+      continue
+    fi
+    wmatch["$i/$ns"]=1
+    [[ $pcsv == "${WPORT[$ns]}" ]] || fail "5.6 POL-webhook-port" "$x: ports 집합 [$pcsv] ≠ 계약 포트 {${WPORT[$ns]}}(여분 포트만큼 노드 A 출발 트래픽에 더 열린다)"
+    [[ $ecnt == 0 ]] || fail "5.6 POL-webhook-port" "$x: endPort ${ecnt}개 금지(포트 범위 — 계약은 ns마다 단일 포트)"
+    [[ $nonint == 0 ]] || fail "5.6 POL-webhook-port" "$x: 정수가 아닌 port ${nonint}개(숫자 문자열은 API 서버가 거절하고, named port는 계약 위반이다)"
+    [[ $protos == TCP ]] || fail "5.6 POL-webhook-port" "$x: protocol [$protos] ≠ TCP(T045 D6: TCP 유지 — 계약은 protocol을 명시하지 않는다 · 생략은 TCP)"
+    [[ $npeer == 0 ]] || fail "5.6 POL-webhook-peer" "$x: from에 ipBlock 아닌 peer ${npeer}개(podSelector·namespaceSelector 금지 · ipBlock과 selector를 한 peer에 섞는 것도 금지 — 출발지는 노드 주소 /32뿐)"
+    [[ $nexc == 0 ]] || fail "5.6 POL-webhook-peer" "$x: ipBlock에 except ${nexc}개 금지(출발 집합은 /32 정확 일치)"
+    # cidr는 RS로 이어져 오므로 값 단위로 본다(한 문자열에 쉼표로 여러 주소를 넣는 우회를 막는다)
+    miss=''; extra=''; bad=''; dup=''; cnt=0; cseen=()
+    IFS=$YQ_SEP2 read -r -a arr <<< "$ccsv"
+    for c in "${arr[@]}"; do
+      [[ -n $c ]] || continue
+      cnt=$((cnt + 1))
+      if [[ ! $c =~ $RE_CIDR ]]; then
+        if [[ ", $bad," != *", $c,"* ]]; then bad+="${bad:+, }$c"; fi
+        continue
+      fi
+      if [[ -n ${cseen[$c]:-} ]]; then
+        if [[ ", $dup," != *", $c,"* ]]; then dup+="${dup:+, }$c"; fi
+        continue
+      fi
+      cseen[$c]=1
+    done
+    if [[ -n $bad ]]; then
+      # 형식이 깨진 값이 있으면 집합 비교는 하지 않는다(같은 결함을 빠짐·여분으로 두 번 보고하지 않는다)
+      fail "5.6 POL-webhook-src" "$x: cidr 값 형식 위반 [$bad](IPv4 a.b.c.d/len 하나만 — 한 문자열에 여러 주소를 넣을 수 없다)"
+    elif [[ $cnt != "$npure" ]]; then
+      # 빈 문자열이거나 값 안에 구분자(RS)가 들어가 목록이 어긋난 경우 — 값 목록만 보면 "집합이 맞다"로 보인다
+      fail "5.6 POL-webhook-src" "$x: cidr 값 형식 위반 — 순수 ipBlock peer ${npure}개인데 파싱된 cidr ${cnt}개(빈 문자열이거나 값 안에 구분자가 들어 있다)"
+    else
+      [[ -z $dup ]] || fail "5.6 POL-webhook-src" "$x: 중복 cidr $dup(같은 주소가 from에 두 번 이상 — 하네스 np-set-5는 다중집합으로 비교해 FAIL한다)"
+      for c in ${WEXP[$ns]}; do
+        [[ -n ${cseen[$c]:-} ]] || miss+="${miss:+, }$c"
+      done
+      for c in "${arr[@]}"; do
+        [[ -n $c ]] || continue
+        if [[ " ${WEXP[$ns]} " != *" $c "* && ", $extra," != *", $c,"* ]]; then extra+="${extra:+, }$c"; fi
+      done
+      if [[ -n $miss || -n $extra ]]; then
+        fail "5.6 POL-webhook-src" "$x: 출발 ipBlock 집합 불일치 — 빠짐 [$miss] 여분 [$extra]"
+      fi
+    fi
+  done < <(printf '%s' "$ROWS")
+  while read -r wns _; do
+    [[ -n $wns ]] || continue
+    [[ -n ${WPORT[$wns]:-} ]] || continue
+    for key in "${!wseen[@]}"; do
+      [[ ${key#*/} == "$wns" ]] || continue
+      [[ -z ${wmatch[$key]:-} ]] || continue
+      fail "5.6 POL-webhook-port" "${SRC_LABEL[${key%%/*}]} NetworkPolicy/$wns/allow-apiserver-webhook: 계약 포트 ${WPORT[$wns]}을 가진 ingress 규칙이 없음(도달 경로가 통째로 막힌다)"
+    done
+  done <<< "$WEBHOOK_SRC_TABLE"
+  # platform/policies 렌더에는 표의 4개 ns가 모두 있어야 한다(렌더에서 이름·ns를 바꿔 없애는 우회를 막는다).
+  # 경로 정확 일치: 중첩된 platform/policies/tests 렌더에는 정책이 없다.
+  for ((i = 0; i < SRC_N; i++)); do
+    [[ ${SRC_KIND[$i]} == rendered && ${SRC_PATH[$i]} == platform/policies ]] || continue
+    while read -r wns _; do
+      [[ -n $wns && -n ${WPORT[$wns]:-} ]] || continue
+      [[ -n ${wseen["$i/$wns"]:-} ]] || fail "5.6 POL-webhook-src" "${SRC_LABEL[$i]}: ns '$wns'에 allow-apiserver-webhook 없음(렌더에서 이름이나 ns가 바뀌었다 — 적용되는 것은 원본이 아니라 렌더다)"
+    done <<< "$WEBHOOK_SRC_TABLE"
+  done
+  finish_group "5.6 POL-webhook-src" "allow-apiserver-webhook: 출발 ipBlock 집합 = 계약(webhook 3 ns는 노드 A private+flannel /32, vault 8200은 private /32) · ns마다 단일 TCP 포트 — webhook 정책을 담은 소스: 원본 ${nfile} · 렌더 ${nrend}" "$f6"
 }
 
 # -----------------------------------------------------------------------------
