@@ -1,8 +1,9 @@
-# platform/external-secrets/ — 운영자 절차 (T045 G1)
+# platform/external-secrets/ — 운영자 절차 (T045 G1 · G2r)
 
 External Secrets Operator 2.10.0(차트 2.10.0 · appVersion v2.10.0)의 **오퍼레이터 본체만** 소유한다 —
 CRD 25장 + Deployment 3개(controller · webhook · cert-controller) + 그에 딸린 RBAC · Service · webhook 설정,
-그리고 ClusterSecretStore가 인증 주체로 쓸 `eso-*` ServiceAccount 5개와 `eso-ca-reader` RBAC.
+그리고 ClusterSecretStore가 인증 주체로 쓸 `eso-*` ServiceAccount 5개와 수기 RBAC 2쌍
+(`eso-ca-reader`(ns `data`) · `eso-token-create`(ns `external-secrets`, G2r)).
 설치 방식은 `platform/vault/`·`platform/cert-manager/`와 같은 kustomize `helmCharts` 인플레이트다(§1).
 
 | 파일 | 내용 |
@@ -10,18 +11,19 @@ CRD 25장 + Deployment 3개(controller · webhook · cert-controller) + 그에 �
 | `kustomization.yaml` | `helmCharts` 한 항목(HTTPS helm repo 인플레이트) + `valuesInline` 전량. 이 디렉터리가 만들지 않는 것의 경계는 머리 주석에 있다 |
 | `serviceaccounts.yaml` | SA 5개(`eso-platform`·`eso-dev`·`eso-prod`·`eso-data`·`eso-ca-reader`, ns `external-secrets`). 이 SA로 도는 파드는 없다 → `automountServiceAccountToken: false` |
 | `rbac-eso-ca-reader.yaml` | ns `data`의 Role/RoleBinding — store `k8s-data-ca`가 CA Secret 2장만 읽는 범위(§5) |
+| `rbac-token-create.yaml` | **G2r.** ns `external-secrets`의 Role/RoleBinding — 컨트롤러 SA가 `eso-*` 5개의 토큰만 발급. values `rbac.serviceAccountTokenCreate: false`와 **한 쌍**(§3·§5) |
 
 > **머지 순서: G0 → G1.** G0(AppProject `platform`의 `sourceRepos`에서 external-secrets helm repo 줄 삭제)은
 > 2026-09-17에 머지됐다(gitops main `d562bd9`, PR #23). G1은 그 뒤에 연다 — 순서를 강제하는 기계 장치는 없으므로
 > cert-manager T042 · vault T044와 같이 draft PR + 본문 체크박스로 지킨다.
 > **G1 머지 = 즉시 자동 sync = CRD 25장 + 파드 3개 기동 = 이 시점부터 ESO CR의 admission이 `Fail`로 동작한다**(§4).
 
-- **이 저장소에 비밀은 없다.** 이 디렉터리의 4개 파일에는 토큰·키·OCID가 한 건도 없다.
+- **이 저장소에 비밀은 없다.** 이 디렉터리의 5개 파일에는 토큰·키·OCID가 한 건도 없다.
 - 이 디렉터리에는 **전역 `namespace:` 변환기가 없다.** 없는 것이 정답이다 — 이유는 §0 마지막 불릿.
 - 로컬 재현(리뷰어용, helm 필요):
   ```bash
   kustomize build --enable-helm platform/external-secrets | kubeconform -strict -ignore-missing-schemas -summary
-  # 2026-09-17 실측(kustomize v5.8.1 · helm v4.3.0): 문서 50장 · Valid 25 · Invalid 0 · Skipped 25(= CRD 25장)
+  # 2026-09-18 실측(kustomize v5.8.1 · helm v4.3.0): 문서 52장 · Valid 27 · Invalid 0 · Skipped 25(= CRD 25장)
   ```
   렌더하면 `platform/external-secrets/charts/`(차트 사본)가 생긴다. `.gitignore`의 `charts/`(T042 PR-0)가 잡으므로
   `git add`에 끌려오지 않는다.
@@ -30,7 +32,8 @@ CRD 25장 + Deployment 3개(controller · webhook · cert-controller) + 그에 �
 
 ## 0. 소유 / 비소유
 
-**이 디렉터리가 만드는 것**(Argo CD 적용 대상 = 로컬 렌더 결과. 2026-09-17 실측 **50장** — kind별 대조 명령은 §2):
+**이 디렉터리가 만드는 것**(Argo CD 적용 대상 = 로컬 렌더 결과. 2026-09-18 실측 **52장** = G1의 50장 + G2r의 Role/RoleBinding 2장
+— kind별 대조 명령은 §2):
 
 | 객체 | 수 | 출처 | 역할 |
 |---|---|---|---|
@@ -43,6 +46,7 @@ CRD 25장 + Deployment 3개(controller · webhook · cert-controller) + 그에 �
 | ClusterRoleBinding `external-secrets-controller` · `-cert-controller` | 2 | 차트 | 위 두 ClusterRole ↔ 차트 SA |
 | Role / RoleBinding `external-secrets-leaderelection` | 2 | 차트 | ns `external-secrets` 안 리더 선출(ConfigMap·Lease) |
 | Role / RoleBinding `eso-ca-reader` | 2 | `rbac-eso-ca-reader.yaml` | **ns `data`** — CA Secret 2장 get(§5) |
+| Role / RoleBinding `eso-token-create` | 2 | `rbac-token-create.yaml` | **G2r.** ns `external-secrets` — 차트 컨트롤러 SA `external-secrets`가 `eso-*` **5개 SA의 토큰만** 발급(`resourceNames`). 차트의 전역 규칙을 대신한다(§5) |
 | Service `external-secrets-webhook` | 1 | 차트 | 443 → targetPort 이름 `webhook`(= 10250). API 서버가 여기로 dial 한다 |
 | Secret `external-secrets-webhook` | 1 | 차트 | **빈 Secret**(data 없음). cert-controller가 런타임에 서빙 인증서를 채운다(§4) |
 | ValidatingWebhookConfiguration `secretstore-validate` · `externalsecret-validate` | 2 | 차트 | `failurePolicy: Fail`. caBundle 필드는 희망 상태에 **없다**(§4) |
@@ -124,7 +128,7 @@ helm 설치)이 푼다.
 
 ```bash
 kustomize build --enable-helm platform/external-secrets > /tmp/es.yaml
-yq -N '.kind' /tmp/es.yaml | wc -l                                                    # 50 (문서 장수)
+yq -N '.kind' /tmp/es.yaml | wc -l                                                    # 52 (문서 장수)
 yq -N '.kind' /tmp/es.yaml | sort | uniq -c | sort -rn                                # 아래 실측표와 일치
 grep -c 'ghcr.io/external-secrets/external-secrets:v2.10.0@sha256:814117b0' /tmp/es.yaml   # 3
 grep -c 'role: platform' /tmp/es.yaml                                                 # 3
@@ -132,11 +136,11 @@ grep -c 'kind: CustomResourceDefinition' /tmp/es.yaml                           
 grep -c 'argocd.argoproj.io/sync-options: Delete=false,Prune=false' /tmp/es.yaml      # 25
 grep -c 'helm.sh/hook' /tmp/es.yaml                                                   # 0 (이 차트에는 templates/tests가 없다)
 kubeconform -strict -ignore-missing-schemas -summary -kubernetes-version 1.32.0 /tmp/es.yaml
-#   Summary: 50 resources found in 1 file - Valid: 25, Invalid: 0, Errors: 0, Skipped: 25
+#   Summary: 52 resources found in 1 file - Valid: 27, Invalid: 0, Errors: 0, Skipped: 25
 #   Skipped 25 = CRD 25장(kubeconform에 apiextensions CRD 스키마가 없어 -ignore-missing-schemas로 건너뛴다 — 실측 확인)
 ```
 
-**2026-09-17 실측 kind별 장수(합계 50 = 차트 43 + 이 디렉터리의 수기 7)**:
+**2026-09-18 실측 kind별 장수(합계 52 = 차트 43 + 이 디렉터리의 수기 9)**:
 
 | kind | 장 | 내역 |
 |---|---|---|
@@ -145,8 +149,8 @@ kubeconform -strict -ignore-missing-schemas -summary -kubernetes-version 1.32.0 
 | ClusterRole | 4 | controller · cert-controller · view · edit (`rbac.servicebindings.create: false`라 servicebindings ClusterRole은 **없다**) |
 | Deployment | 3 | controller · webhook · cert-controller |
 | ValidatingWebhookConfiguration | 2 | `secretstore-validate` · `externalsecret-validate` |
-| Role | 2 | 차트 `external-secrets-leaderelection`(ns `external-secrets`) + `eso-ca-reader`(**ns `data`**) |
-| RoleBinding | 2 | 위와 같은 짝 |
+| Role | 3 | 차트 `external-secrets-leaderelection`(ns `external-secrets`) + `eso-ca-reader`(**ns `data`**) + `eso-token-create`(ns `external-secrets`, G2r) |
+| RoleBinding | 3 | 위와 같은 짝 |
 | ClusterRoleBinding | 2 | controller · cert-controller |
 | Service | 1 | `external-secrets-webhook` 443 → 10250 |
 | Secret | 1 | `external-secrets-webhook`(빈 Secret — §4) |
@@ -187,7 +191,7 @@ kubeconform -strict -ignore-missing-schemas -summary -kubernetes-version 1.32.0 
 | `securityContext`(3개 트리) | 4항목 명시 | ns `external-secrets`가 PSA **restricted**라 계약 §워크로드 강화의 4항목(allowPrivilegeEscalation false · runAsNonRoot · capabilities drop ALL · seccompProfile RuntimeDefault)이 admission 통과 조건이다. 이 차트는 부분 지정 시 기본값과 **깊은 병합**이라(실측) `readOnlyRootFilesystem: true`·`runAsUser: 1000`이 유지된다 — vault 차트(대체)와 반대다 |
 | `resources`(3개 트리) | requests 20m/96Mi · 10m/48Mi · 10m/48Mi, limits memory만 | 차트 기본 `{}`라 명시하지 않으면 plan A14 예산 대조가 성립하지 않는다. **초기 추정치**이며 T097 실측으로 교정한다(VD-18). CPU limit은 두지 않는다(저장소 관례 · validate 5.5와 같은 취지) |
 | `rbac.servicebindings.create` | `false` | 이 클러스터는 servicebinding을 쓰지 않는다 → 미사용 ClusterRole 1장 제거(실측: ClusterRole 5 → 4) |
-| `rbac.serviceAccountTokenCreate` | `true`(차트 기본값) | G1은 **차트 기본 RBAC를 그대로 둔다.** 전역 `serviceaccounts/token create`는 최소권한이 아니며(§5) **G2r 단독 PR**에서 `false` + `rbac-token-create.yaml`(resourceNames 5개)로 내린다. 권한 축소를 컴포넌트 머지와 한 PR에 묶지 않는 이유는 설계 D7 — store Ready 실패의 원인을 분리하기 위해서다 |
+| `rbac.serviceAccountTokenCreate` | **`false`**(차트 기본값은 `true`) | **G2r 단독 PR에서 내렸다**(G1은 차트 기본 RBAC 그대로였다). 이 키는 차트 `templates/rbac.yaml`의 **규칙 한 블록**만 켜고 끈다(2026-09-18 차트 2.10.0 원본 실측: 이 키를 참조하는 `{{- if }}`는 `rbac.yaml` 185행 **1곳뿐**이고 그 블록이 189행 `serviceaccounts/token`을 감싼다) — 컨트롤러 ClusterRole의 `"" serviceaccounts/token: create`. 같은 ClusterRole의 `serviceaccounts,namespaces get,list,watch`는 조건 밖이라 **그대로 남는다**(ESO는 store가 가리키는 SA를 먼저 Get한다), cert-controller ClusterRole에는 `serviceaccounts/token`이 **애초에 없다**(차트 전체에서 이 리소스는 `rbac.yaml` 1곳). 짝은 `rbac-token-create.yaml`(resourceNames 5개)이고 **둘은 같이 움직인다** — 한쪽만 되돌리면 store가 죽거나(줄만 제거) 전역 권한이 되살아난다(값만 `true`). 컴포넌트 머지와 한 PR에 묶지 않은 이유는 설계 D7 — store Ready 실패의 원인을 분리하기 위해서다 |
 | `metrics.listen.port` | `8080` | 명시해야 validate 5.4b(`HELM_PORT_KEYS`)가 **실제로 대조한다**(키가 없으면 조용히 건너뛴다). 계약 §포트 각주 `external-secrets 8080 eso-metrics`와 일치 |
 | `metrics.service.enabled` | `false` | 차트 기본. T098(Alloy)이 Service discovery를 쓰기로 하면 그때 켠다 |
 | `webhook.port` | `10250` | 계약 §포트 각주 · `PORT_TABLE` · `platform/policies`의 `allow-apiserver-webhook` **3중 일치 — 변경 금지**(셋을 함께 바꿔야 한다). Service는 443 → targetPort 이름 `webhook`(= 10250) |
@@ -249,36 +253,64 @@ API 서버도 노드 A다. 그래서 위 프로브가 통과해도 그것은 **�
 
 ## 5. RBAC — 지금 들이는 권한의 폭발 반경
 
-아래는 전부 **이 PR의 렌더 결과**에서 직접 뽑았다(ClusterRole 4장).
+아래는 전부 **렌더 결과**에서 직접 뽑았다(ClusterRole 4장 — 2026-09-18 G2r 렌더 52장 기준).
 
 | ClusterRole | 규칙 (전 네임스페이스) | 비고 |
 |---|---|---|
 | `external-secrets-controller` | `"" secrets: get,list,watch,create,update,delete,patch` | ESO의 존재 이유다. 클러스터 **전 Secret** 읽기·쓰기·삭제. ⚠ `create`+`get`의 조합은 `kubernetes.io/service-account-token` 타입 Secret을 통한 **임의 SA의 레거시 토큰(aud 없음) 획득과 등가**다 — ESO 고유의 잔여 위험이고 **G2r로 줄지 않는다** |
-| `external-secrets-controller` | `"" serviceaccounts/token: create` | **⚠ 임의 ns의 임의 SA 토큰을 발급할 수 있다 = 클러스터 admin 등가** — 아래 |
-| `external-secrets-controller` | `"" serviceaccounts,namespaces: get,list,watch` · `namespaces: update,patch` · `configmaps: get,list,watch` · `events: create,patch` | ClusterExternalSecret의 ns 라벨링 등 |
+| ~~`external-secrets-controller`~~ | ~~`"" serviceaccounts/token: create`~~ | **G2r로 제거됐다**(`rbac.serviceAccountTokenCreate: false` → 차트가 이 규칙을 렌더하지 않는다. 렌더 전체의 `serviceaccounts/token` 출현 = **1건**이고 그것이 아래 Role이다). 전역이던 동안은 **임의 ns의 임의 SA 토큰 발급 = 클러스터 admin 등가**였다 — 노출 창은 아래 |
+| `external-secrets-controller` | `"" serviceaccounts,namespaces: get,list,watch` · `namespaces: update,patch` · `configmaps: get,list,watch` · `events: create,patch` | ClusterExternalSecret의 ns 라벨링 등. ⚠ `serviceaccounts get,list,watch`는 위 `serviceaccounts/token`과 **별개 블록**이라 G2r로 사라지지 않는다(ESO는 store가 가리키는 SA를 먼저 Get한다) |
 | `external-secrets-controller` | `external-secrets.io` CR 6종 **본체** get,list,watch · 같은 6종의 **본체 + `/status` + `/finalizers`** get,update,**patch** · `externalsecrets`·`pushsecrets` create,update,delete · `generators.external-secrets.io` generator 18종 get,list,watch · `generatorstates` get,list,watch,create,update,patch,delete,deletecollection | 자기 CR 군의 조정. ⚠ **본체에 `patch`가 있다** — 컨트롤러 SA를 쥔 쪽은 `clustersecretstores` 본체(= `provider`·`auth`·`conditions`)를 고쳐 쓸 수 있다. 그래서 store `conditions.namespaces`는 ES 작성자에 대한 통제일 뿐, **컨트롤러 침해 시에는 통제가 아니다**(§5의 `eso-ca-reader` 절과 함께 읽는다) |
 | `external-secrets-cert-controller` | `"" secrets: get,list,watch`(전역) + `resourceNames: [external-secrets-webhook]`에만 `update,patch` | 자기 webhook 인증서를 넣기 위한 것인데 **읽기는 전역**이다 |
 | `external-secrets-cert-controller` | `apiextensions CRD get,list,watch` + 3개 이름에만 `update,patch` · `admissionregistration validatingwebhookconfigurations get,list,watch` + 2개 이름에만 `update,patch` | caBundle 주입. 이 두 줄의 쓰기는 이름으로 좁혀져 있다 |
 | `external-secrets-cert-controller` | `coordination.k8s.io leases: get,create,update,patch`(**전역, 이름 제한 없음**) · `"" endpoints` · `discovery.k8s.io endpointslices`: get,list,watch(전역) · `"" events: create,patch` | 리더 선출용 규칙인데 ClusterRole에 있어 **전 ns의 Lease(타 컨트롤러 리더 선출 · `kube-node-lease`)에 update/patch가 가능**하다. 다만 차트 `leaderElect` 기본 `false`라 이 렌더의 cert-controller는 리더 선출을 켜지 않는다(렌더 args에 `--enable-leader-election` 없음) = **미사용 권한**. 규칙 하나만 values로 뺄 수는 없다(`cert-controller-rbac.yaml` 안에 조건 없이 들어 있다). ClusterRole을 통째로 없애는 길은 §8의 `webhook.certManager` 전환, 또는 `certController.rbac.create: false` + 수기 RBAC(**미검증**)다 — 템플릿 가드가 `certController.create` ∧ `certController.rbac.create` ∧ ¬`webhook.certManager.enabled`이기 때문이다(셋 다 기본값은 이 ClusterRole을 렌더하는 쪽) |
 | `external-secrets-view` · `-edit` | ESO CR의 read / write. `-view`는 `aggregate-to-view`·`-edit`·`-admin`, `-edit`은 `aggregate-to-edit`·`-admin` 라벨 | 기본 view 롤을 가진 주체는 ESO CR을 **보게 되고**, 기본 edit/admin 롤을 가진 주체는 `externalsecrets`·`secretstores`·`clustersecretstores`·`pushsecrets`·`clusterpushsecrets`의 **create·update·delete·deletecollection·patch까지 받는다**(= gitops validate를 거치지 않고 ES를 직접 만들 수 있다). 2026-09-17 현재 이 저장소에 edit/admin 바인딩은 0건이다 |
 
-**⚠ `serviceaccounts/token create`가 전역인 것이 이 PR의 가장 큰 권한이다.** ESO가 임의 네임스페이스의 임의 SA 토큰을
-발급할 수 있다는 뜻이다. 컨트롤러 파드 하나가 뚫리면 (a) 전 Secret 읽기 → (b) 임의 SA 토큰 발급 →
+**G2r가 그 자리에 넣은 것** — ClusterRole이 아니라 **ns `external-secrets`의 Role 1장**(`rbac-token-create.yaml`):
+
+| Role (ns `external-secrets`) | 규칙 | 주체 |
+|---|---|---|
+| `eso-token-create` | `"" serviceaccounts/token: create` · `resourceNames: [eso-platform, eso-dev, eso-prod, eso-data, eso-ca-reader]` | RoleBinding `eso-token-create` → 차트 컨트롤러 SA `external-secrets`(ns `external-secrets`) = 렌더의 Deployment `external-secrets`가 쓰는 SA와 같은 이름(실측) |
+
+- **왜 ClusterRole이 아니라 Role인가** — TokenRequest는 **SA가 있는 ns**에 대해 호출된다(ClusterSecretStore일 때 ESO는
+  `serviceAccountRef.namespace`를 요청 ns로 쓴다 — ESO 2.10.0 `createServiceAccountToken` 소스). `eso-*` 5개는 전부
+  ns `external-secrets`에 있으므로 그 ns의 Role 하나로 덮인다. ⚠ 뒤집으면 **다른 ns의 SA를 가리키는 store를 새로 만들면
+  이 Role은 그것을 인가하지 못한다** — 그 ns에 Role/RoleBinding을 따로 만들어야 한다.
+- **SA를 늘리면 `resourceNames`도 함께 늘린다.** 빠뜨리면 그 store만 죽는다(실패 문면은 바로 아래).
+- **값과 파일은 한 쌍이다**(설계 D7) — `rbac.serviceAccountTokenCreate: false`와 `resources:`의 `rbac-token-create.yaml` 중
+  한쪽만 되돌리면 store 5장이 죽거나(줄 제거) 전역 권한이 되살아난다(값만 `true`).
+
+**⚠ 전역 `serviceaccounts/token create`는 G1이 들인 가장 큰 권한이었다 — G2r로 닫혔다.** 전역이던 동안 ESO는 임의
+네임스페이스의 임의 SA 토큰을 발급할 수 있었다. 컨트롤러 파드 하나가 뚫리면 (a) 전 Secret 읽기 → (b) 임의 SA 토큰 발급 →
 (c) 그 SA에 걸린 Vault role로 로그인(**Vault Kubernetes auth 우회**) → (d) `argocd/argocd-application-controller`(`*/*/*`) 같은
-고권한 SA의 토큰 발급 = **클러스터 admin 등가**가 성립한다.
+고권한 SA의 토큰 발급 = **클러스터 admin 등가**가 성립했다.
 (c)에 대해: Vault role은 SA 이름·ns에 더해 audience `vault`를 바인드하지만(`infra/vault/roles.tf`), **TokenRequest 호출자가
 audience를 지정할 수 있으므로** 그 바인드가 이 경로를 막지 못한다.
 
-- **G2r이 닫는 것은 TokenRequest 경로다** — (c) audience 지정이 필요한 Vault 우회 체인과, (b)·(d)의 TokenRequest 판. G2r 단독 PR이
-  `rbac.serviceAccountTokenCreate: false` + `rbac-token-create.yaml`
-  (ns `external-secrets`의 Role, `resourceNames: [eso-platform, eso-dev, eso-prod, eso-data, eso-ca-reader]`)로 내린다.
-  G1에서 함께 내리지 않는 이유는 설계 D7 — 권한 축소가 섞이면 store Ready 실패의 원인을 분리할 수 없다.
+- **노출 창** — **G1 머지(2026-09-17 20:08 KST)부터 이 G2r PR의 머지 시각까지.** 그 창 동안의 완화는 없었고,
+  **창을 짧게 가져가는 것**이 유일한 통제였다. 정확한 종료 시각은 모노레포 `report.md`에 기록한다.
+- **G2r이 닫은 것은 TokenRequest 경로다** — (c) audience 지정이 필요한 Vault 우회 체인과, (b)·(d)의 TokenRequest 판.
+  이제 이 판은 `eso-*` 5개로 제한된다(위 Role). G1에서 함께 내리지 않은 이유는 설계 D7 — 권한 축소가 섞이면
+  store Ready 실패의 원인을 분리할 수 없다.
 - **G2r 뒤에도 남는 것**: 전역 `secrets` create+get은 `kubernetes.io/service-account-token` 타입 Secret을 통해
   임의 SA의 **레거시 토큰**(aud 없음)을 얻는 경로와 등가다. 이 잔여 위험은 ESO가 전 Secret CRUD를 갖는 한 남고 G2r로 줄지 않는다.
   다만 레거시 토큰에는 `aud`가 없으므로 Vault role의 audience 바인드에는 걸린다 — 즉 남는 것은 K8s API 쪽 위험이다.
   **따라서 (d)의 클러스터 admin 등가는 G2r 뒤에도 이 경로로 남는다.**
-- 이 창 동안의 완화는 없다. **G1 머지부터 G2r 머지까지의 시간을 짧게 가져가는 것**이 유일한 통제이고, 그 사실을
-  report에 기록한다.
+
+**⚠ 잘못 좁혔을 때의 신호 — 머지 뒤 5분 안에 드러난다(VD-16).** 게이트는 store 5장이 `True Valid`를 유지하는 것이고,
+`platform/secret-stores/README.md` §2의 확인 블록으로 본다. 실패 문면은 **두 갈래**다:
+
+| store | 문면 | 왜 다른가 |
+|---|---|---|
+| `vault-platform`·`vault-dev`·`vault-prod`·`vault-data` | `cannot request Kubernetes service account token for service account "eso-<x>": cannot find secrets bound to service account: "eso-<x>"` | vault provider는 TokenRequest가 거부되면 **레거시 SA 토큰 Secret 경로로 폴백**한다. 그런 Secret이 없으니(K8s 1.24+는 SA 토큰 Secret을 자동 생성하지 않고 이 저장소도 수기로 만들지 않는다) 폴백도 실패한다 → 겉 문면에 `serviceaccounts/token`이 **안 보인다** |
+| `k8s-data-ca` | `cannot create service account token: … serviceaccounts/token` | kubernetes provider는 폴백이 없어 RBAC 거부가 그대로 올라온다 |
+
+- 둘 다 store는 `Ready=False` · reason `InvalidProviderConfig` · message `unable to create client`다.
+- **`serviceaccounts/token` 문자열이 안 보인다고 "RBAC 문제가 아니다"라고 판단하지 않는다** — vault 4장은 위처럼 폴백 문면으로 나온다.
+- 하나라도 보이면 **이 PR을 revert한다.** §6의 순서는 필요 없다(G2r는 객체 2장 추가 + ClusterRole 규칙 1개 제거뿐이고
+  CRD·webhook을 건드리지 않는다) — revert 머지로 차트가 전역 규칙을 다시 렌더하면 store는 스스로 복구된다.
+  ⚠ 다만 Application이 `prune: false`라 **Role/RoleBinding `eso-token-create` 2장은 클러스터에 남는다.**
+  전역 규칙의 부분집합이라 무해하지만, 남는다는 것을 알고 정리는 운영자가 따로 한다(§6).
 
 **`eso-ca-reader`(ns `data`)** — 이 디렉터리가 만드는 유일한 수기 RBAC다.
 
@@ -416,9 +448,17 @@ kubectl -n argocd get app platform-external-secrets -o jsonpath='{.status.sync.s
   이 디렉터리의 `eso-ca-reader` RBAC로 동작한다(store의 `conditions.namespaces`가 `ca.crt` 소비 ns를 좁히는 통제다 — §5).
   이 디렉터리가 store를 소유하지 않는 이유는 §0 「이 디렉터리가 만들지 않는 것」 첫 항목이다 — 저쪽 Application이
   Degraded가 되어도 `platform-external-secrets`는 Healthy로 남는다.
-- **G2r** — `rbac.serviceAccountTokenCreate: false` + `rbac-token-create.yaml`(resourceNames 5개).
-  **TokenRequest 경로(= §5의 Vault 우회 체인)를 닫는 단독 PR이다.** 전역 `secrets` CRUD에서 오는 K8s API 쪽 잔여 위험
-  (레거시 SA 토큰 Secret)은 G2r로 줄지 않는다 — §5. `kustomization.yaml`의 `resources:`에 주석으로 남겨 둔 줄을 그때 살린다.
+- ~~**G2r**~~ **완료(이 PR)** — `rbac.serviceAccountTokenCreate: false` + `rbac-token-create.yaml`(ns `external-secrets`의
+  Role/RoleBinding, `resourceNames` = `eso-*` 5개). `kustomization.yaml`의 `resources:`에 주석으로 남겨 뒀던 줄을 살렸다.
+  **TokenRequest 경로(= §5의 Vault 우회 체인)를 닫는 단독 PR**이고, 전역 `secrets` CRUD에서 오는 K8s API 쪽 잔여 위험
+  (레거시 SA 토큰 Secret)은 **G2r로 줄지 않는다** — §5. 노출 창은 G1 머지(2026-09-17 20:08 KST)부터 이 PR 머지까지이고
+  종료 시각은 모노레포 `report.md`에 적는다.
+  - 렌더 실측(2026-09-18): 문서 **52장**(G1의 50 + 2) · 전체에서 `serviceaccounts/token` **1건**(= 이 Role) ·
+    컨트롤러 ClusterRole에서 그 규칙 **0건** · 나머지 차이 없음(G1 렌더와의 diff는 이 3가지뿐).
+  - **머지 뒤 게이트(VD-16): 5분 안에 store 5장이 `True Valid`를 유지해야 한다.** 실패 문면은 **두 갈래**이고
+    vault 4장에는 `serviceaccounts/token` 문자열이 **보이지 않는다**(폴백 문면) — 전문은 §5의 표. 하나라도 보이면 revert한다.
+  - ⚠ **이 축소를 지키는 자동 검사는 없다** — `tests/validate.sh`에 `serviceaccounts/token`을 보는 검사가 없어
+    렌더 grep = 1이 유일한 그물이다. **T047 후보: validate에 렌더 grep = 1 고정**(값만 `true`로 되돌아가는 회귀를 막는다).
 - **T046(Reloader)** — ESO가 갱신한 Secret을 소비 파드에 반영하는 주체. 이 컴포넌트는 파드를 재시작시키지 않는다.
 - **T098(monitoring)** — `metrics.service.enabled: false`를 켤지, Alloy가 파드 discovery로 8080을 직접 긁을지 결정한다.
 - **후속 하드닝 후보**(지금 넣지 않은 이유는 §3):
