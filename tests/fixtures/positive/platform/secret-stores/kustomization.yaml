@@ -1,0 +1,6 @@
+# 긍정 픽스처 — platform/secret-stores(ClusterSecretStore 5장, 계약 §ClusterSecretStore 표 그대로)
+# 최상위 `namespace:` 변환기 없음(클러스터 범위 CR에 metadata.namespace가 찍히면 검사 9.1이 FAIL)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - clustersecretstores.yaml

@@ -50,9 +50,13 @@ CRD 25장 + Deployment 3개(controller · webhook · cert-controller) + 그에 �
 **이 디렉터리가 만들지 않는 것**:
 
 - ClusterSecretStore 5개(`vault-platform`·`vault-dev`·`vault-prod`·`vault-data`·`k8s-data-ca`) → **`platform/secret-stores/`**(G2).
-  같은 Application에 두지 않는 이유: Argo 내장 health Lua가 store `Ready=False`를 Degraded로 보고, `argocd-cm`의 Application
-  health Lua가 그것을 root로 전파한다. store는 Vault가 살아 있어야 Ready인데 Vault는 이 컴포넌트보다 뒤 wave다 →
-  한 Application에 묶으면 Vault가 불가한 동안 이 Application이 Degraded가 되어 **root sync가 여기서 멈춘다**.
+  같은 Application에 두지 않는 이유는 **health 격리**다: Argo 내장 health Lua가 store `Ready=False`를 Degraded로 보고,
+  `argocd-cm`의 Application health Lua가 child의 health를 root로 전파한다. store는 Vault가 살아 있어야 Ready인데 Vault는
+  이 컴포넌트보다 뒤 wave다 → 한 Application에 묶으면 Vault가 불가한 동안 **이 Application 자체가** Degraded가 되고
+  root health까지 Degraded가 된다. 분리하면 이 Application은 store 상태와 무관하게 Healthy로 남는다.
+  (⚠ 2026-09-18 정정: 여기서 **root sync가 멈추지는 않는다** — 첫 operation의 그 wave task만 실패하고 retry부터
+  `ApplyOutOfSyncOnly`가 이미 만들어진 CR을 걸러내 다음 wave로 진행한다. Argo v3.5.2 소스 판독 · 라이브 미실측 VD-11.
+  근거와 전문은 `../secret-stores/README.md` §0·§1.)
 - ExternalSecret → 원본은 `secrets/<ns>/`, 적용 주체(배달자)는 `platform/secrets/`(G3·G4).
 - Namespace `external-secrets` · PSA 라벨(restricted) · NetworkPolicy → `platform/policies/`. 정책 객체는 거기에만 있어야 한다
   (validate 5.0·5.1). 차트의 networkPolicy 3종(controller·webhook·cert-controller)은 기본 false라 값으로 끄지 않았다.
@@ -406,9 +410,12 @@ kubectl -n argocd get app platform-external-secrets -o jsonpath='{.status.sync.s
   kube-router LOCAL 예외 덕이라는 것도 확인했다(2026-09-18: 이 ns webhook 파드 대상 `KUBE-POD-FW-*` 체인에
   `--src-type LOCAL -j ACCEPT` 1행 · 같은 노드 경로의 출발지는 `cni0` 브리지 `10.42.0.1`). 노드 간 경로는
   여전히 미실측이다 — §4. 이 디렉터리는 정책을 만들지 않는다(§0).
-- **G2** — ClusterSecretStore 5개 → `platform/secret-stores/`. `auth.kubernetes.serviceAccountRef.audiences: [vault]`가
+- ~~**G2**~~ **완료** — ClusterSecretStore 5개는 `platform/secret-stores/`에 있다(Application `platform-secret-stores`,
+  운영자 절차는 `../secret-stores/README.md`). `auth.kubernetes.serviceAccountRef.audiences: [vault]`가
   **필수**이고(Vault 1.21+ · 2.x — ESO 문서 기준), Vault role 이름 = SA 이름이다. 다섯 번째 `k8s-data-ca`는 Vault role이 없고
   이 디렉터리의 `eso-ca-reader` RBAC로 동작한다(store의 `conditions.namespaces`가 `ca.crt` 소비 ns를 좁히는 통제다 — §5).
+  이 디렉터리가 store를 소유하지 않는 이유는 §0 「이 디렉터리가 만들지 않는 것」 첫 항목이다 — 저쪽 Application이
+  Degraded가 되어도 `platform-external-secrets`는 Healthy로 남는다.
 - **G2r** — `rbac.serviceAccountTokenCreate: false` + `rbac-token-create.yaml`(resourceNames 5개).
   **TokenRequest 경로(= §5의 Vault 우회 체인)를 닫는 단독 PR이다.** 전역 `secrets` CRUD에서 오는 K8s API 쪽 잔여 위험
   (레거시 SA 토큰 Secret)은 G2r로 줄지 않는다 — §5. `kustomization.yaml`의 `resources:`에 주석으로 남겨 둔 줄을 그때 살린다.

@@ -55,7 +55,7 @@ kustomize `helmCharts` 인플레이트다(§1). Ingress(`vault.joshuatech.dev`)�
   차트의 `server.networkPolicy`가 `false`인 이유다.
 - Application `platform-vault` → `clusters/oci-k3s/apps/platform-vault.yaml`(T041부터 라이브). 이 PR은 건드리지 않는다 —
   검사 7.1이 `source.path = platform/vault`를 대조한다.
-- ClusterSecretStore 5개 → `platform/external-secrets/`(T045) · ExternalSecret → `secrets/<ns>/`(플랫폼 ns, store `vault-platform`; 계약 gitops-repo.md §디렉터리).
+- ClusterSecretStore 5개 → `platform/secret-stores/`(T045 G2, Application `platform-secret-stores`) · ExternalSecret → `secrets/<ns>/`(플랫폼 ns, store `vault-platform`; 계약 gitops-repo.md §디렉터리).
 - Vault **내부** 설정(kv v2 마운트 · auth/kubernetes · 정책 6 · role 6) → 모노레포 `infra/vault/` OpenTofu.
 - 감사 장치(`sys/audit`) → 런북의 CLI 1회 `vault audit enable file file_path=stdout`(설계 D5). gitops도 tofu도 소유하지 않는다 —
   `sys/audit`는 list·enable·disable이 전부 sudo라 tofu가 소유하면 매 plan의 refresh가 sudo를 요구한다.

@@ -40,6 +40,14 @@
 #   7.1  WAVE               Application sync-wave = §sync-wave 단일 표(이름·경로 규약 포함)
 #   7.2  WAVE-dir           표에 없는 platform/<component>/ 디렉터리 금지
 #   8    LEAK               gitleaks 파일 스캔 — 스캔 대상 0개(빈 트리)면 FAIL
+#   9.1  CSS-set            ClusterSecretStore 이름 집합 = 계약 5개 · 위치 platform/secret-stores/ · metadata.namespace 금지
+#   9.2  CSS-auth           vault provider: serviceAccountRef.namespace(referent auth 금지)·audiences·mountPath·server/path/version
+#                           · store ↔ SA/role 매핑 = 계약 §ClusterSecretStore 표
+#   9.3  CSS-k8s            kubernetes provider: auth 키 1개(serviceAccount) · audiences 금지 · CRD 기본값 3필드 명시
+#                           · remoteNamespace = 계약 표의 값(생략뿐 아니라 오기도 잡는다)
+#   9.4  CSS-conditions     conditions = 정확히 1항목 · 그 키는 namespaces 하나 · namespaces 집합 = 계약 §ClusterSecretStore 표
+#                           (vault-platform은 §네임스페이스 표에서 jt-dev·jt-prod를 뺀 12개로 기계 유도). 중복 ns 금지
+#                           한계: 검사 9는 **선언된 값만** 본다 — 라이브 store의 status(reason=Valid 등)는 보지 않는다
 #
 # 입력(환경변수 또는 인자):
 #   --root <dir>            | VALIDATE_ROOT        검사 대상 트리(기본: 저장소 루트). 저장소 밖은 거부
@@ -79,7 +87,8 @@ REQUIRE_AUTHOR="${VALIDATE_REQUIRE_AUTHOR:-0}"
 GH_EVENT="${GITHUB_EVENT_NAME:-}"
 
 usage() {
-  sed -n '2,60p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  # 머리 주석 전체(2행 ~ 닫는 `# ====` 줄). 줄 번호를 박지 않는다 — 검사를 추가해도 잘리지 않게.
+  sed -n '2,/^# =\{10,\}$/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 while [[ $# -gt 0 ]]; do
@@ -113,6 +122,7 @@ policies -10 -
 cert-manager 0 cert-manager
 external-secrets 0 external-secrets
 vault 10 vault
+secret-stores 15 external-secrets
 cert-manager-issuers 20 cert-manager
 cnpg 20 cnpg-system
 system-upgrade 20 system-upgrade
@@ -209,6 +219,36 @@ vault .server.service.port 8200
 vault .server.service.targetPort 8200
 '
 
+# gitops-repo.md §ClusterSecretStore 5개 표 + §이름·인증 규약(검사 9).
+#   <store 이름> <provider> <인증 주체 SA 이름 = vault role 이름>
+# 5.6의 노드 주소와 달리 이 값들은 **바뀌는 런타임 값이 아니라 계약 문면**이다(계약을 고칠 때만 함께 바꾼다).
+# 계약이 정본, 이 블록이 유일한 코드 사본 — README·주석에 다시 적지 않는다.
+CSS_TABLE='
+vault-platform vault eso-platform
+vault-dev vault eso-dev
+vault-prod vault eso-prod
+vault-data vault eso-data
+k8s-data-ca kubernetes eso-ca-reader
+'
+CSS_SA_NS='external-secrets'                  # 인증 주체 SA가 사는 ns(계약 §ClusterSecretStore 표 열 제목)
+CSS_VAULT_SERVER='http://vault.vault.svc:8200' # T044 `global.tlsDisable: true` — 평문 8200
+CSS_VAULT_PATH='kv'                            # kv v2 마운트 경로(infra/vault/main.tf)
+CSS_VAULT_VERSION='v2'
+CSS_VAULT_MOUNT='kubernetes'                   # auth 마운트 경로(infra/vault/main.tf)
+CSS_VAULT_AUDIENCE='vault'                     # Vault role `audience`(infra/vault/roles.tf) — 계약은 audiences: [vault]
+CSS_K8S_REMOTE_NS='data'                       # k8s-data-ca가 읽는 원본 ns(계약 §ClusterSecretStore 표 `remoteNamespace: data`)
+
+# 같은 표의 `conditions.namespaces` 열(참조 허용 ns): <store 이름> <ns 목록(쉼표)>.
+# `vault-platform`은 여기 적지 않는다 — 계약 문면이 "network-policy.md 표에서 jt-dev·jt-prod 제외"이므로
+# 아래 NS_TABLE에서 **기계 유도**한다(같은 목록을 두 곳에 두면 한쪽만 고쳐질 수 있다).
+CSS_COND_TABLE='
+vault-dev jt-dev
+vault-prod jt-prod
+vault-data data,identity
+k8s-data-ca identity,jt-dev,jt-prod
+'
+CSS_COND_PLATFORM_EXCLUDE='jt-dev jt-prod'
+
 # ExternalSecret 규약 정규식(계약 §validate.yml ExternalSecret 검사)
 RE_KEY='^(platform|dev|prod)/[a-z0-9_./-]+$'
 RE_WORKERS='^(dev|prod)/(access|web)/'
@@ -220,6 +260,8 @@ RE_LOC_DATA='^platform/(cnpg-databases|kafka-topics|dragonfly|authentik|openfga)
 RE_LOC_APPS='^apps/'
 RE_LOC_AUTOMOUNT='^(apps/|platform/(cloudflared|dragonfly)(/|$))'
 RE_LOC_POLICIES='^platform/policies/'
+# 9 전용: 원본 파일(platform/secret-stores/<file>)과 kustomize 렌더 소스(SRC_PATH = platform/secret-stores)를 모두 잡는다
+RE_LOC_SECRET_STORES='^platform/secret-stores(/|$)'
 # 5.6 전용: 원본 파일(platform/policies/<file>)과 kustomize 렌더 소스(SRC_PATH = platform/policies)를 모두 잡는다
 RE_LOC_POLICIES_ALL='^platform/policies(/|$)'
 RE_CIDR='^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}/[0-9]{1,2}$'
@@ -333,6 +375,16 @@ YQ_HELM_COUNT='(.helmCharts // []) | length'
 YQ_HELM_LEAVES='(.helmCharts // [])[] | (.name // "-") as $c | (.valuesInline // {}) | [.. | select(tag == "!!int" or tag == "!!str") | {"p": (path | join(".")), "v": (. | tostring)}] | .[] | [ $c, .p, .v ] | join(strenv(YQ_SEP))'
 YQ_HELM_VALUES_FILES='(.helmCharts // [])[] | .valuesFile | select(. != null)'
 YQ_FILE_LEAVES='[.. | select(tag == "!!int" or tag == "!!str") | {"p": (path | join(".")), "v": (. | tostring)}] | .[] | [ .p, .v ] | join(strenv(YQ_SEP))'
+# 검사 9 — ClusterSecretStore. `keys`는 전부 sort 해 출력 순서를 문서 순서에 의존하지 않게 한다.
+#   ⚠ yq v4가 없는 경로를 traverse하면 그 키를 만들어 버리므로, `keys` 문자열은 그 맵을 traverse하기 **전에** 먼저 바인딩한다.
+YQ_CSS='select(.kind == "ClusterSecretStore") | [ (.metadata.name // "-"), (.metadata.namespace // "-"), (((.spec.provider // {}) | keys | sort) | join(",")) ] | join(strenv(YQ_SEP))'
+# shellcheck disable=SC2016  # $v·$a·$ak·$sa 는 yq 변수다
+YQ_CSS_VAULT='select(.kind == "ClusterSecretStore") | select((.spec.provider // {}) | has("vault")) | .spec.provider.vault as $v | ($v.auth // {}) as $a | (($a | keys | sort) | join(",")) as $akeys | ($a.kubernetes // {}) as $ak | ($ak.serviceAccountRef // {}) as $sa | [ (.metadata.name // "-"), ($v.server // "-"), ($v.path // "-"), ($v.version // "-"), $akeys, ($ak.mountPath // "-"), ($ak.role // "-"), ($sa.name // "-"), ($sa.namespace // "-"), (($sa.audiences // []) | join(",")) ] | join(strenv(YQ_SEP))'
+# shellcheck disable=SC2016
+# shellcheck disable=SC2016
+YQ_CSS_COND='select(.kind == "ClusterSecretStore") | (.spec.conditions // []) as $c | ([$c[] | keys[]] | unique | sort | join(",")) as $ckeys | [ (.metadata.name // "-"), (($c | length) | tostring), $ckeys, ([$c[] | (.namespaces // [])[]] | join(",")) ] | join(strenv(YQ_SEP))'
+# shellcheck disable=SC2016
+YQ_CSS_K8S='select(.kind == "ClusterSecretStore") | select((.spec.provider // {}) | has("kubernetes")) | .spec.provider.kubernetes as $k | ($k.auth // {}) as $a | (($a | keys | sort) | join(",")) as $akeys | ($a.serviceAccount // {}) as $sa | (($sa | keys | sort) | join(",")) as $sakeys | ($k.server // {}) as $srv | [ (.metadata.name // "-"), ($k.remoteNamespace // "-"), ($srv.url // "-"), (($srv.caProvider // {}).namespace // "-"), $akeys, ($sa.name // "-"), ($sa.namespace // "-"), $sakeys ] | join(strenv(YQ_SEP))'
 
 yq_lines() { # <expr> <file> — 빈 줄 제거·CR 제거. 실패 시 비영 상태
   yq -N "$1" "$2" | tr -d '\r' | sed '/^[[:space:]]*$/d'
@@ -1086,6 +1138,167 @@ check_8_gitleaks() {
 }
 
 # -----------------------------------------------------------------------------
+# 검사 9 — ClusterSecretStore(계약 §ClusterSecretStore 5개 표 · §이름·인증 규약)
+#
+# 왜 검사 3 그룹이 아닌가: 계약 §ExternalSecret 규약의 "7항목"과 3.1–3.7이 1:1이라 3.x를 더 쓰면 번호가 충돌한다
+#   (같은 이유로 G3의 WAVE-secrets-base도 3 그룹 밖에 둔다 — 설계 R-12).
+#
+# 이 검사가 막는 것 중 **가장 중요한 하나**: vault store에서 `auth.kubernetes.serviceAccountRef.namespace`를 빠뜨리면
+#   ESO 2.10.0은 'referent auth'로 보고 **로그인을 한 번도 하지 않은 채** `Ready=True / reason=Valid / "store validated"`를
+#   찍는다. 라이브 status로는 정상 store와 구분되지 않으므로(`platform/secret-stores/README.md` §1) 이 정적 검사가
+#   유일한 자동 방어선이다. CRD 스키마에도 필수 필드가 아니라 kubeconform으로는 잡히지 않는다.
+# -----------------------------------------------------------------------------
+check_9_clustersecretstores() {
+  header 9 "ClusterSecretStore: 이름 집합·위치·provider별 인증 = 계약 §ClusterSecretStore 5개 표"
+  need_tool "9 CSS" yq || return 0
+  local i name ns pkeys x want_provider want_sa n=0 c p s rest
+  local server vpath vver akeys mount role saname sans auds
+  local rns url cans saks
+  local -a arr
+  local -A CSS_PROVIDER=() CSS_SA=() seen=()
+
+  while read -r c p s; do
+    [[ -n $c ]] || continue
+    CSS_PROVIDER[$c]=$p; CSS_SA[$c]=$s
+  done <<< "$CSS_TABLE"
+
+  # 9.1 위치 · metadata.namespace · provider · 이름 집합
+  local f1=$N_FAIL
+  collect_rows "$YQ_CSS" "9.1 CSS-set" all
+  while IFS="$YQ_SEP" read -r i name ns pkeys; do
+    [[ -n $i ]] || continue
+    n=$((n + 1))
+    x="${SRC_LABEL[$i]} ClusterSecretStore/$name"
+    [[ ${SRC_PATH[$i]} =~ $RE_LOC_SECRET_STORES ]] \
+      || fail "9.1 CSS-location" "$x: ClusterSecretStore는 platform/secret-stores/ 에만 둔다(계약 §디렉터리) — 현재 위치 '${SRC_PATH[$i]}'"
+    [[ $ns == "-" ]] \
+      || fail "9.1 CSS-namespace" "$x: metadata.namespace '$ns' 금지 — ClusterSecretStore는 클러스터 범위다(전역 namespace 변환기 → 영구 OutOfSync)"
+    want_provider=${CSS_PROVIDER[$name]:-}
+    if [[ -z $want_provider ]]; then
+      fail "9.1 CSS-set" "$x: 계약 §ClusterSecretStore 표에 없는 store 이름(vault-platform·vault-dev·vault-prod·vault-data·k8s-data-ca)"
+    else
+      if [[ ${SRC_PATH[$i]} =~ $RE_LOC_SECRET_STORES ]]; then seen[$name]=1; fi
+      [[ $pkeys == "$want_provider" ]] \
+        || fail "9.1 CSS-set" "$x: spec.provider [$pkeys] ≠ 표의 '$want_provider'(provider는 정확히 하나여야 하고 표와 같아야 한다)"
+    fi
+  done < <(printf '%s' "$ROWS")
+  # 이름 집합은 `platform/secret-stores/` 디렉터리가 있을 때만 완전성을 요구한다(부분 트리 픽스처를 오탐하지 않게).
+  if [[ -d "$ROOT/platform/secret-stores" ]]; then
+    while read -r c rest; do
+      [[ -n $c ]] || continue
+      [[ -n ${seen[$c]:-} ]] \
+        || fail "9.1 CSS-set" "platform/secret-stores/ 에 store '$c' 없음(계약 표 5개 — 이름 집합이 정확히 같아야 한다)"
+    done <<< "$CSS_TABLE"
+  fi
+  finish_group "9.1 CSS-set" "ClusterSecretStore ${n}개(파일+렌더링): 위치 platform/secret-stores/ · metadata.namespace 없음 · 이름·provider = 계약 표 5개" "$f1"
+
+  # 9.2 vault provider
+  local f2=$N_FAIL nv=0
+  collect_rows "$YQ_CSS_VAULT" "9.2 CSS-auth" all
+  while IFS="$YQ_SEP" read -r i name server vpath vver akeys mount role saname sans auds; do
+    [[ -n $i ]] || continue
+    nv=$((nv + 1))
+    x="${SRC_LABEL[$i]} ClusterSecretStore/$name"
+    if [[ $sans == "-" || -z $sans ]]; then
+      fail "9.2 CSS-auth-referent" "$x: auth.kubernetes.serviceAccountRef.namespace 없음 = referent auth — ESO가 로그인을 하지 않은 채 Ready=True/reason=Valid가 된다(라이브 status로는 드러나지 않는 가짜 PASS). '$CSS_SA_NS'를 반드시 적는다"
+    elif [[ $sans != "$CSS_SA_NS" ]]; then
+      fail "9.2 CSS-auth-referent" "$x: serviceAccountRef.namespace '$sans' ≠ $CSS_SA_NS(계약 §이름·인증 규약)"
+    fi
+    [[ $auds == "$CSS_VAULT_AUDIENCE" ]] \
+      || fail "9.2 CSS-auth-audience" "$x: serviceAccountRef.audiences [$auds] ≠ [$CSS_VAULT_AUDIENCE] — Vault role의 audience와 다르면 403 'invalid audience (aud) claim'이다"
+    [[ $akeys == "kubernetes" ]] \
+      || fail "9.2 CSS-auth-method" "$x: auth 키 [$akeys] — kubernetes 하나여야 한다(계약 §이름·인증 규약)"
+    [[ $mount == "$CSS_VAULT_MOUNT" ]] \
+      || fail "9.2 CSS-auth-mount" "$x: auth.kubernetes.mountPath '$mount' ≠ $CSS_VAULT_MOUNT(Vault auth 마운트 경로)"
+    if [[ $server != "$CSS_VAULT_SERVER" || $vpath != "$CSS_VAULT_PATH" || $vver != "$CSS_VAULT_VERSION" ]]; then
+      fail "9.2 CSS-auth-server" "$x: server/path/version = '$server'/'$vpath'/'$vver' ≠ '$CSS_VAULT_SERVER'/'$CSS_VAULT_PATH'/'$CSS_VAULT_VERSION'(path+version이 다르면 ES의 remoteRef.key 접두 규약(3.1·3.2)이 깨진다)"
+    fi
+    want_sa=${CSS_SA[$name]:-}
+    if [[ -n $want_sa && ( $role != "$want_sa" || $saname != "$want_sa" ) ]]; then
+      fail "9.2 CSS-auth-map" "$x: role '$role' · serviceAccountRef.name '$saname' ≠ 계약 표의 '$want_sa'(store ↔ SA/role 매핑 — 뒤바뀌면 그 store가 다른 스코프의 Vault 정책으로 읽는다)"
+    fi
+  done < <(printf '%s' "$ROWS")
+  finish_group "9.2 CSS-auth" "vault provider store ${nv}개(파일+렌더링): serviceAccountRef.namespace=$CSS_SA_NS · audiences=[$CSS_VAULT_AUDIENCE] · mountPath·server·path·version · store↔SA/role 매핑" "$f2"
+
+  # 9.3 kubernetes provider
+  local f3=$N_FAIL nk=0
+  collect_rows "$YQ_CSS_K8S" "9.3 CSS-k8s" all
+  while IFS="$YQ_SEP" read -r i name rns url cans akeys saname sans saks; do
+    [[ -n $i ]] || continue
+    nk=$((nk + 1))
+    x="${SRC_LABEL[$i]} ClusterSecretStore/$name"
+    [[ $akeys == "serviceAccount" ]] \
+      || fail "9.3 CSS-k8s-auth" "$x: auth 키 [$akeys] — serviceAccount 하나여야 한다(CRD는 cert|serviceAccount|token 중 정확히 하나만 받는다)"
+    [[ $sans == "$CSS_SA_NS" ]] \
+      || fail "9.3 CSS-k8s-auth" "$x: auth.serviceAccount.namespace '$sans' ≠ $CSS_SA_NS(ClusterSecretStore에서는 생략하면 ES의 ns에서 SA를 찾는다)"
+    [[ ",$saks," != *",audiences,"* ]] \
+      || fail "9.3 CSS-k8s-audience" "$x: auth.serviceAccount에 audiences 금지 — 이 토큰은 apiserver에 bearer로 제시되므로 aud가 붙으면 401이다"
+    if [[ $rns == "-" || -z $rns ]]; then
+      fail "9.3 CSS-k8s-default" "$x: remoteNamespace 없음 — CRD 기본값이 'default'라 생략하면 조용히 엉뚱한 ns를 읽는다"
+    elif [[ $rns != "$CSS_K8S_REMOTE_NS" ]]; then
+      # 생략(위)만 막으면 `remoteNamespace: default`처럼 **잘못 적은** 값은 통과한다 — 계약 표의 값과 정확히 비교한다
+      fail "9.3 CSS-k8s-remote" "$x: remoteNamespace '$rns' ≠ '$CSS_K8S_REMOTE_NS'(계약 §ClusterSecretStore 표 — CA 원본이 사는 ns)"
+    fi
+    [[ $url != "-" && -n $url ]] \
+      || fail "9.3 CSS-k8s-default" "$x: server.url 없음 — CRD 기본값이 'kubernetes.default'(스킴·포트 없음)다"
+    [[ $cans != "-" && -n $cans ]] \
+      || fail "9.3 CSS-k8s-default" "$x: server.caProvider.namespace 없음 — CA는 기본값이 없고 ClusterSecretStore에서는 namespace가 필수다(비우면 시스템 루트로 떨어져 x509 실패)"
+  done < <(printf '%s' "$ROWS")
+  finish_group "9.3 CSS-k8s" "kubernetes provider store ${nk}개(파일+렌더링): auth=serviceAccount 하나(ns $CSS_SA_NS·audiences 없음) · remoteNamespace=$CSS_K8S_REMOTE_NS · server.url·caProvider.namespace 명시" "$f3"
+
+  # 9.4 conditions(참조 허용 ns) = 계약 §ClusterSecretStore 표
+  local f4=$N_FAIL nc=0 nconds ckeys nscsv miss extra dup v w
+  local -A CSS_COND=() nsseen=()
+  while read -r c p; do
+    [[ -n $c ]] || continue
+    CSS_COND[$c]=${p//,/ }
+  done <<< "$CSS_COND_TABLE"
+  # vault-platform = NS_TABLE − CSS_COND_PLATFORM_EXCLUDE (계약 문면 그대로 기계 유도 — 5.2의 ALL13과 같은 방식)
+  p=" $NS_TABLE "
+  for v in $CSS_COND_PLATFORM_EXCLUDE; do p=${p// $v / }; done
+  CSS_COND[vault-platform]=$p
+  collect_rows "$YQ_CSS_COND" "9.4 CSS-conditions" all
+  while IFS="$YQ_SEP" read -r i name nconds ckeys nscsv; do
+    [[ -n $i ]] || continue
+    # 표 밖 이름은 9.1이 이미 잡았다(기대 ns 집합이 없다)
+    [[ -n ${CSS_COND[$name]:-} ]] || continue
+    nc=$((nc + 1))
+    x="${SRC_LABEL[$i]} ClusterSecretStore/$name"
+    if [[ $nconds == 0 ]]; then
+      fail "9.4 CSS-conditions-count" "$x: spec.conditions 없음 — 비우면 **모든 네임스페이스**가 이 store를 쓸 수 있다(계약 §ClusterSecretStore 표의 참조 허용 ns가 무의미해진다)"
+      continue
+    fi
+    [[ $nconds == 1 ]] \
+      || fail "9.4 CSS-conditions-count" "$x: spec.conditions 항목 ${nconds}개 — 1개여야 한다(항목은 OR로 합쳐져 범위가 넓어진다)"
+    if [[ $ckeys != "namespaces" ]]; then
+      fail "9.4 CSS-conditions-key" "$x: conditions 항목 키 [$ckeys] — namespaces 하나만 쓴다(namespaceSelector·namespaceRegexes는 ns가 늘거나 라벨이 붙는 순간 조용히 범위가 넓어진다)"
+    fi
+    miss=''; extra=''; dup=''; nsseen=()
+    IFS=',' read -r -a arr <<< "$nscsv"
+    for v in "${arr[@]}"; do
+      [[ -n $v ]] || continue
+      if [[ -n ${nsseen[$v]:-} ]]; then
+        if [[ ", $dup," != *", $v,"* ]]; then dup+="${dup:+, }$v"; fi
+      else
+        nsseen[$v]=1
+      fi
+    done
+    [[ -z $dup ]] || fail "9.4 CSS-conditions-set" "$x: conditions.namespaces 중복 [$dup]"
+    for w in ${CSS_COND[$name]}; do
+      [[ -n ${nsseen[$w]:-} ]] || miss+="${miss:+, }$w"
+    done
+    for v in "${arr[@]}"; do
+      [[ -n $v ]] || continue
+      if [[ " ${CSS_COND[$name]} " != *" $v "* && ", $extra," != *", $v,"* ]]; then extra+="${extra:+, }$v"; fi
+    done
+    if [[ -n $miss || -n $extra ]]; then
+      fail "9.4 CSS-conditions-set" "$x: conditions.namespaces 집합 불일치 — 빠짐 [$miss] 여분 [$extra](여분만큼 그 ns가 이 store로 비밀을 읽는다)"
+    fi
+  done < <(printf '%s' "$ROWS")
+  finish_group "9.4 CSS-conditions" "store ${nc}개(파일+렌더링) conditions = 1항목 · namespaces 집합 = 계약 표(vault-platform은 네임스페이스 표에서 ${CSS_COND_PLATFORM_EXCLUDE// /·} 제외로 유도)" "$f4"
+}
+
+# -----------------------------------------------------------------------------
 # 실행
 # -----------------------------------------------------------------------------
 load_wave_table
@@ -1099,6 +1312,7 @@ check_5_policies
 check_6_author
 check_7_sync_wave
 check_8_gitleaks
+check_9_clustersecretstores
 
 printf '\n== 요약 ==\n'
 printf 'PASS %d · FAIL %d · WARN %d · SKIP %d\n' "$N_PASS" "$N_FAIL" "$N_WARN" "$N_SKIP"
