@@ -399,10 +399,13 @@ kubectl -n argocd get app platform-external-secrets -o jsonpath='{.status.sync.s
 ## 8. 인계
 
 - ~~**G1p**~~ **완료** — `platform/policies/policies-common.yaml`의 `allow-apiserver-webhook`(ns `external-secrets`)에
-  노드 A flannel-wg 출발 주소 `10.42.0.0/32`를 add-only로 더했다(값은 머지 전 노드 A 실측으로 확정 — `flannel-wg`
-  장치 주소와 **다른 노드(B)의 파드 IP**로의 `ip route get` `src`). 동일 노드 경로는 그 전에도 통과했고
-  (2026-09-17 실측: dry-run `created (server dry run)` · 음성 대조 webhook denied) 노드 간 경로는 미실측이다 — §4.
-  이 디렉터리는 정책을 만들지 않는다(§0).
+  노드 A flannel-wg 출발 주소 `10.42.0.0/32`를 add-only로 더했다. 값은 **2026-09-18 머지 전 노드 A 실측으로 확정**됐다
+  — `flannel-wg` 장치 주소 · **다른 노드(B)의 파드 IP**로의 `ip route get` `src` · `.spec.podCIDR`의 네트워크 주소
+  **세 값이 모두 `10.42.0.0`**(기록은 모노레포 런북 `docs/runbooks/bootstrap.md` §3 T045 절). 동일 노드 경로는
+  그 전에도 통과했고(2026-09-17 실측: dry-run `created (server dry run)` · 음성 대조 webhook denied), 그 통과가
+  kube-router LOCAL 예외 덕이라는 것도 확인했다(2026-09-18: 이 ns webhook 파드 대상 `KUBE-POD-FW-*` 체인에
+  `--src-type LOCAL -j ACCEPT` 1행 · 같은 노드 경로의 출발지는 `cni0` 브리지 `10.42.0.1`). 노드 간 경로는
+  여전히 미실측이다 — §4. 이 디렉터리는 정책을 만들지 않는다(§0).
 - **G2** — ClusterSecretStore 5개 → `platform/secret-stores/`. `auth.kubernetes.serviceAccountRef.audiences: [vault]`가
   **필수**이고(Vault 1.21+ · 2.x — ESO 문서 기준), Vault role 이름 = SA 이름이다. 다섯 번째 `k8s-data-ca`는 Vault role이 없고
   이 디렉터리의 `eso-ca-reader` RBAC로 동작한다(store의 `conditions.namespaces`가 `ca.crt` 소비 ns를 좁히는 통제다 — §5).
