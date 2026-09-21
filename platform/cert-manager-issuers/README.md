@@ -73,8 +73,8 @@ cert-manager 재시작은 어느 쪽이든 불필요하다. 상세는 `../secret
 
 **`--server-side`는 선택이 아니다** — client-side apply는 `kubectl.kubernetes.io/last-applied-configuration` 어노테이션에
 **토큰 base64 사본**을 남기고, 그 사본은 `kubectl get secret -o yaml`·etcd 스냅샷·야간 백업까지 그대로 따라간다
-(선례: `platform/cloudflared/README.md` ② "`apply --server-side`라 회전 시 재실행해도 되고, `last-applied-configuration` 어노테이션(토큰 사본)이 생기지 않는다").
-회전으로 이 절차를 재실행할 때도 이 플래그를 빼지 않는다.
+(선례: `platform/cloudflared/README.md` ② "`apply --server-side`라 … `last-applied-configuration` 어노테이션(토큰 사본)이 생기지 않는다").
+복구·재부트스트랩으로 이 절차를 재실행할 때도 이 플래그를 빼지 않는다.
 
 ```powershell
 Set-PSReadLineOption -HistorySaveStyle SaveNothing      # 이 세션 히스토리 저장 끄기

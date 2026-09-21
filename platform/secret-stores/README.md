@@ -292,10 +292,14 @@ Application `platform-secret-stores`는 `prune: false` + `Prune=confirm` + `Dele
   `k8s-data-ca`는 `cannot create service account token: … serviceaccounts/token`. 둘 중 하나라도 보이면 즉시 revert한다.
   G2r 전까지의 노출 창과 G2r 뒤에도 남는 잔여 위험은 `platform/external-secrets/README.md` §5에 있다(여기 옮겨 적지 않는다).
 - ~~**G3**~~ **완료** — `platform/secrets/`(배달자) + Application `platform-secrets`. 이 디렉터리의 store를 처음으로 **쓰는**
-  쪽이다: `vault-platform` → ns `cert-manager`의 DNS 토큰 ES 1장(터널 토큰은 G4). ExternalSecret **원본은 `secrets/<ns>/`**에
+  쪽이다: `vault-platform` → ns `cert-manager`의 DNS 토큰 ES 1장. ExternalSecret **원본은 `secrets/<ns>/`**에
   있고 적용만 `platform/secrets/`가 한다 — `../../secrets/*`를 base로 가지는 kustomization은 그 파일 하나뿐이고
   `tests/validate.sh` 검사 **7.3**이 그것과 "포함되지 않은 `secrets/<ns>`"를 정적으로 막는다. 운영자 절차는
   `../secrets/README.md`(머지 순서 = **kv 시드 뒤** · 인수 판정 4겹 · 인수 해제). **§3의 "지금은 무해하다"는 이 머지부터 성립하지 않는다.**
+- ~~**G4**~~ **완료(이 PR)** — `vault-platform`을 쓰는 두 번째 ES(ns `cloudflared`의 터널 토큰, kv `platform/cloudflare/tunnel`).
+  **이 디렉터리의 변경은 없다** — `conditions.namespaces`에 `cloudflared`가 이미 들어 있다(§0의 표 = 계약 표에서 기계 유도).
+  ⚠ 무게는 달라졌다: 이 store가 Ready가 아니면 터널 ES는 `SecretSyncedError`가 되고(그때도 Secret의 값·UID는 불변 —
+  인수·갱신만 지연된다), Vault가 오래 닫혀 있는 동안 터널 토큰을 **회전하면** 반영이 그만큼 밀린다. Vault 복구가 먼저다(§1).
 - **T056(CA 미러)** — `k8s-data-ca`를 쓰는 ExternalSecret은 **2종 5장**이다: `pg-main-ca` × `identity`·`jt-dev`·`jt-prod`,
   `jt-kafka-cluster-ca-cert` × `jt-dev`·`jt-prod` — 모두 `ca.crt`만 가져온다.
   그 전까지 이 store의 Ready는 미러 동작의 증거가 아니다(§1). `ca.key` 유출을 막는 통제는 store가 아니라 ES 쪽

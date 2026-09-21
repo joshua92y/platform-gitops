@@ -465,6 +465,14 @@ kubectl -n argocd get app platform-external-secrets -o jsonpath='{.status.sync.s
   Application인 이유는 이 디렉터리의 admission webhook이 `failurePolicy: Fail`이기 때문이다(§4) — ES를 소비자 소스에 넣으면
   webhook 장애 중 그 Application의 sync **전체**가 실패해 터널 Deployment 수정까지 막힌다. 운영자 절차·게이트는
   `../secrets/README.md`, 단일 소유의 정적 방어선은 `tests/validate.sh` 검사 7.3이다.
+- ~~**G4**~~ **완료(이 PR)** — 두 번째이자 이 범위의 마지막 인수형 ES: `secrets/cloudflared/`의 터널 토큰 ES를 같은 배달자가 적용해
+  T039의 운영자 수동 Secret `cloudflared-tunnel`(키 `TUNNEL_TOKEN`)을 **삭제 없이 인수**한다. 이 오퍼레이터에 대한 요구는
+  G3와 같다 — 새 권한도, 이 디렉터리의 변경도 없다(판정 항목은 `../secrets/README.md` §1·§2).
+  ⚠ **다만 이제 이 오퍼레이터의 장애 반경에 터널 자격이 들어왔다**: 컨트롤러가 틀린 kv 값을 쓰면 실행 중 컨테이너는
+  영향이 없지만 **다음 파드 교체 또는 컨테이너 재시작에서**(env는 컨테이너가 시작할 때마다 다시 읽힌다 — liveness 실패·
+  OOMKill·노드 재부팅 포함) SSH·K8s API의 유일한 경로가 끊긴다. 그래서 값 정정이 복구
+  1순위이고(§6의 되돌리기와 같은 순서), webhook 장애가 **터널 Deployment 수정을 막지 않는** 구조(§4 · 소비자
+  Application의 `status.resources`에 `external-secrets.io` 0건)가 여기서 실제로 값을 한다.
 - **T046(Reloader)** — ESO가 갱신한 Secret을 소비 파드에 반영하는 주체. 이 컴포넌트는 파드를 재시작시키지 않는다.
 - **T098(monitoring)** — `metrics.service.enabled: false`를 켤지, Alloy가 파드 discovery로 8080을 직접 긁을지 결정한다.
 - **후속 하드닝 후보**(지금 넣지 않은 이유는 §3):

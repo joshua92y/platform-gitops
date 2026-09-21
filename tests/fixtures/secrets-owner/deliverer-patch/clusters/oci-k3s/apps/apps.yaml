@@ -1,0 +1,14 @@
+# 부정 픽스처 7.3(e) — 배달자 Application(정상). 이 트리의 7.3 FAIL은 배달자의 변환 키 하나여야 한다
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-secrets
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "18" }
+spec:
+  project: platform
+  source: { repoURL: https://github.com/joshua92y/platform-gitops.git, targetRevision: main, path: platform/secrets }
+  destination: { server: https://kubernetes.default.svc, namespace: kube-system }
+  syncPolicy:
+    automated: { prune: false, selfHeal: true }
+    syncOptions: [ServerSideApply=true, CreateNamespace=true, Prune=confirm, Delete=confirm, SkipDryRunOnMissingResource=true]
