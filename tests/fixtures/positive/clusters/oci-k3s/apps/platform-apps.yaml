@@ -1,4 +1,4 @@
-# 긍정 픽스처 — 플랫폼 Application 20개(계약 §sync-wave 단일 표 그대로). 실제 트리는 컴포넌트당 파일 1개.
+# 긍정 픽스처 — 플랫폼 Application 21개(계약 §sync-wave 단일 표 그대로). 실제 트리는 컴포넌트당 파일 1개.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -79,6 +79,20 @@ spec:
   project: platform
   source: { repoURL: https://github.com/joshua92y/platform-gitops.git, targetRevision: main, path: platform/secret-stores }
   destination: { server: https://kubernetes.default.svc, namespace: external-secrets }
+  syncPolicy:
+    automated: { prune: false, selfHeal: true }
+    syncOptions: [ServerSideApply=true, CreateNamespace=true, Prune=confirm, Delete=confirm, SkipDryRunOnMissingResource=true]
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-secrets
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "18" }
+spec:
+  project: platform
+  source: { repoURL: https://github.com/joshua92y/platform-gitops.git, targetRevision: main, path: platform/secrets }
+  destination: { server: https://kubernetes.default.svc, namespace: kube-system }
   syncPolicy:
     automated: { prune: false, selfHeal: true }
     syncOptions: [ServerSideApply=true, CreateNamespace=true, Prune=confirm, Delete=confirm, SkipDryRunOnMissingResource=true]

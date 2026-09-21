@@ -22,7 +22,9 @@
 #      이 PR은 그 파일을 **건드리지 않는다** — 검사 7.1이 `source.path: platform/cert-manager`를 강제한다.
 #   3) NetworkPolicy: 정본은 `platform/policies/`. 차트 자체 정책 3종(최상위 · webhook · cainjector)은 아래에서 **전부 false로 명시**한다
 #      (기본값도 false지만, "정책은 platform/policies만"이라는 계약 의도를 코드에 남긴다).
-#   4) Secret(ACME 계정 키 · Cloudflare API 토큰): 최초는 운영자 수동 생성(T042), T045 뒤 `secrets/cert-manager/` ExternalSecret으로 교체한다.
+#   4) Secret(ACME 계정 키 · Cloudflare API 토큰): 최초는 운영자 수동 생성(T042)이고, Cloudflare 토큰 Secret은 T045 G3에서
+#      `secrets/cert-manager/`의 ExternalSecret이 **인수**한다(교체가 아니다 — `creationPolicy: Orphan`이라 Secret을 지우지 않고
+#      제자리에서 관리 대상이 된다. 적용 주체는 `platform/secrets/`). ACME 계정 키 2장은 cert-manager가 만든 것이라 그대로 둔다.
 #      토큰 값은 이 저장소에 없다. Issuer/ClusterIssuer·Certificate는 `platform/cert-manager-issuers/`(PR-2·PR-3) 소유다.
 #
 # 되돌리기: revert 머지 → `resources: []` 복귀. 그다음(필요 시) 운영자가 Deployment·webhook 설정을 수동 삭제한다.

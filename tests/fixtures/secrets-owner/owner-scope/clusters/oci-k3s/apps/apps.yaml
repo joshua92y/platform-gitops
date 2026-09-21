@@ -1,0 +1,30 @@
+# 부정 픽스처 7.3(owner-scope) — 배달자 Application(정상) + ⑤ multi-source Application(두 번째 source가 secrets/<ns>)
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-secrets
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "18" }
+spec:
+  project: platform
+  source: { repoURL: https://github.com/joshua92y/platform-gitops.git, targetRevision: main, path: platform/secrets }
+  destination: { server: https://kubernetes.default.svc, namespace: kube-system }
+  syncPolicy:
+    automated: { prune: false, selfHeal: true }
+    syncOptions: [ServerSideApply=true, CreateNamespace=true, Prune=confirm, Delete=confirm, SkipDryRunOnMissingResource=true]
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-cert-manager-issuers
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "20" }
+spec:
+  project: platform
+  sources:
+    - { repoURL: https://github.com/joshua92y/platform-gitops.git, targetRevision: main, path: platform/cert-manager-issuers }
+    - { repoURL: https://github.com/joshua92y/platform-gitops.git, targetRevision: main, path: secrets/cert-manager }
+  destination: { server: https://kubernetes.default.svc, namespace: cert-manager }
+  syncPolicy:
+    automated: { prune: false, selfHeal: true }
+    syncOptions: [ServerSideApply=true, CreateNamespace=true, Prune=confirm, Delete=confirm, SkipDryRunOnMissingResource=true]

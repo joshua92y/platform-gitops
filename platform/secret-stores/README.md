@@ -95,7 +95,7 @@ VD-11**이라 게이트로 쓰기 전에는 실측이 필요하다.)
 |---|---|---|---|
 | ① | `status.conditions[Ready].status` | 5행 모두 `True` | Vault 불가 · 인증 실패 · 권한 부족 |
 | ② | 같은 condition의 `reason` | 5행 모두 `Valid` | **`k8s-data-ca`의 `ValidationUnknown`**(SSRR/SSAR 호출 자체 실패) |
-| ③ | vault store 4장의 **spec** `…auth.kubernetes.serviceAccountRef.namespace` | 4행 모두 `external-secrets` | **referent auth 가짜 PASS** — ①②로는 못 잡는다. **머지 전에는 `validate.sh` 검사 9.2(`CSS-auth-referent`)가 CI에서 강제한다** |
+| ③ | vault store 4장의 **spec** `…auth.kubernetes.serviceAccountRef.namespace` | 4행 모두 `external-secrets` | **referent auth 가짜 PASS** — ①②로는 못 잡는다. **머지 전 `validate.sh` 검사 9.2(`CSS-auth-referent`)가 이것을 잡는다** — 오늘 그 실행 수단은 **PR 전 로컬 실행**이다(CI 배선은 T047 — `../../tests/README.md` 「CI 배선 상태」) |
 
 store별 ①② 기대값(전부 같다):
 
@@ -114,8 +114,9 @@ store별 ①② 기대값(전부 같다):
   **로그인을 한 번도 하지 않은 채** `Ready=True` · `reason=Valid` · `message "store validated"`가 된다. 정상 store와
   status·reason·message가 **전부 같다.** vault provider는 `ValidationUnknown`을 내지 않는다
   (`providers/v1/vault/validate.go`의 유일한 Unknown 반환이 `err=nil`이라 컨트롤러가 `ReasonStoreValid`로 찍는다).
-  그래서 방어선은 상태가 아니라 ⓐ **`validate.sh` 검사 9.2 `CSS-auth-referent`**(원본 파일 + 렌더 결과를 둘 다 보고,
-  required check `validate`로 CI에서 머지를 막는다 — 이 디렉터리의 1차 방어선이다) ⓑ 라이브 spec 확인(§2 ③)
+  그래서 방어선은 상태가 아니라 ⓐ **`validate.sh` 검사 9.2 `CSS-auth-referent`**(원본 파일 + 렌더 결과를 둘 다 본다 —
+  이 디렉터리의 1차 방어선이고, 오늘의 실행 수단은 PR 전 로컬 실행이다. CI 배선은 T047 — `../../tests/README.md`
+  「CI 배선 상태」) ⓑ 라이브 spec 확인(§2 ③)
   ⓒ Vault 감사 로그의 role별 login 유무 셋이다. (ESO 2.10.0 소스 판독 — **라이브 미실측 VD-2**.)
 - **`ValidationUnknown`이 나올 수 있는 store는 `k8s-data-ca` 하나뿐이고, 나오면 불합격이다.** kubernetes provider는
   SelfSubjectRulesReview/SelfSubjectAccessReview 호출 **자체가** 실패할 때(x509 · 401 · 6443 경로) `(Unknown, err)`를
@@ -184,7 +185,8 @@ kustomize build platform/secret-stores | yq -N 'select(.spec.provider.kubernetes
 #   [serviceAccount] 하나 — cert·token이 함께 보이면 CRD가 거부한다. audiences 키가 있으면 apiserver가 401이다
 bash tests/validate.sh
 #   검사 7.1이 Application ↔ 경로 ↔ 표를, 7.2가 새 디렉터리를 본다
-#   **검사 9(CSS)가 이 디렉터리의 정본 게이트다** — required check `validate`에서 CI가 강제한다:
+#   **검사 9(CSS)가 이 디렉터리의 정본 게이트다** — 오늘은 이 로컬 실행이 그 게이트의 유일한 실행 수단이다
+#   (CI 배선은 T047 — `../../tests/README.md` 「CI 배선 상태」):
 #     9.1 CSS-set        이름 5개 집합 · 위치 platform/secret-stores/ · metadata.namespace 금지
 #     9.2 CSS-auth       vault 4장: serviceAccountRef.namespace(= §1 ③ referent auth 차단) · audiences · auth 키 ·
 #                        mountPath · server/path/version · store↔SA/role 매핑
@@ -261,9 +263,10 @@ Application `platform-secret-stores`는 `prune: false` + `Prune=confirm` + `Dele
    ```powershell
    kubectl delete clustersecretstore <name>     # 되돌릴 store 이름만. 5장을 한꺼번에 지울 이유는 보통 없다
    ```
-3. **지금은 무해하다 — 이 store를 쓰는 ExternalSecret이 아직 한 장도 없다**(ES는 G3부터). store를 지워도 사라지는
-   Secret이 없고, 되살리면 그대로 복구된다. G3 이후에는 그 store를 쓰는 ES가 동기화에 실패하므로(이미 만들어진
-   Secret의 **값은 남는다** — 갱신이 멈출 뿐이다) 이 문장은 G3 머지와 함께 다시 읽어야 한다.
+3. **~~지금은 무해하다~~ — G3부터는 아니다.** G3(`platform/secrets/` + Application `platform-secrets`)가 `vault-platform`을
+   쓰는 ExternalSecret을 들여왔다. 그 store를 지우면 해당 ES가 동기화에 실패한다 — 다만 **이미 만들어진 Secret의 값은
+   남는다**(갱신이 멈출 뿐이고, ES는 provider 실패 시 Secret을 건드리지 않는다). 영향 범위와 복구는
+   `../secrets/README.md` §1·§5. 나머지 store 4장은 아직 쓰는 ES가 없다(CA 미러는 T056).
 4. **store 1장 단위로 되돌릴 수 있다** — 파일을 5개로 나눈 이유다. 예를 들어 `k8s-data-ca`만 문제가 되면
    `kustomization.yaml`의 그 한 줄과 파일만 지우는 PR로 끝난다(나머지 4장은 건드리지 않는다).
 5. revert만 하고 수동 삭제를 하지 않으면 Application은 **OutOfSync로 남는 것이 정상이다** — `prune: false`로 남긴
@@ -288,15 +291,19 @@ Application `platform-secret-stores`는 `prune: false` + `Prune=confirm` + `Dele
   vault store 4장은 `cannot find secrets bound to service account: "eso-<x>"`(TokenRequest 거부 뒤 레거시 Secret 폴백 실패),
   `k8s-data-ca`는 `cannot create service account token: … serviceaccounts/token`. 둘 중 하나라도 보이면 즉시 revert한다.
   G2r 전까지의 노출 창과 G2r 뒤에도 남는 잔여 위험은 `platform/external-secrets/README.md` §5에 있다(여기 옮겨 적지 않는다).
-- **G3** — `platform/secrets/` + Application. 이 디렉터리의 store를 처음으로 **쓰는** 쪽이다(cert-manager DNS 토큰 ·
-  cloudflared 터널 토큰). 그때부터 §3의 "무해하다"가 성립하지 않는다.
+- ~~**G3**~~ **완료** — `platform/secrets/`(배달자) + Application `platform-secrets`. 이 디렉터리의 store를 처음으로 **쓰는**
+  쪽이다: `vault-platform` → ns `cert-manager`의 DNS 토큰 ES 1장(터널 토큰은 G4). ExternalSecret **원본은 `secrets/<ns>/`**에
+  있고 적용만 `platform/secrets/`가 한다 — `../../secrets/*`를 base로 가지는 kustomization은 그 파일 하나뿐이고
+  `tests/validate.sh` 검사 **7.3**이 그것과 "포함되지 않은 `secrets/<ns>`"를 정적으로 막는다. 운영자 절차는
+  `../secrets/README.md`(머지 순서 = **kv 시드 뒤** · 인수 판정 4겹 · 인수 해제). **§3의 "지금은 무해하다"는 이 머지부터 성립하지 않는다.**
 - **T056(CA 미러)** — `k8s-data-ca`를 쓰는 ExternalSecret은 **2종 5장**이다: `pg-main-ca` × `identity`·`jt-dev`·`jt-prod`,
   `jt-kafka-cluster-ca-cert` × `jt-dev`·`jt-prod` — 모두 `ca.crt`만 가져온다.
   그 전까지 이 store의 Ready는 미러 동작의 증거가 아니다(§1). `ca.key` 유출을 막는 통제는 store가 아니라 ES 쪽
   (`property: ca.crt`만 · `dataFrom` 금지, validate 3.4)과 `conditions.namespaces`다.
 - **정적 게이트는 이미 있다 — `tests/validate.sh` 검사 9**(이번 G2에 함께 넣었다. 하위 코드는 §2의 `bash tests/validate.sh`
   블록). 저장소 쪽 ③(spec `serviceAccountRef.namespace`)은 9.2 `CSS-auth-referent`가, 참조 허용 ns(§0의 표)는
-  9.4 `CSS-conditions-*`가, `remoteNamespace: data`는 9.3 `CSS-k8s-remote`가 required check `validate`에서 막는다.
+  9.4 `CSS-conditions-*`가, `remoteNamespace: data`는 9.3 `CSS-k8s-remote`가 잡는다(실행은 PR 전 로컬 —
+  CI 배선은 T047, `../../tests/README.md` 「CI 배선 상태」).
   검사 9가 **보지 않는 것**은 라이브 status와 "그 조건이 실제로 어느 ES를 막았는지"다 — 그건 아래 하네스 몫이다
   (`tests/README.md` 한계 절).
 - **하네스 `eso-1` 강화(G5)** — 지금의 `eso-1`(모노레포 `tests/platform/cluster.tests.ps1`)은 store **이름 집합 5개**와

@@ -1,0 +1,6 @@
+# 부정 픽스처 7.3(owner-scope) ① 전이 이중 소유 — 소비자가 **배달자 자체**를 base로 끌어간다
+# (`secrets/` 아래를 직접 가리키지 않으므로 옛 7.3은 그냥 통과했다)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../secrets

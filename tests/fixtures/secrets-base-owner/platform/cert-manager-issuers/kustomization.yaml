@@ -1,0 +1,6 @@
+# 부정 픽스처 7.3 WAVE-secrets-base — 소비자 컴포넌트가 같은 base를 포함(단일 소유 위반)
+# 실제 트리에서 이러면 한 ExternalSecret을 platform-secrets와 platform-cert-manager-issuers가 각자 적용한다
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../secrets/cert-manager

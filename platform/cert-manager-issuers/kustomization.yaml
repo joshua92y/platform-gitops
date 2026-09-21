@@ -18,8 +18,11 @@
 #   3) Application `platform-cert-manager-issuers`: `clusters/oci-k3s/apps/` 소유(T041 PR-C가 이미 배포).
 #      이 PR은 그 파일을 **건드리지 않는다** — 검사 7.1이 `source.path: platform/cert-manager-issuers`를 강제한다.
 #      리소스별 `SkipDryRunOnMissingResource`도 여기 적지 않는다(Application이 이미 syncOption으로 갖고 있다).
-#   4) Secret `cloudflare-dns-token`(운영자 수동 → T045 ExternalSecret)과 ACME 계정 키 Secret 2장(cert-manager 생성분):
+#   4) Secret `cloudflare-dns-token`(운영자 수동 생성, T042)과 ACME 계정 키 Secret 2장(cert-manager 생성분):
 #      **이 저장소에 비밀은 없다.** Argo CD는 셋 다 만들지도 지우지도 않는다(Application이 `prune: false`).
+#      ⚠ T045 G3부터 `cloudflare-dns-token`은 `secrets/cert-manager/`의 ExternalSecret이 **인수**한다(적용 주체는 `platform/secrets/`).
+#        인수는 **삭제 없이** 되고(`creationPolicy: Orphan` — ownerReference도 만들지 않는다) 이 디렉터리의 매니페스트는
+#        바뀌지 않는다. 그 Secret을 지우거나 이름을 바꾸지 않는다 — 절차와 게이트는 README §11.
 #   5) TLSStore `default`: `platform/traefik/` 소유(PR-4). 그 PR은 **prod 발급 Ready=True 뒤에만** 머지한다(설계 §8 R5).
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization

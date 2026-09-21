@@ -1,6 +1,14 @@
 # tests/ — validate 검사 스크립트와 자기검사 (T033)
 
-required check `validate`의 본체와 그 자기검사. 정본은 모노레포 `specs/003-platform-foundation/contracts/gitops-repo.md`(§validate.yml · §validate.yml ExternalSecret 검사 · §sync-wave 단일 표 · §ClusterSecretStore 5개 · §이름·인증 규약 · §이미지·승격)와 `contracts/network-policy.md`(네임스페이스 표 14개 · 정책 세트 · 외부 egress 규칙 형식 · 포트 출처 각주)다. 계약과 스크립트가 어긋나면 계약을 먼저 고친다.
+required check `validate`가 **T047에서 배선할** 검사 본체와 그 자기검사. 정본은 모노레포 `specs/003-platform-foundation/contracts/gitops-repo.md`(§validate.yml · §validate.yml ExternalSecret 검사 · §sync-wave 단일 표 · §ClusterSecretStore 5개 · §이름·인증 규약 · §이미지·승격)와 `contracts/network-policy.md`(네임스페이스 표 14개 · 정책 세트 · 외부 egress 규칙 형식 · 포트 출처 각주)다. 계약과 스크립트가 어긋나면 계약을 먼저 고친다.
+
+## CI 배선 상태 — **이 검사들은 아직 CI에서 강제되지 않는다**(2026-09-21 실측)
+
+`.github/workflows/validate.yml`은 T003 골격 그대로다: 검사 1–7 스텝이 전부 `run: echo "자리 — T033에서 작성"`이고 **실제로 도는 스텝은 `actions/checkout`과 `gitleaks/gitleaks-action` 둘뿐**이다(`grep -rn "validate.sh" .github/` → 0건). 즉 required check `validate`는 오늘 **gitleaks만** 본다 — 이 디렉터리의 검사(0–9)는 한 줄도 돌지 않는다.
+
+- **검사는 `tests/validate.sh`에 있고, CI가 이를 실제로 부르는 것은 T047(validate 워크플로 완성) 뒤다.** 그때까지 강제 수단은 **PR 전 로컬 실행**(`bash tests/validate.sh` · `bash tests/validate.tests.sh`)과 **사람 리뷰**뿐이다.
+- 그러므로 다른 문서에서 "required check `validate`가 막는다/CI가 강제한다"로 읽히는 문장은 **T047 이후의 상태**를 말한다. 오늘의 통제 현황을 더 자세히 적은 곳은 `bootstrap/argocd/argocd-cm.yaml` 머리 주석의 「통제 현황(실측)」이다.
+- 이 사실은 **여기 한 곳에만** 적는다. 다른 README는 이 절을 가리킨다.
 
 | 파일 | 역할 |
 |---|---|
@@ -36,6 +44,12 @@ VALIDATE_TESTS_REQUIRE_TOOLS=1 bash tests/validate.tests.sh   # CI(CI=true도 �
 - 4b(platform 이미지 digest 경고)는 `image:` **스칼라 줄만** 검사한다 — helm values의 분리형 `image.repository` / `image.tag`는 보지 않는다(Renovate `pinDigests`와 컴포넌트 태스크의 수동 병기에 맡긴다).
 - 검사 5.6(`allow-apiserver-webhook`)이 **보는 것**: `platform/policies/` 아래 원본 YAML **과 그 디렉터리의 `kustomize build` 렌더 결과**, 출발 `ipBlock` cidr 집합(값 단위 정확 일치 · 중복 금지 · 형식 검사 · `except` 금지 · ipBlock 아닌 peer와 혼합 peer 금지), 계약 포트 집합(정확 일치 · 정수 · `endPort` 금지) · `protocol`(TCP만). 렌더 쪽은 세 가지를 더 본다: `patches`·merge key로 **넓어지는** 경우, 표 밖 ns에 같은 이름이 **나타나는** 경우(`kind: List` 풀림 · ns 변경 — 5.2의 EXCLUSIVE는 원본 파일만 본다), 표의 4개 ns에서 정책이 **사라지는** 경우(이름·ns 변경).
 - 검사 5.6이 **보지 않는 것**: 그 주소가 **오늘의 노드 실물과 같은지**(리스가 바뀌면 정책은 조용히 무력해진다 — 라이브 대조는 모노레포 하네스 `np-set-5`가 노드 객체 InternalIP · `.spec.podCIDR`에서 유도해 본다), `spec.policyTypes`·`spec.podSelector`(validate 전체가 어느 정책에서도 보지 않는다), 그리고 정책이 실제로 클러스터에 적용됐는지. kustomize가 없어 검사 1이 SKIP되면 **렌더 소스가 아예 없다** — 그 사실은 5.6 PASS 줄의 "webhook 정책을 담은 소스: 원본 N · 렌더 M"에서 `M = 0`으로 드러난다.
+- 검사 7.3(`WAVE-secrets-base`)이 **보는 것**(네 갈래):
+  - ⓐ **base 참조**: 모든 `kustomization.yaml`의 `resources`·`bases`·`components` 항목을 경로로 정규화해 `secrets/` 아래를 가리키는 항목이 `platform/secrets/kustomization.yaml`에만 있는지 본다. **배달자 자신(`platform/secrets`)을 base로 끌어가는 전이 참조도 위반**이다(소비자 렌더에 ES가 들어간다). `secrets/<ns>/kustomization.yaml`이 자기 디렉터리 안의 파일을 가리키는 것은 위반이 아니고, 다른 ns를 가리키면 위반이다. **절대 경로(`/…`)와 저장소 밖으로 나가는 상대 경로는 위치 판정 불가로 FAIL**한다(fail-closed — 로컬에서만 렌더되고 Argo repo-server의 체크아웃 경로에서는 실패한다).
+  - ⓑ **소유자 대조(렌더 기준)**: `secrets/**` **파일**의 ExternalSecret과 **같은 이름**이 배달자 밖 소스(파일·렌더)에도 있으면 FAIL — 파일 복사본 · 전이 base · helm 렌더로 두 Application이 같은 ES를 각자 적용하는 경로를 잡는다. 이름으로 맞추는 이유는 `secrets/<ns>/kustomization.yaml`의 `namespace:` 변환기가 원본에 없던 ns를 렌더에서 채울 수 있어서다(그래서 **같은 이름을 다른 ns에 두는 트리는 구분하지 못한다**).
+  - ⓒ **죽은 선언(파일 단위)**: `secrets/**` 파일의 ES가 `platform/secrets` **렌더**에 없으면 FAIL — `secrets/` 바로 아래 파일 · `secrets/<ns>/sub/` 하위 · ns kustomization에 등록하지 않은 파일이 전부 걸린다. kustomize가 없으면 이 갈래는 돌지 않고, 그 사실은 PASS 줄의 "배달자 렌더 0"으로 드러난다(5.6의 "원본 N · 렌더 M" 관례와 같다). 디렉터리 단위 완전성(YAML을 담은 `secrets/<ns>/`가 배달자에 포함됐는지)도 함께 보며, **실제 저장소 루트(`--root`가 저장소 루트)에서는 항상** 본다. 부분 트리 예외(배달자 구조를 쓰지 않는 픽스처)는 픽스처 실행에만 적용된다.
+  - ⓓ **적용 주체**: `secrets` 또는 `secrets/*`를 가리키는 Application은 금지다(`.spec.source.path`와 **multi-source `.spec.sources[].path` 전부** — 7.1은 첫 source만 본다). 배달자 파일이 있으면 `source.path == platform/secrets`인 Application이 하나는 있어야 한다.
+  - **보지 않는 것**: 원격(URL) base, 배달자가 `secrets/` 밖에서 끌어오는 리소스, ES **이름이 같고 ns만 다른** 경우, 라이브에서 실제로 어느 Application이 그 ES를 적용했는지(그것은 ES의 Argo tracking 어노테이션 — `platform/secrets/README.md` §3). 그리고 **Windows 로컬 실행은 경로 대소문자 오기를 잡지 못한다**(대소문자 무시 파일시스템 — Linux의 검사 1이 빌드 실패로 잡는 일반 문제다).
 - 검사 6(봇 작성자)은 변경 줄이 `digest: sha256:<64hex>` 형식인지만 본다(digest 값의 진위·attestation은 보지 않음). 보증은 이 줄 검사와 같은 실행의 **트리 검사(4a 형식·kustomize build·②)의 결합**이며, 위 base ref 실행 조건이 함께 있어야 성립한다.
 - 검사 9(ClusterSecretStore)가 **보는 것**: 원본 YAML과 `kustomize build` 렌더 결과 양쪽의 **선언된 값**.
   - 9.1 위치(`platform/secret-stores/`) · `metadata.namespace` 금지 · 이름/provider 집합 = 계약 표 5개

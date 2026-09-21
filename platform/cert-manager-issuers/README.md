@@ -5,7 +5,7 @@
 > PR-4(`4f23abd`, TLSStore)까지 머지돼 `auth.joshuatech.dev`가 526 → **404**로 바뀌었고, 그 뒤 sniStrict도 투입됐다.
 > 아래 §4·§6·§8·§10은 **끝난 전이 구간의 기록**이고(과거형으로 읽는다), §1·§2는 기록이자 **회전·재부트스트랩·진단 때 다시 쓰는 절차**다.
 > 앞으로 실제로 해야 할 일은 **§13(갱신 전제 체크리스트)** — 첫 갱신 ≈**2026-11-08**, 만료 **2026-12-08** — 이고,
-> 그 밖의 미완 작업은 **§11(T045 ExternalSecret 전환)**과 **§1의 토큰 회전(T084)**이다.
+> 그 밖의 미완 작업은 **§11(T045 G3 — ExternalSecret 인수)**과 **§1의 토큰 회전(T084)**이다.
 
 ACME 발급자 2종(Let's Encrypt staging · prod)과 이 클러스터의 **오리진 인증서 1장**(와일드카드 `*.joshuatech.dev` + apex)을 소유한다.
 cert-manager 컨트롤 플레인은 `platform/cert-manager/`(PR-1), Namespace·PSA·NetworkPolicy는 `platform/policies/`(T041),
@@ -40,7 +40,8 @@ ClusterIssuer·Certificate의 **CREATE가 admission에서 거부**되어 첫 syn
 ## 1. 선행 — 운영자 수동 Secret `cloudflare-dns-token` (**완료** · PR-2 머지 전에 생성)
 
 이 절차는 끝났다(운영자가 PR-2 머지 전에 Secret을 만들었고, 그 상태로 staging·prod 발급이 모두 성공했다).
-아래는 **회전(T084)·재부트스트랩·T045 전환 실패 시 되돌아올 때** 그대로 다시 쓰는 절차다.
+아래는 **재부트스트랩(콜드 부트스트랩)과 T045 인수 해제 뒤 값 복구**에 그대로 다시 쓰는 절차다.
+⚠ **인수 뒤의 토큰 회전(T084)에는 이 절차를 쓰지 않는다** — 회전은 **kv 정정이 먼저**다(§11 · `../secrets/README.md` §5).
 
 | 항목 | 값 |
 |---|---|
@@ -59,7 +60,10 @@ ns 자체는 T041 `platform/policies/`가 이미 선언·적용했으므로 **T0
 `com.cloudflare.api.account.zone.list` 권한 오류가 난다. `Zone:DNS:Edit` 하나만으로는 부족하다.
 Global API Key 금지, `joshuatech-tofu-deploy` 재사용 금지(스코프가 넓고 용도가 다르다).
 **토큰 값은 사용자 비밀번호 관리자에만 있다 — 저장소·PR 본문·이슈·채팅·로그 어디에도 넣지 않는다.**
-회전은 T084 회전 매트릭스에 등재한다(회전 = 아래 절차 재실행이면 되고 cert-manager 재시작은 불필요하다).
+회전은 T084 회전 매트릭스에 등재한다. ⚠ **T045 G3 인수 뒤에는 회전 절차가 바뀐다 — kv 값을 먼저 바꾼다**(모노레포 런북의
+정정 블록) → ESO가 ≤5분 안에 Secret에 반영한다. 아래 §1의 수동 Secret 절차를 그대로 재실행하면(= Secret만 새 값으로 바꾸면)
+ESO가 다음 주기에 kv의 **옛 값**으로 되돌리고, ClusterIssuer는 `Ready=True`로 남아 **다음 DNS-01 갱신에서야** 실패한다(무증상).
+cert-manager 재시작은 어느 쪽이든 불필요하다. 상세는 `../secrets/README.md` §5.
 
 ### 생성 절차 (워크스테이션 PowerShell 7 + 운영자 admin kubeconfig)
 
@@ -103,6 +107,8 @@ kubectl -n cert-manager get secret cloudflare-dns-token `
 ```
 
 되돌리기: `kubectl -n cert-manager delete secret cloudflare-dns-token`. Argo는 이 Secret을 추적하지 않는다.
+⚠ **T045 G3 인수 뒤에는 이것으로 지워지지 않는다** — ESO가 다음 주기 refresh(5분 · 2026-09-21 DR1 실측 302초)에 kv 값으로
+Secret을 **재생성**한다. 정말 없애려면 인수를 먼저 해제한다(`../secrets/README.md` §5).
 
 **Secret이 없으면 어떻게 되나 — prod 한도는 안전하지만 증상은 다르다(진단 지점 주의).**
 **ClusterIssuer 2개는 그대로 `Ready=True`가 된다.** ACME 계정 등록은 솔버 Secret과 무관하기 때문이다 — §8이 바로 그 성질에 기대어
@@ -447,32 +453,53 @@ cert-manager는 발급한 Secret에 Certificate를 owner로 달지 않는다. �
 
 ---
 
-## 11. T045 — ExternalSecret 전환
+## 11. T045 G3 — ExternalSecret **인수**(교체가 아니다)
 
-지금은 운영자 수동 Secret이고, T045에서 `secrets/cert-manager/`의 ExternalSecret으로 교체한다.
+§1의 운영자 수동 Secret은 **그대로 남는다.** T045 G3가 `secrets/cert-manager/externalsecret-cloudflare-dns-token.yaml`을
+추가하면 ESO가 그 Secret을 **제자리에서 인수**한다 — 지우고 다시 만들지 않는다(ESO v2.10.0 소스: `applyOwnership`은
+**다른 ExternalSecret**이 controller owner일 때만 거부한다. 라이브 미실측 VD-3).
+적용 주체는 `platform/secrets/`(Application `platform-secrets`)이고, **이 디렉터리의 매니페스트는 바뀌지 않는다.**
 
 | 항목 | 확정값 |
 |---|---|
 | Vault kv 경로 | `kv/platform/cloudflare/dns-token` |
-| remoteRef | `key: platform/cloudflare/dns-token`, `property: api-token` |
-| target | `name: cloudflare-dns-token`, `creationPolicy: Owner` |
+| remoteRef | `key: platform/cloudflare/dns-token`, `property: token` — kv **필드 이름**이 `token`이다(정본은 모노레포 data-model §8). key에 `kv/` 접두를 붙이지 않는다(store가 `path: kv`+`version: v2`) |
+| target | `name: cloudflare-dns-token`, `secretKey: api-token`(ClusterIssuer가 참조하는 키), `creationPolicy: Orphan` / `deletionPolicy: Retain` |
+| refresh | `refreshPolicy: Periodic` · `refreshInterval: 5m` |
 | store | `secretStoreRef: {kind: ClusterSecretStore, name: vault-platform}` (`apiVersion: external-secrets.io/v1` — v1beta1 금지) |
 
-- ⚠ **kv 시드에도 §1과 같은 규율을 적용한다 — 값을 argv에 두지 않는다.** `vault kv put <경로> api-token=<값>` 형태는 §1이 금지한
-  `--from-literal=`과 **정확히 같은 노출 등급**이다(셸 히스토리 · `ps` 출력). 값이 `-`이면 Vault CLI가 stdin에서 읽으므로
-  `… | vault kv put kv/platform/cloudflare/dns-token api-token=-` 로 파이프해 넣는다(평문 파일을 만들어 `@file`로 넘기지 않는다).
-  시드 뒤 확인은 `vault kv get -field=…`(값 출력)이 아니라 `vault kv metadata get kv/platform/cloudflare/dns-token`(키·버전만)으로 한다.
+- **`Orphan`인 이유**(설계 D4 = B′): `Owner`는 ownerReference를 심어 **ES가 지워지는 어떤 경로에서든**
+  (`kubectl delete externalsecret` · `Delete=false`가 빠진 Application cascade) **Secret이 GC된다**
+  (`deletionPolicy: Retain`은 그것을 막지 못한다). 터널 토큰과 같은 인수 해제 절차를
+  쓰기 위해 DNS 토큰도 `Orphan`으로 통일했다. 대가는 Argo 고아 리소스 경고가 계속 뜨는 것뿐이다(드리프트가 아니다).
+  ⚠ 지금 두 ES에는 `Delete=false`가 붙어 있어 **Application cascade 자체가 ES를 지우지 않는다** — 인수 해제는
+  `../secrets/README.md` §5의 `kubectl delete externalsecret`뿐이다.
+- **⚠ 이전 판의 `property: api-token`은 오기였다.** `api-token`은 K8s Secret 쪽 키 이름이고, Vault kv 필드 이름은 `token`이다.
+  (지금 표는 G3에서 실제로 만든 매니페스트와 같다 — 그 파일이 저장소 안의 정본이다.)
+
+- ⚠ **kv 시드에도 §1과 같은 규율을 적용한다 — 값을 argv에 두지 않는다.** 여기에 시드 명령을 적지 않는다:
+  **kv 시드는 모노레포 런북의 OP1 시드 블록으로만 한다**(필드 이름 `token` · JSON stdin 한 형식 · 최초 쓰기 `-cas=0` ·
+  필드별 해시 되읽기). `key=<값>`은 argv에 노출되고(셸 히스토리 · `ps` 출력 — §1이 금지한 `--from-literal=`과 같은 등급),
+  `key=-`는 **stdin의 끝 개행까지 값으로 저장하므로**(Vault kv-builder) 둘 다 쓰지 않는다 — 개행이 붙으면 kv 값 ≠ 라이브 값이 되어
+  인수 순간 Secret이 '토큰+개행'으로 덮인다. 시드 뒤 확인도 `vault kv get -field=…`(값 출력)로 하지 않는다.
+  `vault kv metadata get kv/platform/cloudflare/dns-token`은 **버전·시각만 보여 주고 필드 이름은 보여 주지 않으므로**
+  필드 오기를 잡지 못한다 — 필드 확인은 OP1 블록의 되읽기 해시 비교로 한다. **(2026-09-21 시드 완료: 필드 `token` version 1.)**
 - ✅ **런북 오기 정정 완료(2026-09-10).** 모노레포 `docs/runbooks/bootstrap.md` §0의 "토큰 ① Cloudflare 배포 토큰" 줄이
   "cert-manager 토큰은 Vault kv 시드(**T043**)에서 소비 예정"이라고 적고 있었다. 두 곳이 틀렸고 둘 다 그 줄에서 고쳤다 —
   ⓐ kv 시드·ExternalSecret 전환은 **T045**다(T043은 AOP 강제) ⓑ "예정"도 낡았다: **T042에서 이미 소비했다**(§1의 운영자 수동 Secret).
-- ⚠ **인수 함정(VD-10 · 미검증)**: ESO의 `creationPolicy: Owner`가 **자신이 만들지 않은 기존 Secret을 인수하는지** 실측된 바 없다
-  (라벨/어노테이션 선인수가 필요한지, `Merge`를 써야 하는지도 미확인).
-  **완화**: cert-manager는 이 토큰을 **DNS-01 챌린지를 푸는 순간에만** 읽고 상주 감시하지 않는다.
-  따라서 인수가 불가능해 "수동 Secret 삭제 → ExternalSecret 재생성"으로 가더라도, **갱신 창(잔여 29.7일 이전) 밖이면 공백이 무해하다.**
-  ⚠ 같은 판단이 T039 `cloudflared-tunnel`에는 **적용되지 않는다**(그쪽 파드는 토큰을 상주 참조한다) — 두 건을 한 번에 결정하되 위험 등급을 구분한다.
-- T045 전환 검증은 **staging 발급으로만** 한다(prod 재발급 금지 — 중복 한도 소비).
+- ⚠ **인수 함정(옛 VD-10) — 방향이 정해졌다.** "기존 Secret을 인수할 수 있는가"는 ESO 2.10.0 **소스 판독**으로 가능하다고
+  보고 설계했다(라이브 미실측 VD-3). 그래서 "수동 Secret 삭제 → ExternalSecret 재생성" 경로는 **쓰지 않는다** —
+  **Secret을 지우지 않는다.** 판정은 인수 뒤 **UID 불변 · 값 해시 불변 · `ownerReferences` 부재** 세 가지로 한다
+  (명령은 `../secrets/README.md` §2). ⚠ `Orphan`이어도 인수 순간 `secret.Data`는 비워졌다가 kv 값으로 다시 채워지므로,
+  **kv 값 = 라이브 값**이 전제다(시드 뒤 되읽기 비교).
+  **완화**: cert-manager는 이 토큰을 **DNS-01 챌린지를 푸는 순간에만** 읽고 상주 감시하지 않는다 — 갱신 창
+  (잔여 29.7일 이전) 밖이면 짧은 공백은 무해하다.
+  ⚠ 같은 판단이 T039 `cloudflared-tunnel`에는 **적용되지 않는다**(그쪽 파드는 토큰을 상주 참조한다) — 그래서 터널은 별도 PR(G4)이다.
+- T045 G3 검증은 **staging 발급으로만** 한다(prod 재발급 금지 — 중복 한도 소비).
   `letsencrypt-prod`가 `Ready=True`를 유지하는지 + 다음 갱신 성공으로 확인한다.
-- ClusterSecretStore `vault-platform`의 `conditions.namespaces`에 `cert-manager`가 포함돼야 한다 — T045 설계 시 확인한다.
+- ClusterSecretStore `vault-platform`의 `conditions.namespaces`에 `cert-manager`가 **포함돼 있다**(T045 G2 머지분 —
+  `../secret-stores/README.md` §0의 표). 없으면 ES가 `denied by spec.condition`으로 거부된다.
+- 인수 해제(ES는 지우고 Secret은 남기기) 절차와 머지 뒤 게이트는 `../secrets/README.md` §5·§2에 있다 — 여기 옮겨 적지 않는다.
 
 ---
 
@@ -548,7 +575,8 @@ kubectl -n kube-system get certificate wildcard-joshuatech-dev \
 - ① **가장 먼저 본다.** 첫 발급을 107분 막은 원인이 바로 이 CNAME 잔재였고(§2), `infra/cloudflare/dns.tf`가 `_acme-challenge`를
   관리 대상에서 영구 제외하므로 `tofu plan`은 재발을 **영원히 감지하지 못한다**. 누가 존에 손대면 소리 없이 돌아올 수 있다.
 - ② 토큰 **회전은 T084**의 몫이다. 여기서는 "회전하라"가 아니라 **"아직 유효한가"만** 본다.
-  회전이 필요하면 §1의 절차를 그대로 재실행한다(cert-manager 재시작은 불필요하다).
+  회전이 필요하면 **kv 값을 먼저 바꾼다**(런북의 정정 블록) → ESO가 ≤5분 안에 Secret에 반영한다. §1의 수동 절차를
+  재실행하면 ESO가 다음 주기에 옛 값으로 되돌린다(§11 · `../secrets/README.md` §5). cert-manager 재시작은 불필요하다.
 - ⑤ 갱신 시각이 **SUC 업그레이드 창**(일요일 03:00–05:00 KST · 정본은 `platform/system-upgrade/plan-k3s-agent.yaml`의 `window`)과
   겹쳐 노드 B가 drain 중이면 그 시도는 실패한다. **치명적이지는 않다** — cert-manager가 재시도하고, 갱신은 만료 29.7일 전에 시작하므로 여유가 크다.
   다만 그 창에 본 SyncFailed·챌린지 실패를 진짜 고장으로 오독하지 않는다(헤더의 "머지 시각 조건"과 같은 성질이다).

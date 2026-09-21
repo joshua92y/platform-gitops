@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # =============================================================================
-# tests/validate.sh — platform-gitops required check `validate`의 검사 본체 (T033)
+# tests/validate.sh — platform-gitops required check `validate`가 **T047에서 배선할** 검사 본체 (T033)
+#   ⚠ 오늘 `.github/workflows/validate.yml`은 이 스크립트를 부르지 않는다(T003 골격 — 실제로 도는 스텝은 checkout + gitleaks뿐).
+#     그때까지 강제 수단은 PR 전 로컬 실행과 사람 리뷰다. 상세는 tests/README.md 「CI 배선 상태」.
 #
 # 정본(계약) — 이 스크립트는 아래 두 계약을 코드로 옮긴 것이며, 충돌 시 계약이 우선한다.
 #   - 모노레포 specs/003-platform-foundation/contracts/gitops-repo.md
@@ -39,6 +41,11 @@
 #                           비면 FAIL(조용한 비활성 금지)
 #   7.1  WAVE               Application sync-wave = §sync-wave 단일 표(이름·경로 규약 포함)
 #   7.2  WAVE-dir           표에 없는 platform/<component>/ 디렉터리 금지
+#   7.3  WAVE-secrets-base  secrets/<ns>의 단일 소유·배달: (a) `secrets/` 아래와 배달자 자신(platform/secrets)을 base로
+#                           가질 수 있는 kustomization은 platform/secrets/kustomization.yaml 하나뿐(절대·저장소 밖 경로는
+#                           위치 판정 불가로 FAIL) · (b) `secrets/**` 파일의 ES와 같은 이름이 배달자 밖 소스에도 있으면 FAIL
+#                           · (c) `secrets/**` 파일의 ES가 platform/secrets 렌더에 없으면 죽은 선언(kustomize 있을 때) ·
+#                           (d) secrets/* 를 가리키는 Application 금지(multi-source 포함) + 배달자를 적용하는 Application 필요
 #   8    LEAK               gitleaks 파일 스캔 — 스캔 대상 0개(빈 트리)면 FAIL
 #   9.1  CSS-set            ClusterSecretStore 이름 집합 = 계약 5개 · 위치 platform/secret-stores/ · metadata.namespace 금지
 #   9.2  CSS-auth           vault provider: serviceAccountRef.namespace(referent auth 금지)·audiences·mountPath·server/path/version
@@ -123,6 +130,7 @@ cert-manager 0 cert-manager
 external-secrets 0 external-secrets
 vault 10 vault
 secret-stores 15 external-secrets
+secrets 18 -
 cert-manager-issuers 20 cert-manager
 cnpg 20 cnpg-system
 system-upgrade 20 system-upgrade
@@ -249,6 +257,13 @@ k8s-data-ca identity,jt-dev,jt-prod
 '
 CSS_COND_PLATFORM_EXCLUDE='jt-dev jt-prod'
 
+# 검사 7.3 — `secrets/<ns>/`의 유일한 배달자(설계 D3 = B · 조건 2). 이 파일 하나만 `secrets/` 아래를 base로 가질 수 있고,
+#   모든 `secrets/<ns>/`는 이 파일에 포함돼야 한다(포함되지 않으면 어떤 Application도 적용하지 않는 죽은 선언이다).
+#   `secrets/`를 가리키는 Application은 만들 수 없다(7.1의 `platform-<comp>` ↔ `platform/<comp>` 규약) — 그래서 배달자가 있다.
+SECRETS_OWNER_KUST='platform/secrets/kustomization.yaml'
+SECRETS_OWNER_DIR='platform/secrets'
+SECRETS_SRC_DIR='secrets'
+
 # ExternalSecret 규약 정규식(계약 §validate.yml ExternalSecret 검사)
 RE_KEY='^(platform|dev|prod)/[a-z0-9_./-]+$'
 RE_WORKERS='^(dev|prod)/(access|web)/'
@@ -290,6 +305,26 @@ finish_group() { # code message fails_before
 
 rel() { # 절대 경로 → ROOT 기준 상대 경로
   if [[ $1 == "$ROOT" ]]; then printf '.'; else printf '%s' "${1#"$ROOT"/}"; fi
+}
+
+# ROOT 기준 경로 정규화(문자열 연산만 — 대상이 존재하지 않아도 동작한다). ROOT 밖으로 나가면 빈 문자열.
+#   kustomization의 base 항목(`../../secrets/<ns>` 같은 상대 경로)을 위치 판정에 쓰기 위한 것이다(검사 7.3).
+norm_rel() { # <기준 디렉터리(ROOT 기준, 빈 문자열 = ROOT)> <항목>
+  local base=$1 entry=$2 p seg
+  local -a out=() segs=()
+  if [[ $entry == /* ]]; then p=${entry#/}; else p="${base:+$base/}$entry"; fi
+  IFS='/' read -r -a segs <<< "$p"
+  for seg in "${segs[@]}"; do
+    case "$seg" in
+      ''|'.') ;;
+      '..')
+        [[ ${#out[@]} -gt 0 ]] || return 0      # ROOT 위로 올라가는 경로 — 빈 문자열
+        out=("${out[@]:0:$((${#out[@]} - 1))}") ;;
+      *) out+=("$seg") ;;
+    esac
+  done
+  local IFS='/'
+  printf '%s' "${out[*]}"
 }
 
 # -----------------------------------------------------------------------------
@@ -370,6 +405,12 @@ YQ_NP_EGRESS_PORTS='select(.kind == "NetworkPolicy") | (.metadata.namespace // "
 YQ_LR='select(.kind == "LimitRange") | (.metadata.namespace // "-") as $ns | (.metadata.name // "-") as $n | (.spec.limits // [])[] | [ $ns, $n, (.type // "-"), ((.default.cpu // "-") | tostring), ((.max.cpu // "-") | tostring) ] | join(strenv(YQ_SEP))'
 YQ_POLICY_KINDS='select(.kind == "Namespace" or .kind == "NetworkPolicy" or .kind == "ResourceQuota" or .kind == "LimitRange") | .kind + "/" + (.metadata.name // "-")'
 YQ_IMAGES='(.images // [])[] | [ (.name // "-"), (.newName // "-"), ((.newTag // "-") | tostring), (.digest // "-") ] | join(strenv(YQ_SEP))'
+# 7.3 — kustomization의 base 참조(resources·bases·components 전부. 셋을 `+`로 잇는다: yq v4의 `,` 합집합은 수집자 안에서 가지를 잃는다)
+YQ_KUST_BASES='((.resources // []) + (.bases // []) + (.components // []))[] | select(tag == "!!str")'
+# 7.3 — Application의 **모든** source path(단일 `.spec.source` + multi-source `.spec.sources[]`).
+#   YQ_APP(검사 2·7.1 공용)은 `.spec.sources[0]`만 보므로 두 번째 source가 검사 밖으로 빠진다 — 그 구멍을 여기서 막는다.
+# shellcheck disable=SC2016  # $n 은 yq 변수다
+YQ_APP_PATHS='select(.kind == "Application" and ((.apiVersion // "") | test("^argoproj.io/"))) | (.metadata.name // "-") as $n | (([.spec.source.path] + [(.spec.sources // [])[].path]) | map(select(. != null)))[] | [ $n, . ] | join(strenv(YQ_SEP))'
 YQ_HELM_COUNT='(.helmCharts // []) | length'
 # shellcheck disable=SC2016
 YQ_HELM_LEAVES='(.helmCharts // [])[] | (.name // "-") as $c | (.valuesInline // {}) | [.. | select(tag == "!!int" or tag == "!!str") | {"p": (path | join(".")), "v": (. | tostring)}] | .[] | [ $c, .p, .v ] | join(strenv(YQ_SEP))'
@@ -1109,6 +1150,122 @@ check_7_sync_wave() {
     done
   fi
   finish_group "7.2 WAVE-dir" "platform/ 디렉터리 ${cnt}개 모두 단일 표에 있음" "$f2"
+
+  # 7.3 `secrets/<ns>/`의 단일 소유와 배달(설계 D3 조건 2). 네 갈래를 본다:
+  #   (a) base 참조: `secrets/` 아래를 base(resources·bases·components)로 포함하는 kustomization은 배달자 하나뿐이고,
+  #       **배달자 자신(`platform/secrets`)을 base로 끌어가는 것도 금지**다(전이 이중 소유 — 소비자 렌더에 ES가 들어간다).
+  #       예외는 `secrets/<ns>/kustomization.yaml`이 **자기 디렉터리 안**의 파일을 가리키는 경우뿐이다.
+  #       위치를 판정할 수 없는 항목(절대 경로 · 저장소 밖으로 나가는 상대 경로)은 fail-closed로 FAIL한다 —
+  #       로컬에서는 렌더되지만 Argo repo-server의 체크아웃 경로에서는 같은 경로가 성립하지 않는다.
+  #   (b) 소유자 대조(렌더 기준): `secrets/**` **파일**의 ExternalSecret과 같은 이름이 배달자 밖 소스(파일·렌더)에도
+  #       있으면 FAIL. 파일 복사본 · 전이 base · helm 렌더로 두 Application이 같은 ES를 각자 적용하는 경로를 잡는다.
+  #   (c) 죽은 선언(파일 단위): `secrets/**` 파일의 ES가 `platform/secrets` **렌더**에 없으면 FAIL —
+  #       `secrets/` 바로 아래 파일 · `secrets/<ns>/sub/` · ns kustomization에 등록하지 않은 파일이 모두 여기 걸린다.
+  #       kustomize가 없으면(렌더 0) 이 갈래는 돌지 않는다(5.6의 "원본 N · 렌더 M" 관례와 같다).
+  #   (d) 적용 주체: `secrets` 또는 `secrets/*`를 가리키는 Application은 없어야 하고(multi-source의 두 번째 source 포함),
+  #       배달자가 있으면 `source.path == platform/secrets`인 Application이 있어야 한다.
+  #   디렉터리 단위 완전성((c)의 보완 · kustomize 없이도 도는 그물)은 **실제 저장소 루트에서는 항상** 본다.
+  #   부분 트리 예외(배달자 구조를 쓰지 않는 픽스처)는 `--root`가 저장소 루트가 아닐 때만 적용한다.
+  local f3=$N_FAIL nref=0 nown=0 nself=0 ndir=0 nin=0 nskip=0 owner=0 owner_rendered=0 napp_owner=0
+  local nes_src=0 nes_render=0 kfile rk kdir entry r rd sdir msg3 i p ns name app apath
+  local -A SEC_INCLUDED=() ES_FILE_SRC=() ES_FILE_NS=() ES_OWNER_RENDER=() ES_FOREIGN=()
+  if [[ -f "$ROOT/$SECRETS_OWNER_KUST" ]]; then owner=1; fi
+  if need_tool "7.3 WAVE-secrets-base" yq; then
+    # (a) base 참조
+    for kfile in "${KUST_FILES[@]}"; do
+      rk=$(rel "$kfile"); kdir=$(dirname "$rk")
+      [[ $kdir != . ]] || kdir=''
+      while IFS= read -r entry; do
+        [[ -n $entry ]] || continue
+        case "$entry" in *://*|git@*) continue ;; esac   # 원격 base는 경로 판정 대상이 아니다
+        if [[ $entry == /* ]]; then
+          fail "7.3 WAVE-secrets-base" "$rk: base '$entry' — 절대 경로 금지(위치 판정 불가 · Argo repo-server의 체크아웃 경로에서는 성립하지 않는다)"
+          continue
+        fi
+        r=$(norm_rel "$kdir" "$entry")
+        if [[ -z $r ]]; then
+          fail "7.3 WAVE-secrets-base" "$rk: base '$entry' — 저장소 밖으로 나가는 경로(위치 판정 불가 · 로컬에서만 렌더되고 Argo repo-server에서는 실패한다)"
+          continue
+        fi
+        if [[ $rk != "$SECRETS_OWNER_KUST" && ( $r == "$SECRETS_OWNER_DIR" || $r == "$SECRETS_OWNER_DIR"/* ) ]]; then
+          fail "7.3 WAVE-secrets-base" "$rk: base '$entry'(→ $r) — 배달자 $SECRETS_OWNER_DIR 를 base로 끌어가면 그 소비자 Application이 ExternalSecret을 함께 적용한다(전이 이중 소유)"
+          continue
+        fi
+        [[ $r == "$SECRETS_SRC_DIR" || $r == "$SECRETS_SRC_DIR"/* ]] || continue
+        nref=$((nref + 1))
+        if [[ $rk == "$SECRETS_OWNER_KUST" ]]; then
+          SEC_INCLUDED[$r]=1; nown=$((nown + 1))
+        elif [[ -n $kdir && ( $r == "$kdir" || $r == "$kdir"/* ) ]]; then
+          nself=$((nself + 1))   # `secrets/<ns>/kustomization.yaml`이 자기 디렉터리 안의 파일을 가리키는 것은 정상이다
+        else
+          fail "7.3 WAVE-secrets-base" "$rk: base '$entry'(→ $r) — secrets/ 아래를 base로 가질 수 있는 kustomization은 $SECRETS_OWNER_KUST 하나뿐이다(단일 소유 — 두 Application이 한 ExternalSecret을 각자 적용하면 소유권이 갈린다)"
+        fi
+      done < <(yq_lines "$YQ_KUST_BASES" "$kfile" || true)
+    done
+
+    # (b)(c) ExternalSecret 소유자 대조. 이름으로 맞춘다 — `secrets/<ns>/kustomization.yaml`의 `namespace:` 변환기가
+    #   원본 파일에 없던 ns를 렌더에서 채울 수 있어 (ns/name) 쌍으로는 정상 트리가 어긋난다(긍정 픽스처가 그 모양이다).
+    for ((i = 0; i < SRC_N; i++)); do
+      if [[ ${SRC_KIND[$i]} == rendered && ${SRC_PATH[$i]} == "$SECRETS_OWNER_DIR" ]]; then owner_rendered=1; fi
+    done
+    collect_rows "$YQ_ES" "7.3 WAVE-secrets-base" all
+    while IFS="$YQ_SEP" read -r i _ ns name _ _ _ _ _ _; do
+      [[ -n $i ]] || continue
+      p=${SRC_PATH[$i]}
+      if [[ ${SRC_KIND[$i]} == file && $p =~ $RE_LOC_SECRETS ]]; then
+        ES_FILE_SRC[$name]=$p; ES_FILE_NS[$name]=$ns; nes_src=$((nes_src + 1))
+      elif [[ ${SRC_KIND[$i]} == rendered && $p == "$SECRETS_OWNER_DIR" ]]; then
+        ES_OWNER_RENDER[$name]=1; nes_render=$((nes_render + 1))
+      elif [[ $p == "$SECRETS_OWNER_DIR" || $p =~ $RE_LOC_SECRETS ]]; then
+        :   # 배달자 자신과 `secrets/<ns>` 렌더는 같은 소유자다 — 비교 대상이 아니다
+      else
+        ES_FOREIGN[$name]="${ES_FOREIGN[$name]:+${ES_FOREIGN[$name]}, }${SRC_LABEL[$i]}"
+      fi
+    done < <(printf '%s' "$ROWS")
+    for name in "${!ES_FILE_SRC[@]}"; do
+      if [[ -n ${ES_FOREIGN[$name]:-} ]]; then
+        fail "7.3 WAVE-secrets-base" "ExternalSecret '${ES_FILE_NS[$name]}/$name'(원본 ${ES_FILE_SRC[$name]})이 배달자 밖 소스에도 있다: ${ES_FOREIGN[$name]} — 같은 ExternalSecret을 두 Application이 각자 적용한다(파일 복사본 · 전이 base · helm 렌더)"
+      fi
+      if [[ $owner_rendered == 1 && -z ${ES_OWNER_RENDER[$name]:-} ]]; then
+        fail "7.3 WAVE-secrets-base" "${ES_FILE_SRC[$name]} ExternalSecret '$name': $SECRETS_OWNER_DIR 렌더에 없다 — 어떤 Application도 적용하지 않는 죽은 선언이다(배달자 또는 그 ns kustomization에 등록되지 않았다)"
+      fi
+    done
+
+    # (d) 적용 주체 — Application의 모든 path
+    collect_rows "$YQ_APP_PATHS" "7.3 WAVE-secrets-base" file
+    while IFS="$YQ_SEP" read -r i app apath; do
+      [[ -n $i ]] || continue
+      if [[ $apath == "$SECRETS_SRC_DIR" || $apath == "$SECRETS_SRC_DIR"/* ]]; then
+        fail "7.3 WAVE-secrets-base" "${SRC_LABEL[$i]} Application/$app: source.path '$apath' — secrets/<ns>의 적용 주체는 $SECRETS_OWNER_DIR 하나뿐이다(계약 §디렉터리 · multi-source의 두 번째 source도 포함)"
+      fi
+      if [[ $apath == "$SECRETS_OWNER_DIR" ]]; then napp_owner=$((napp_owner + 1)); fi
+    done < <(printf '%s' "$ROWS")
+    if [[ $owner == 1 && $napp_owner -eq 0 ]]; then
+      fail "7.3 WAVE-secrets-base" "Application 없음 — source.path가 $SECRETS_OWNER_DIR 인 Application이 하나도 없다(배달자를 적용하는 주체가 없어 secrets/<ns>가 클러스터에 도달하지 않는다)"
+    fi
+
+    # 디렉터리 단위 완전성
+    if [[ -d "$ROOT/$SECRETS_SRC_DIR" ]]; then
+      for sdir in "$ROOT/$SECRETS_SRC_DIR"/*/; do
+        sdir=${sdir%/}
+        [[ -d $sdir ]] || continue
+        [[ -n $(find "$sdir" -maxdepth 1 -type f \( -name '*.yaml' -o -name '*.yml' \) -print -quit) ]] || continue
+        rd=$(rel "$sdir"); ndir=$((ndir + 1))
+        if [[ -n ${SEC_INCLUDED[$rd]:-} ]]; then nin=$((nin + 1)); continue; fi
+        if [[ $owner == 1 ]]; then
+          fail "7.3 WAVE-secrets-base" "$rd/: $SECRETS_OWNER_KUST 의 resources에 없음 — 어떤 Application도 적용하지 않는 죽은 선언이다(ExternalSecret이 git에만 있고 클러스터에는 오지 않는다)"
+        elif [[ $ROOT == "$REPO_ROOT" || -d "$ROOT/$SECRETS_OWNER_DIR" || -f "$sdir/kustomization.yaml" ]]; then
+          fail "7.3 WAVE-secrets-base" "$rd/: 배달자 $SECRETS_OWNER_KUST 가 없음 — 이 디렉터리를 적용하는 Application이 없다(죽은 선언)"
+        else
+          nskip=$((nskip + 1))   # 배달자 구조를 쓰지 않는 부분 트리(픽스처) — 완전성 검사 대상이 아니다
+        fi
+      done
+    fi
+    msg3="secrets/ 경로 base 참조 ${nref}건(배달자 ${nown} · secrets/<ns> 자기 디렉터리 ${nself}) · secrets/<ns> ${ndir}개 중 배달자 포함 ${nin}개 · secrets/** 파일 ES ${nes_src}개 ↔ 배달자 렌더 ES ${nes_render}개"
+    [[ $owner_rendered == 1 ]] || msg3+=" · 배달자 렌더 0(kustomize 없음이거나 배달자가 없는 트리 — 파일 단위 죽은 선언·소유자 대조는 돌지 않았다)"
+    [[ $nskip -eq 0 ]] || msg3+=" · 배달자 구조가 아닌 트리라 완전성 검사 제외 ${nskip}개"
+    finish_group "7.3 WAVE-secrets-base" "$msg3" "$f3"
+  fi
 }
 
 # -----------------------------------------------------------------------------

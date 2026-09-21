@@ -7,7 +7,7 @@ JoshuaTech v2 플랫폼의 GitOps 정본 저장소 — 클러스터(OCI K3s)가 
 
 ## 변경 규칙
 
-- **main은 PR로만** 쓴다(ruleset `main`, 커밋 사본 `.github/ruleset-main.json`). required check `validate` 통과가 머지 조건이다.
+- **main은 PR로만** 쓴다(ruleset `main`, 커밋 사본 `.github/ruleset-main.json`). required check `validate` 통과가 머지 조건이다. ⚠ **그 check가 오늘 실제로 보는 것은 gitleaks뿐이다** — `tests/validate.sh`(검사 0–9)를 CI가 부르는 것은 **T047** 뒤이고, 그때까지 강제 수단은 PR 전 로컬 실행과 리뷰다(`tests/README.md` 「CI 배선 상태」).
 - **dev bump는 App auto-merge**: GitHub App `joshuatech-gitapp-1`(봇 로그인 `joshuatech-gitapp-1[bot]`)이 `apps/*/overlays/dev/kustomization.yaml`의 `images[].digest`만 바꾸는 PR(`bump/dev-<pod>-<sha7>`)을 열고 `gh pr merge --auto --squash`를 건다(VD-5).
 - **prod 승격은 사람 머지**(FR-038): `promote.yml`(T047에서 작성 — 지금은 없음)은 PR을 열기만 하고 auto-merge를 걸지 않는다 — 운영자가 렌더링 diff 코멘트를 확인하고 직접 머지한다.
 
@@ -15,8 +15,8 @@ JoshuaTech v2 플랫폼의 GitOps 정본 저장소 — 클러스터(OCI K3s)가 
 
 `.github/ruleset-main.json` — 적용 대상 `~DEFAULT_BRANCH`(= main):
 
-- `pull_request`, `required_approving_review_count: 0` — 1인 운영이므로 승인 수는 0. 게이트는 승인이 아니라 required check `validate`(strict: 브랜치가 main 최신이어야 함)다.
-- `bypass_actors: []` — GitHub App 포함 누구도 우회 불가. App 토큰이 탈취돼도 main 직접 push는 불가능하고 PR + `validate` 경유만 가능하다(추가로 validate의 `joshuatech-gitapp-1[bot]` 경로 lint가 dev digest 외 변경을 거부한다 — T033).
+- `pull_request`, `required_approving_review_count: 0` — 1인 운영이므로 승인 수는 0. 게이트는 승인이 아니라 required check `validate`(strict: 브랜치가 main 최신이어야 함)다. ⚠ 그 check의 **오늘 내용은 gitleaks뿐**이다(위 「변경 규칙」 첫 줄 · `tests/README.md` 「CI 배선 상태」) — 검사 본체의 CI 배선은 T047이다.
+- `bypass_actors: []` — GitHub App 포함 누구도 우회 불가. App 토큰이 탈취돼도 main 직접 push는 불가능하고 PR + `validate` 경유만 가능하다(추가로 `tests/validate.sh` 검사 6의 `joshuatech-gitapp-1[bot]` 경로 lint가 dev digest 외 변경을 거부한다 — T033이 **스크립트에** 구현했고 **CI 배선은 T047**이다. 그전까지 이 lint는 자동으로 돌지 않는다 — `tests/README.md` 「CI 배선 상태」).
 - `non_fast_forward` + `deletion` — main 히스토리 재작성·브랜치 삭제 금지.
 - 서버 사본은 기본값 필드(allowed_merge_methods·require_extra_approval_for_unattributed_changes 등)를 추가 저장하므로 API 출력과 `.github/ruleset-main.json`은 1:1로 일치하지 않는다 — 비교는 규칙 의미로.
 - 저장소 설정 **Allow auto-merge 활성** — dev bump PR의 auto-merge 전제(VD-5: 첫 PR에서 실측 확정).
