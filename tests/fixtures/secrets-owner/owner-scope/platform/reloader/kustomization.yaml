@@ -1,0 +1,5 @@
+# 부정 픽스처 7.3(owner-scope) ④ 절대 경로 base — 위치 판정 불가(빌드도 실패하므로 검사 1도 함께 FAIL한다)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - /nonexistent-secrets/cert-manager

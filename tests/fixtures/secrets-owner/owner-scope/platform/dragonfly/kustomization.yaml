@@ -1,0 +1,6 @@
+# 부정 픽스처 7.3(owner-scope) ③ 저장소 밖을 경유해 되돌아오는 base — norm_rel이 빈 문자열이라 옛 7.3은 조용히 건너뛰었다
+# (로컬 파일시스템에서는 렌더되지만 Argo repo-server의 체크아웃 경로에서는 렌더가 실패한다)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../../owner-scope/secrets/cert-manager

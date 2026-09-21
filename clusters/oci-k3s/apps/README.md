@@ -41,6 +41,13 @@ project: 플랫폼 컴포넌트 → `platform`, 앱 → `dev`·`prod`, `platform
 |---|---|---|---|
 | `platform-secret-stores.yaml` | `platform-secret-stores` | `platform/secret-stores` | **T045 G2.** ClusterSecretStore 5장(vault provider 4 + kubernetes provider 1). `platform-external-secrets`와 **분리한** 이유는 **health 격리**다 — store `Ready=False`는 Argo 내장 health Lua가 Degraded로 보고 child health가 root로 전파되는데, store는 Vault가 살아 있어야 Ready라 한 Application에 두면 Vault 불가 구간에 **ESO Application 자체가** Degraded가 된다. 분리하면 ESO 쪽은 Healthy로 남는다. ⚠ root가 이 wave에서 **기다리지는 않는다** — 첫 operation에서 그 task만 Degraded로 실패하고 10초 뒤 retry부터 `ApplyOutOfSyncOnly`가 이미 만들어진 CR을 걸러내 다음 wave로 진행하며, root는 보통 `Synced/Degraded`로 끝난다(Argo v3.5.2 소스 판독 · 라이브 미실측 VD-11). 상세는 파일 머리 주석과 `../../../platform/secret-stores/README.md` §0 |
 
+아래 1개는 T045 G3가 추가했다(합계 21). syncPolicy는 위와 같은 플랫폼 표준이고 finalizer도 있지만, **이 Application만은
+cascade로 지워지는 객체가 0건**이다 — 소유 객체인 ExternalSecret에 `Delete=false`가 붙어 있기 때문이다(아래 행).
+
+| 파일 | Application | source.path | 비고 |
+|---|---|---|---|
+| `platform-secrets.yaml` | `platform-secrets` | `platform/secrets` | **T045 G3.** `secrets/<ns>/`의 ExternalSecret을 적용하는 **배달자** Application(이 PR에서는 `cert-manager/cloudflare-dns-token` 1장, 터널 토큰은 G4). 소비자 컴포넌트(`platform-cert-manager-issuers`·`platform-cloudflared`)의 소스에 ES를 넣지 않은 이유는 ESO webhook이 `failurePolicy: Fail`이기 때문이다 — 그렇게 하면 webhook 장애 중에 **터널 Deployment 수정도 Argo로 밀 수 없다**. 효과는 장애 제거가 아니라 **소비자 배포와 ExternalSecret 적용의 분리**다. ⚠ Vault·ESO 불가 시 이 Application과 root **health**는 Degraded가 되지만 root **sync**는 이 wave에서 기다리지 않는다(위 `platform-secret-stores` 행과 같은 성질). destination.namespace가 `kube-system`인 것은 표 3열이 `-`이기 때문이다(`platform-policies`와 같은 처리). ⚠ **이 Application을 지워도 ExternalSecret은 남는다** — ES에 `Delete=false`가 붙어 있어 cascade에서 빠지고(Argo v3.5.2 `shouldBeDeleted`가 리소스 어노테이션을 앱 수준 옵션보다 먼저 읽는다 · 소스 판독 · 라이브 미실측), 삭제 대상이 0건이라 승인 어노테이션도 요구되지 않는다. 남은 ES는 추적 없이 5분마다 조정을 계속하므로, 인수 해제는 `../../../platform/secrets/README.md` §5의 `kubectl delete externalsecret`으로만 된다. 상세는 파일 머리 주석과 `../../../platform/secrets/README.md` |
+
 앱 Application(`<pod>-<env>`)은 후속 PR에서 이 디렉터리에 추가된다.
 
 ## `platform-argocd` — 자기 관리 Application이 하는 일

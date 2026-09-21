@@ -15,7 +15,7 @@ cert-manager v1.21.1의 **컨트롤 플레인만** 소유한다 — CRD 6장 + D
 > 본문의 "PR-0 머지 확인" 체크박스를 채운 뒤에 머지하는 것이 유일한 장치였다. 같은 형태의 PR 쌍에서 되풀이할 규율이고,
 > 뒤집혔을 때 무엇이 깨졌을지는 §2.
 
-- **이 저장소에 비밀은 없다.** Cloudflare API 토큰과 ACME 계정 키는 운영자 수동 Secret(T042) → `secrets/cert-manager/` ExternalSecret(T045)으로 간다.
+- **이 저장소에 비밀은 없다.** Cloudflare API 토큰과 ACME 계정 키는 운영자 수동 Secret(T042)이고, 그중 Cloudflare 토큰 Secret은 T045 G3에서 `secrets/cert-manager/`의 ExternalSecret이 **인수**한다(교체가 아니다 — `creationPolicy: Orphan`이라 Secret을 지우지 않는다. 적용 주체는 `platform/secrets/`, 절차는 `../secrets/README.md`).
   저장소 비밀과 별개로, 이 PR이 **클러스터에 들이는 권한**의 폭발 반경은 §7에 따로 적었다 — 머지 전에 반드시 읽는다.
 - 이 디렉터리에는 **전역 `namespace:` 변환기가 없다.** 없는 것이 정답이다 — 이유는 §4의 첫 불릿.
 - 로컬 재현(리뷰어용):
@@ -61,8 +61,10 @@ cert-manager v1.21.1의 **컨트롤 플레인만** 소유한다 — CRD 6장 + D
     이 child가 Healthy를 잃는 순간 **root app-of-apps의 Healthy 신호까지 함께 사라진다**(설계 §8 R13).
   - 복구는 PR-0을 머지하고 hard refresh 하는 것뿐이다. 즉 "새 sync가 멈춤"은 증상의 일부일 뿐이다.
 - **이 옵션은 저장소 전체에 걸린다.** 어떤 kustomization이든 렌더 시각에 원격 차트를 pull 할 수 있게 되므로(공급망 표면 확대),
-  통제는 main 브랜치 ruleset(PR 필수 · required check `validate` · `bypass_actors: []`)뿐이다. 새 `helmCharts` 항목을 추가하는
-  PR은 `repo`·`version`을 리뷰 포인트로 삼는다.
+  통제는 main 브랜치 ruleset(PR 필수 · required check `validate` · `bypass_actors: []`)뿐이다. ⚠ 그 `validate`가 오늘 실제로
+  보는 것은 **gitleaks뿐**이고 `tests/validate.sh`는 CI에 배선돼 있지 않다(T047 — `../../tests/README.md` 「CI 배선 상태」,
+  실측 기록은 `../../bootstrap/argocd/argocd-cm.yaml` 머리 주석). 즉 오늘의 실효 통제는 "PR이 열린다 + 사람 리뷰"다.
+  새 `helmCharts` 항목을 추가하는 PR은 `repo`·`version`을 리뷰 포인트로 삼는다.
 - ⚠ **그 통제에는 구멍이 하나 있다 — 차트 태그는 가변이다.** `helmCharts`에는 digest 필드가 없어 `version: v1.21.1`은 이름 참조일 뿐이다.
   태그가 재푸시되거나 레지스트리가 오염되면 다른 CRD·ClusterRole·webhook 설정이 인플레이트되고 `selfHeal: true`가 그것을
   **PR 없이 자동 적용한다.** 이 저장소에서 PR 게이트를 거치지 않는 유일한 변경 경로다.

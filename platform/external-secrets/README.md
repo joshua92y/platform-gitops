@@ -459,6 +459,12 @@ kubectl -n argocd get app platform-external-secrets -o jsonpath='{.status.sync.s
     vault 4장에는 `serviceaccounts/token` 문자열이 **보이지 않는다**(폴백 문면) — 전문은 §5의 표. 하나라도 보이면 revert한다.
   - ⚠ **이 축소를 지키는 자동 검사는 없다** — `tests/validate.sh`에 `serviceaccounts/token`을 보는 검사가 없어
     렌더 grep = 1이 유일한 그물이다. **T047 후보: validate에 렌더 grep = 1 고정**(값만 `true`로 되돌아가는 회귀를 막는다).
+- ~~**G3**~~ **완료** — 이 오퍼레이터를 처음으로 **쓰는** 쪽이 생겼다: `secrets/cert-manager/`의 ExternalSecret 1장(원본)을
+  `platform/secrets/`(Application `platform-secrets`)가 적용해, T042의 운영자 수동 Secret `cloudflare-dns-token`을
+  **삭제 없이 인수**한다(`creationPolicy: Orphan` — ownerReference를 만들지 않는다). 소비자 컴포넌트가 아니라 별도
+  Application인 이유는 이 디렉터리의 admission webhook이 `failurePolicy: Fail`이기 때문이다(§4) — ES를 소비자 소스에 넣으면
+  webhook 장애 중 그 Application의 sync **전체**가 실패해 터널 Deployment 수정까지 막힌다. 운영자 절차·게이트는
+  `../secrets/README.md`, 단일 소유의 정적 방어선은 `tests/validate.sh` 검사 7.3이다.
 - **T046(Reloader)** — ESO가 갱신한 Secret을 소비 파드에 반영하는 주체. 이 컴포넌트는 파드를 재시작시키지 않는다.
 - **T098(monitoring)** — `metrics.service.enabled: false`를 켤지, Alloy가 파드 discovery로 8080을 직접 긁을지 결정한다.
 - **후속 하드닝 후보**(지금 넣지 않은 이유는 §3):
