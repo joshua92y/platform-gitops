@@ -248,8 +248,11 @@ Secret `cloudflared-tunnel`(키 `TUNNEL_TOKEN`)의 관리 주체는 **G4 머지 
 > ownerReference를 만들지 않는다): 라이브 Secret의 값을 Vault로 파이프 복사해 바이트 동일성을 먼저 보장하고(시드 —
 > 2026-09-21 완료), 인수 전후 **값 해시 불변 · UID 불변 · ownerReferences 없음 · 파드 이름·`restartCount` 불변**을 확인하며,
 > `rollout restart` 대신 **파드 1개만** 교체하는 드릴로 새 자격이 도는 것을 본다. 판정 항목은 `../secrets/README.md` §1·§2,
-> 실행 블록의 정본은 모노레포 `specs/003-platform-foundation/design/t045-blocks/`의 **`g4-adopt.ps1`**(사전 조건·게이트·드릴)
-> · **`g4-restore.ps1`**(되돌리기)과 런북 `docs/runbooks/bootstrap.md` §3 T045 절이다.
+> 실행 블록의 정본은 모노레포 `specs/003-platform-foundation/design/t045-blocks/g4/`의 **`g4-adopt.ps1`**(캡처·머지 대기·판정,
+> **클러스터 쓰기 0건**) · **`g4-drill.ps1`**(별도 입회 후 파드 1개 교체) · **`g4-restore.ps1`**(인수 해제 뒤 값 복구)과
+> 런북 `docs/runbooks/bootstrap.md` §3 T045 절이다. adopt의 **값 해시·UID**를 drill에서 다시 검증한다.
+> drill을 두 번 실행하면 옛 값을 든 커넥터의 안전망이 사라질 수 있으므로 자동 재실행하지 않는다.
+> 드릴 뒤에는 남은 파드 미접촉뿐 아니라 **창 A SSH 세션이 여전히 연결되는지**도 확인한다.
 
 **토큰 회전(T084)의 순서 — kv가 먼저다.**
 

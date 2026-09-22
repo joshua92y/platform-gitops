@@ -206,9 +206,10 @@ finally {
   벗기지 않고 kubectl에 그대로 넘겨 JSONPath가 깨지고 결과가 비어 나온다 — "상태 없음"으로 오판하기 쉽다
   (같은 함정의 실측 기록은 `../external-secrets/README.md` §7).
 
-**터널 ES(G4) — 실행 블록의 정본은 여기가 아니다.** **정본**은 모노레포 `specs/003-platform-foundation/design/t045-blocks/`의
-**`g4-adopt.ps1`**(사전 조건 · 머지 뒤 게이트 · 파드 1개 교체 드릴)과 **`g4-restore.ps1`**(되돌리기 — kv 정정 · 인수 해제 ·
-이미 잠긴 뒤의 복구), 그리고 런북 `docs/runbooks/bootstrap.md` §3 T045 절이다.
+**터널 ES(G4) — 실행 블록의 정본은 여기가 아니다.** **정본**은 모노레포 `specs/003-platform-foundation/design/t045-blocks/g4/`의
+**`g4-adopt.ps1`**(기준값 캡처 · 머지 대기 · 인수 판정, **클러스터 쓰기 0건**) · **`g4-drill.ps1`**(별도 입회 후 파드 1개 교체) ·
+**`g4-restore.ps1`**(인수 해제 뒤 필요한 값 복구 1건), 그리고 런북 `docs/runbooks/bootstrap.md` §3 T045 절이다.
+머지·드릴·복구 쓰기는 운영자가 실행한다. adopt는 끝에서 비밀이 아닌 **값 해시·UID**를 출력하고 종료하며, 드릴을 자동으로 잇지 않는다.
 같은 블록을 이 저장소에 복사해 두지 않는다 — 두 사본이 어긋나면 **잠금 위험 단계에서 어느 쪽이 정본인지 가릴 시간이 없다.**
 여기에는 **판정 항목만** 둔다.
 
@@ -226,10 +227,13 @@ finally {
   `…/managed` 라벨만으로는 부족하다 — 그 라벨은 provider 조회 전에도 붙는다) ·
   ⑦ ES의 `argocd.argoproj.io/tracking-id`가 `platform-secrets`로 시작한다(§3) ·
   ⑧ `platform-cloudflared`의 `status.resources`에 `external-secrets.io` 항목이 **0건**이다(§3).
-- **그 뒤 드릴(같은 창).** 파드를 **1개만** 삭제해 새 파드가 같은 자격으로 뜨는지 본다 — 반대쪽 커넥터가 살아 있는 동안이다.
-  새 파드 Ready · 로그에 `Registered tunnel connection`(연결 수는 T039 기록과 대조) · `ssh ssh-a hostname` 성공 ·
-  `kubectl get nodes` 2 Ready. **`rollout restart`는 하지 않는다** — 두 커넥터를 한꺼번에 교체하면 값이 틀렸을 때
-  복구할 손까지 함께 끊긴다.
+- **그 뒤 드릴(같은 창, 별도 실행·입회).** `g4-drill.ps1`에 adopt가 출력한 **값 해시·UID**를 입력한다. ES 동기화·`data-hash`·
+  두 파드 Ready·break-glass를 다시 확인하고, 운영자가 **삭제할 파드 이름**을 타자한 뒤 삭제 직전 값·UID·파드를 재확인한다.
+  삭제 대상은 시작 시각이 가장 늦은 파드 1개다(동률은 이름 Ordinal). ES 생성 뒤 시작한 파드가 보이면 경고와 `second` 확인을 받는다.
+  **이 블록을 두 번 실행하면 두 커넥터가 모두 교체되어 옛 값을 든 커넥터의 안전망이 사라질 수 있다.** 자동 재실행하지 않는다.
+  삭제 대상이 사라지고 파드가 정확히 2개 · 새 파드 Ready · 로그에 `Registered tunnel connection` · 남은 파드 불변 ·
+  **창 A SSH 세션 재확인** · `ssh ssh-a hostname` 성공 ·
+  `kubectl get nodes` 2 Ready를 본다. 실패하면 **남은 파드는 건드리지 않고** 복구 절차로 간다. **`rollout restart`는 하지 않는다.**
 - **판정이 깨졌을 때.** ①이 아니면 Secret은 대개 손대지 않은 상태다(provider 실패는 값·UID 미변경 — §1의 표로 원인을 가른다).
   ②③이 깨졌으면 **파드를 재시작하지 않되, 복구를 미루지 않는다.**
   ⚠ **안전망에는 시한이 있다** — env는 컨테이너가 시작할 때마다 다시 읽히고, 이 Deployment의 liveness(`/ready` 10s × 6)는
