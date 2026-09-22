@@ -5,7 +5,8 @@
 > PR-4(`4f23abd`, TLSStore)까지 머지돼 `auth.joshuatech.dev`가 526 → **404**로 바뀌었고, 그 뒤 sniStrict도 투입됐다.
 > 아래 §4·§6·§8·§10은 **끝난 전이 구간의 기록**이고(과거형으로 읽는다), §1·§2는 기록이자 **회전·재부트스트랩·진단 때 다시 쓰는 절차**다.
 > 앞으로 실제로 해야 할 일은 **§13(갱신 전제 체크리스트)** — 첫 갱신 ≈**2026-11-08**, 만료 **2026-12-08** — 이고,
-> 그 밖의 미완 작업은 **§11(T045 G3 — ExternalSecret 인수)**과 **§1의 토큰 회전(T084)**이다.
+> **§11의 T045 G3 DNS 토큰 인수는 2026-09-21 완료**했다. 남은 것은 **§1의 토큰 회전(T084)**이며,
+> 인수 뒤 staging 재발급·다음 갱신 성공은 아직 확인하지 않았다.
 
 ACME 발급자 2종(Let's Encrypt staging · prod)과 이 클러스터의 **오리진 인증서 1장**(와일드카드 `*.joshuatech.dev` + apex)을 소유한다.
 cert-manager 컨트롤 플레인은 `platform/cert-manager/`(PR-1), Namespace·PSA·NetworkPolicy는 `platform/policies/`(T041),
@@ -455,9 +456,9 @@ cert-manager는 발급한 Secret에 Certificate를 owner로 달지 않는다. �
 
 ## 11. T045 G3 — ExternalSecret **인수**(교체가 아니다)
 
-§1의 운영자 수동 Secret은 **그대로 남는다.** T045 G3가 `secrets/cert-manager/externalsecret-cloudflare-dns-token.yaml`을
-추가하면 ESO가 그 Secret을 **제자리에서 인수**한다 — 지우고 다시 만들지 않는다(ESO v2.10.0 소스: `applyOwnership`은
-**다른 ExternalSecret**이 controller owner일 때만 거부한다. 라이브 미실측 VD-3).
+§1의 운영자 수동 Secret은 **그대로 남았다.** T045 G3가 `secrets/cert-manager/externalsecret-cloudflare-dns-token.yaml`을
+추가했고, **2026-09-21 제자리 인수 완료**를 기록했다 — **값·UID 불변 · ownerReferences 없음**을 확인했다.
+앞선 DR1은 테스트 ES/Secret으로 같은 인수 의미론을 확인했다(모노레포 `docs/runbooks/bootstrap.md` §3 T045).
 적용 주체는 `platform/secrets/`(Application `platform-secrets`)이고, **이 디렉터리의 매니페스트는 바뀌지 않는다.**
 
 | 항목 | 확정값 |
@@ -487,18 +488,19 @@ cert-manager는 발급한 Secret에 Certificate를 owner로 달지 않는다. �
 - ✅ **런북 오기 정정 완료(2026-09-10).** 모노레포 `docs/runbooks/bootstrap.md` §0의 "토큰 ① Cloudflare 배포 토큰" 줄이
   "cert-manager 토큰은 Vault kv 시드(**T043**)에서 소비 예정"이라고 적고 있었다. 두 곳이 틀렸고 둘 다 그 줄에서 고쳤다 —
   ⓐ kv 시드·ExternalSecret 전환은 **T045**다(T043은 AOP 강제) ⓑ "예정"도 낡았다: **T042에서 이미 소비했다**(§1의 운영자 수동 Secret).
-- ⚠ **인수 함정(옛 VD-10) — 방향이 정해졌다.** "기존 Secret을 인수할 수 있는가"는 ESO 2.10.0 **소스 판독**으로 가능하다고
-  보고 설계했다(라이브 미실측 VD-3). 그래서 "수동 Secret 삭제 → ExternalSecret 재생성" 경로는 **쓰지 않는다** —
-  **Secret을 지우지 않는다.** 판정은 인수 뒤 **UID 불변 · 값 해시 불변 · `ownerReferences` 부재** 세 가지로 한다
-  (명령은 `../secrets/README.md` §2). ⚠ `Orphan`이어도 인수 순간 `secret.Data`는 비워졌다가 kv 값으로 다시 채워지므로,
-  **kv 값 = 라이브 값**이 전제다(시드 뒤 되읽기 비교).
-  **완화**: cert-manager는 이 토큰을 **DNS-01 챌린지를 푸는 순간에만** 읽고 상주 감시하지 않는다 — 갱신 창
-  (잔여 29.7일 이전) 밖이면 짧은 공백은 무해하다.
-  ⚠ 같은 판단이 T039 `cloudflared-tunnel`에는 **적용되지 않는다**(그쪽 파드는 토큰을 상주 참조한다) — 그래서 터널은 별도 PR(G4)이다.
-- T045 G3 검증은 **staging 발급으로만** 한다(prod 재발급 금지 — 중복 한도 소비).
-  `letsencrypt-prod`가 `Ready=True`를 유지하는지 + 다음 갱신 성공으로 확인한다.
-- ClusterSecretStore `vault-platform`의 `conditions.namespaces`에 `cert-manager`가 **포함돼 있다**(T045 G2 머지분 —
-  `../secret-stores/README.md` §0의 표). 없으면 ES가 `denied by spec.condition`으로 거부된다.
+- ⚠ **인수 함정(옛 VD-10) — DR1·G3로 확인했다.** DR1 테스트 Secret과 G3 DNS Secret 모두
+  **UID 불변 · 값 불변 · ownerReferences 부재**를 기록했다. "수동 Secret 삭제 → ExternalSecret 재생성" 경로는
+  **쓰지 않는다.** 인수 판정 세 항목과 절차는 `../secrets/README.md` §2를 따른다.
+  ⚠ `Orphan`은 값 덮어쓰기를 막지 않는다. DR1에서 **ES가 매핑하지 않은 키가 인수 때 삭제됨**도 확인했다.
+  **kv 값 = 라이브 값**이 전제이며, 시드 뒤 되읽기 비교와 인수 전후 판정을 유지한다.
+  G3 기록은 ES **Ready=True / SecretSynced**, ClusterIssuer 2종 Ready 유지 및 **Argo tracking 미복사**까지다.
+  이것만으로 새 DNS-01 챌린지나 다음 갱신 성공을 입증하지 않는다.
+  터널은 별도 G4에서 **2026-09-22 인수 판정·파드 1개 교체·새 접근 경로 확인**을 완료했다.
+  터널 토큰은 **컨테이너가 시작할 때마다** 다시 읽으므로 회전 때에도 `../cloudflared/README.md` ⑨의 절차를 따른다.
+- 인수 뒤 추가 발급 검증은 **staging으로만** 한다(prod 재발급 금지 — 중복 한도 소비).
+  **G3 이후 staging 재발급과 다음 갱신 성공은 아직 미확인**이며, 기존 ClusterIssuer Ready 유지와 구별한다.
+- ClusterSecretStore `vault-platform`의 `conditions.namespaces`에는 **cert-manager가 포함**돼 있다(현재 매니페스트).
+  G3의 해당 ES **Ready=True / SecretSynced** 기록도 있다. 미포함 시의 거부는 `denied by spec.condition`이다.
 - 인수 해제(ES는 지우고 Secret은 남기기) 절차와 머지 뒤 게이트는 `../secrets/README.md` §5·§2에 있다 — 여기 옮겨 적지 않는다.
 
 ---
