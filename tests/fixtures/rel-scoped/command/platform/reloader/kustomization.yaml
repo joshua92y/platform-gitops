@@ -1,0 +1,16 @@
+# 부정 픽스처 10.4(command · 독립 리뷰 e2) — 긍정 트리(`deployment.yaml`·`rbac.yaml`은 positive 사본)의 Reloader 컨테이너에
+#   `command`를 더했다. args는 command 뒤에 붙으므로 바이너리는 `--namespaces=cloudflared`와 args의 목록을 둘 다 받고, pflag
+#   StringSlice가 둘을 합친다(감시 범위 확대). 10.2는 args만 보므로 PASS — 10.4 이전에는 가짜 PASS였다.
+#   10.4 REL-image(command 있음)만 FAIL해야 한다. 실제 트리에서 같은 결함이 들어올 자리(kustomize patches)를 그대로 쓴다.
+#   helm·네트워크가 필요 없다.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - deployment.yaml
+  - rbac.yaml
+patches:
+  - target: { kind: Deployment, name: reloader, namespace: reloader }
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/command
+        value: ["/manager", "--namespaces=cloudflared"]

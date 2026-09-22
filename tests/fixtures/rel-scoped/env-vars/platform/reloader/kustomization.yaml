@@ -1,0 +1,19 @@
+# 부정 픽스처 10.3 REL-strategy(env-vars) — `reloadStrategy: env-vars`.
+#   ClusterRole 0 · `--namespaces` 집합은 계약과 같아 10.1·10.2는 PASS이고, `--reload-strategy=env-vars`만 계약
+#   (`annotations` — 파드 템플릿 어노테이션만 바꾸는 전략)과 달라 10.3이 FAIL해야 한다.
+#   helmCharts가 있으므로 이 픽스처는 helm과 네트워크(차트 pull)가 필요하다 — tests/fixtures/pol-port와 같다.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+helmCharts:
+  - name: reloader
+    repo: https://stakater.github.io/stakater-charts
+    version: 2.2.16
+    releaseName: reloader
+    namespace: reloader
+    includeCRDs: false
+    valuesInline:
+      fullnameOverride: reloader
+      reloader:
+        watchGlobally: false
+        namespaces: [identity, jt-dev, jt-prod]
+        reloadStrategy: env-vars

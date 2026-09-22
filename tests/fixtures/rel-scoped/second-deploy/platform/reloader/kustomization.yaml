@@ -1,0 +1,11 @@
+# 부정 픽스처 10.4(second-deploy · 독립 리뷰 e1) — 긍정 트리(`deployment.yaml`·`rbac.yaml`은 positive 사본)에 **이름이 다른
+#   두 번째 Reloader Deployment**(`reloader/reloader-cf` — `--namespaces=cloudflared`)와 그것이 쓸 `cloudflared` ns
+#   Role·RoleBinding을 더했다(`extra.yaml`). 10.1(ClusterRole 0)·10.2·10.3(Deployment reloader/reloader의 args)은 그대로
+#   PASS라 10.4 이전에는 가짜 PASS였다. 10.4 REL-rbac-ns(Role·RoleBinding 여분 [cloudflared])와 10.4 REL-image(Reloader 이미지
+#   컨테이너 2개)가 FAIL해야 한다. helm·네트워크가 필요 없다.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - deployment.yaml
+  - rbac.yaml
+  - extra.yaml

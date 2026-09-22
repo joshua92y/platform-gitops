@@ -93,7 +93,9 @@ if command -v kustomize >/dev/null 2>&1 && command -v kubeconform >/dev/null 2>&
   # ES 수: `secrets/<ns>`의 ES는 파일 · 자기 디렉터리 렌더 · 배달자 렌더로 3번 세어진다 —
   # 배달자에 ns를 하나 더하면 +3이다(T045 G4에서 두 번째 ns를 더해 23 → 26).
   positive_asserts+=('+[PASS] 1 KUST' '+[PASS] 1b KUST-plain' '+ExternalSecret 26개(파일+렌더링)'
-    '+webhook 정책을 담은 소스: 원본 1 · 렌더 1')
+    '+webhook 정책을 담은 소스: 원본 1 · 렌더 1'
+    # 검사 10(T046): 긍정 트리의 platform/reloader는 순수 매니페스트라 helm 없이 렌더된다(kustomize만 필요)
+    '+[PASS] 10 REL — platform/reloader (rendered): ClusterRole·ClusterRoleBinding 0 · Deployment reloader/reloader --namespaces 집합 = {identity,jt-dev,jt-prod,reloader} · --reload-strategy=annotations · Role·RoleBinding ns 집합 = 같은 목록 · Reloader 이미지 컨테이너 1개(containers.0 · command 없음)')
 else
   positive_asserts+=('+webhook 정책을 담은 소스: 원본 1 · 렌더 0')
 fi
@@ -337,6 +339,82 @@ run_case css-auth-conditions "$FIX/css-auth/conditions" 1 \
   "-[FAIL] 9.3 CSS-k8s-auth" \
   "-[FAIL] 9.3 CSS-k8s-audience" \
   "-[FAIL] 9.3 CSS-k8s-default"
+
+# --- 검사 10: Reloader scoped 모드(T046 · 계약 §validate.yml 4 「(T046)」) ------------------
+# 네 트리는 **실제 차트 2.2.16 렌더**로 FAIL을 낸다(values 한 줄만 다르다) — helm과 네트워크(차트 pull)가 필요하다
+# (tests/fixtures/pol-port와 같다. 풀린 차트는 픽스처 아래 charts/에 남고 .gitignore 대상이다).
+# helm이나 kustomize가 없으면 검사 10은 "도구 없음"(SKIP 또는 fail-closed FAIL)이 정답이다.
+# 트리마다 그 결함이 실제로 낳는 하위 코드만 걸려야 한다(음성 단언) — 한 결함이 무관한 코드로 번지면 원인 분리가 안 된다.
+# (전역 모드는 ClusterRole·인자·감시 ns Role이 **함께** 바뀌므로 typo-parent는 10.1–10.4가 모두 걸리는 것이 정답이다.)
+if command -v kustomize >/dev/null 2>&1 && command -v helm >/dev/null 2>&1; then
+  #   typo-key: `watchGlobaly` 오타 → 차트의 fail 가드가 렌더를 멈춘다 → 판정할 렌더가 없으므로 fail-closed
+  run_case rel-scoped-typo-key "$FIX/rel-scoped/typo-key" 1 \
+    "+[FAIL] 1 KUST — kustomize build 실패: platform/reloader" \
+    "+[FAIL] 10.0 REL-render — platform/reloader 렌더 결과 없음 — kustomize build가 실패했다" \
+    '-[FAIL] 10.1' '-[FAIL] 10.2' '-[FAIL] 10.3' '-[FAIL] 10.4'
+  #   typo-parent: 부모 키 `reloadr:` 오타 → 렌더 성공 + 전역 모드(ClusterRole·ClusterRoleBinding · 인자 둘 다 없음 ·
+  #   감시 ns Role 없음 — 릴리스 ns의 reloader-metadata-role 한 쌍만 남는다)
+  run_case rel-scoped-typo-parent "$FIX/rel-scoped/typo-parent" 1 \
+    "+[FAIL] 10.1 REL-clusterrbac — platform/reloader (rendered) ClusterRole/reloader-role: scoped 모드는 ClusterRole·ClusterRoleBinding 0이어야 한다" \
+    "+[FAIL] 10.1 REL-clusterrbac — platform/reloader (rendered) ClusterRoleBinding/reloader-role-binding: scoped 모드는" \
+    "+[FAIL] 10.2 REL-namespaces — platform/reloader (rendered) Deployment/reloader/reloader: 첫 컨테이너 args의 --namespaces 인자 0개" \
+    "+[FAIL] 10.3 REL-strategy — platform/reloader (rendered) Deployment/reloader/reloader: 첫 컨테이너 args의 --reload-strategy 인자 0개" \
+    "+[FAIL] 10.4 REL-rbac-ns — platform/reloader (rendered): Role ns 집합 불일치 — 빠짐 [identity, jt-dev, jt-prod] 여분 []" \
+    "+[FAIL] 10.4 REL-rbac-ns — platform/reloader (rendered): RoleBinding ns 집합 불일치 — 빠짐 [identity, jt-dev, jt-prod] 여분 []" \
+    '-[FAIL] 10.0' '-[FAIL] 1 KUST' '-[FAIL] 10.4 REL-image'
+  #   cloudflared: 감시 목록에 cloudflared 추가 → scoped 그대로(10.1 PASS)지만 인자 집합과 Role·RoleBinding ns 집합이 여분
+  run_case rel-scoped-cloudflared "$FIX/rel-scoped/cloudflared" 1 \
+    "+[FAIL] 10.2 REL-namespaces — platform/reloader (rendered) Deployment/reloader/reloader: --namespaces 집합 불일치 — 빠짐 [] 여분 [cloudflared]" \
+    "+[FAIL] 10.4 REL-rbac-ns — platform/reloader (rendered): Role ns 집합 불일치 — 빠짐 [] 여분 [cloudflared]" \
+    "+[FAIL] 10.4 REL-rbac-ns — platform/reloader (rendered): RoleBinding ns 집합 불일치 — 빠짐 [] 여분 [cloudflared]" \
+    '-[FAIL] 10.0' '-[FAIL] 10.1' '-[FAIL] 10.3' '-[FAIL] 10.4 REL-image'
+  #   env-vars: 전략만 다르다
+  run_case rel-scoped-env-vars "$FIX/rel-scoped/env-vars" 1 \
+    "+[FAIL] 10.3 REL-strategy — platform/reloader (rendered) Deployment/reloader/reloader: 인자 '--reload-strategy=env-vars' ≠ --reload-strategy=annotations" \
+    '-[FAIL] 10.0' '-[FAIL] 10.1' '-[FAIL] 10.2' '-[FAIL] 10.4'
+else
+  for c in typo-key typo-parent cloudflared env-vars; do
+    run_case "rel-scoped-$c" "$FIX/rel-scoped/$c" 1 '+10 REL — 도구 없음'
+  done
+fi
+#   no-deployment: 렌더는 성공하지만 Deployment가 없다(뼈대) → PASS가 아니라 fail-closed. helm 불필요
+no_dep_asserts=()
+if command -v kustomize >/dev/null 2>&1; then
+  no_dep_asserts+=("+[FAIL] 10.0 REL-render — platform/reloader (rendered): Deployment reloader/reloader 없음 — 인자를 판정할 대상이 없으므로 fail-closed" \
+    '-[PASS] 10 REL' '-[FAIL] 10.1' '-[FAIL] 10.2' '-[FAIL] 10.3' '-[FAIL] 10.4')
+else
+  no_dep_asserts+=('+[SKIP] 10 REL — 도구 없음(kustomize)')
+fi
+run_case rel-scoped-no-deployment "$FIX/rel-scoped/no-deployment" 1 "${no_dep_asserts[@]}"
+
+# 10.2·10.3의 시야(Deployment reloader/reloader 첫 컨테이너의 args) 밖에서 감시 범위를 넓히는 경로 — 2026-09-22 독립 리뷰가
+# 예전 검사에서 가짜 PASS로 실측한 네 가지(e1·e2·e3·e5). 긍정 트리의 사본(deployment.yaml·rbac.yaml)에 결함 하나씩을 더한
+# 순수 매니페스트라 helm·네트워크가 필요 없다(kustomize만). kustomize가 없으면 "도구 없음"이 정답이다.
+if command -v kustomize >/dev/null 2>&1; then
+  #   second-deploy(e1): 이름이 다른 두 번째 Reloader Deployment + cloudflared ns Role·RoleBinding
+  run_case rel-scoped-second-deploy "$FIX/rel-scoped/second-deploy" 1 \
+    "+[FAIL] 10.4 REL-rbac-ns — platform/reloader (rendered): Role ns 집합 불일치 — 빠짐 [] 여분 [cloudflared]" \
+    "+[FAIL] 10.4 REL-rbac-ns — platform/reloader (rendered): RoleBinding ns 집합 불일치 — 빠짐 [] 여분 [cloudflared]" \
+    "+[FAIL] 10.4 REL-image — platform/reloader (rendered): Reloader 이미지(…/stakater/reloader) 컨테이너 2개 [Deployment/reloader/reloader spec.template.spec.containers.0, Deployment/reloader/reloader-cf spec.template.spec.containers.0]" \
+    '-[FAIL] 10.0' '-[FAIL] 10.1' '-[FAIL] 10.2' '-[FAIL] 10.3' '-command 있음'
+  #   command(e2): Reloader 컨테이너의 command에 --namespaces=cloudflared
+  run_case rel-scoped-command "$FIX/rel-scoped/command" 1 \
+    "+[FAIL] 10.4 REL-image — platform/reloader (rendered) Deployment/reloader/reloader spec.template.spec.containers.0: command 있음" \
+    '-[FAIL] 10.0' '-[FAIL] 10.1' '-[FAIL] 10.2' '-[FAIL] 10.3' '-[FAIL] 10.4 REL-rbac-ns' '-Reloader 이미지(…/stakater/reloader) 컨테이너'
+  #   second-container(e3): 같은 파드에 두 번째 Reloader 컨테이너
+  run_case rel-scoped-second-container "$FIX/rel-scoped/second-container" 1 \
+    "+[FAIL] 10.4 REL-image — platform/reloader (rendered): Reloader 이미지(…/stakater/reloader) 컨테이너 2개 [Deployment/reloader/reloader spec.template.spec.containers.0, Deployment/reloader/reloader spec.template.spec.containers.1]" \
+    '-[FAIL] 10.0' '-[FAIL] 10.1' '-[FAIL] 10.2' '-[FAIL] 10.3' '-[FAIL] 10.4 REL-rbac-ns' '-command 있음'
+  #   args-newline(e5): 개행이 든 인자 뒤의 두 번째 --namespaces= — yq가 직접 세므로 둘 다 보인다
+  run_case rel-scoped-args-newline "$FIX/rel-scoped/args-newline" 1 \
+    "+[FAIL] 10.0 REL-args — platform/reloader (rendered) Deployment/reloader/reloader: 첫 컨테이너 args 5개 중 1개에 제어 문자" \
+    "+[FAIL] 10.2 REL-namespaces — platform/reloader (rendered) Deployment/reloader/reloader: 첫 컨테이너 args의 --namespaces 인자 2개 — 정확히 1개여야 한다(0개 = 전역 또는 단일 ns 모드 · 2개 이상 = 목록이 합쳐진다" \
+    '-[FAIL] 10.0 REL-render' '-[FAIL] 10.1' '-[FAIL] 10.3' '-[FAIL] 10.4'
+else
+  for c in second-deploy command second-container args-newline; do
+    run_case "rel-scoped-$c" "$FIX/rel-scoped/$c" 1 '+[SKIP] 10 REL — 도구 없음(kustomize)'
+  done
+fi
 
 # --- 작성자(봇) 경로 lint: positive 트리 + diff 입력 ---------------------------------
 run_case author-bot-ok "$FIX/positive" 0 \

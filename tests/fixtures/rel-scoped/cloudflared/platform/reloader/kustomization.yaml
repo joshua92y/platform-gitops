@@ -1,0 +1,20 @@
+# 부정 픽스처 10.2 REL-namespaces(cloudflared) — 감시 목록에 `cloudflared`를 더했다.
+#   렌더는 scoped 모드 그대로라 ClusterRole은 0이지만(10.1 PASS), `--namespaces=cloudflared,identity,jt-dev,jt-prod,reloader`가
+#   계약 목록 + 릴리스 ns와 달라 10.2가 여분 [cloudflared]로 FAIL해야 한다. 계약은 터널 커넥터를 감시하지 않는다
+#   (수동 1개씩 교체가 안전장치 — T045 G4).
+#   helmCharts가 있으므로 이 픽스처는 helm과 네트워크(차트 pull)가 필요하다 — tests/fixtures/pol-port와 같다.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+helmCharts:
+  - name: reloader
+    repo: https://stakater.github.io/stakater-charts
+    version: 2.2.16
+    releaseName: reloader
+    namespace: reloader
+    includeCRDs: false
+    valuesInline:
+      fullnameOverride: reloader
+      reloader:
+        watchGlobally: false
+        namespaces: [identity, jt-dev, jt-prod, cloudflared]
+        reloadStrategy: annotations

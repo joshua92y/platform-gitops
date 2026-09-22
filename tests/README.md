@@ -4,7 +4,7 @@ required check `validate`가 **T047에서 배선할** 검사 본체와 그 자�
 
 ## CI 배선 상태 — **이 검사들은 아직 CI에서 강제되지 않는다**(2026-09-21 실측)
 
-`.github/workflows/validate.yml`은 T003 골격 그대로다: 검사 1–7 스텝이 전부 `run: echo "자리 — T033에서 작성"`이고 **실제로 도는 스텝은 `actions/checkout`과 `gitleaks/gitleaks-action` 둘뿐**이다(`grep -rn "validate.sh" .github/` → 0건). 즉 required check `validate`는 오늘 **gitleaks만** 본다 — 이 디렉터리의 검사(0–9)는 한 줄도 돌지 않는다.
+`.github/workflows/validate.yml`은 T003 골격 그대로다: 검사 1–7 스텝이 전부 `run: echo "자리 — T033에서 작성"`이고 **실제로 도는 스텝은 `actions/checkout`과 `gitleaks/gitleaks-action` 둘뿐**이다(`grep -rn "validate.sh" .github/` → 0건). 즉 required check `validate`는 오늘 **gitleaks만** 본다 — 이 디렉터리의 검사(0–10)는 한 줄도 돌지 않는다.
 
 - **검사는 `tests/validate.sh`에 있고, CI가 이를 실제로 부르는 것은 T047(validate 워크플로 완성) 뒤다.** 그때까지 강제 수단은 **PR 전 로컬 실행**(`bash tests/validate.sh` · `bash tests/validate.tests.sh`)과 **사람 리뷰**뿐이다.
 - 그러므로 다른 문서에서 "required check `validate`가 막는다/CI가 강제한다"로 읽히는 문장은 **T047 이후의 상태**를 말한다. 오늘의 통제 현황을 더 자세히 적은 곳은 `bootstrap/argocd/argocd-cm.yaml` 머리 주석의 「통제 현황(실측)」이다.
@@ -27,7 +27,7 @@ bash tests/validate.tests.sh           # 픽스처 자기검사(도구가 없으
 VALIDATE_TESTS_REQUIRE_TOOLS=1 bash tests/validate.tests.sh   # CI(CI=true도 동일): 도구 누락 시 SKIP 모드로 내려가지 않고 exit 1
 ```
 
-필요 도구: `yq`(mikefarah v4) · `kustomize` · `kubeconform` · `gitleaks` (+ `helm`은 helmCharts가 있는 kustomization에만). CI(validate.yml, T047)는 네 도구를 sha256 핀으로 설치하고 `PR_AUTHOR`·`VALIDATE_BASE_SHA`·`VALIDATE_HEAD_SHA`를 넘긴다. kubeconform 스키마 캐시는 `${TMPDIR:-/tmp}/kubeconform-cache`(`VALIDATE_KUBECONFORM_CACHE`로 변경) — 저장소 밖 임시 경로이며 저장소에 파일을 남기지 않는다.
+필요 도구: `yq`(mikefarah v4) · `kustomize` · `kubeconform` · `gitleaks` (+ `helm`은 helmCharts가 있는 kustomization에만 — 자기검사의 `fixtures/pol-port`·`fixtures/rel-scoped/{typo-key,typo-parent,cloudflared,env-vars}`는 helm과 **네트워크**(차트 pull)가 필요하다. 풀린 차트는 픽스처 아래 `charts/`에 남고 `.gitignore` 대상이다). CI(validate.yml, T047)는 네 도구를 sha256 핀으로 설치하고 `PR_AUTHOR`·`VALIDATE_BASE_SHA`·`VALIDATE_HEAD_SHA`를 넘긴다. kubeconform 스키마 캐시는 `${TMPDIR:-/tmp}/kubeconform-cache`(`VALIDATE_KUBECONFORM_CACHE`로 변경) — 저장소 밖 임시 경로이며 저장소에 파일을 남기지 않는다.
 
 ## 규칙
 
@@ -61,3 +61,13 @@ VALIDATE_TESTS_REQUIRE_TOOLS=1 bash tests/validate.tests.sh   # CI(CI=true도 �
   - 9.4 `conditions`가 **정확히 1항목**이고 그 키가 `namespaces` **하나**이며(`namespaceSelector`·`namespaceRegexes` 금지) 그 집합이 계약 표와 정확 일치(중복 ns도 FAIL). `vault-platform`의 12개는 `NS_TABLE`에서 `jt-dev`·`jt-prod`를 빼서 **기계 유도**하므로 목록이 두 곳에 복제되지 않는다
   - 이름 집합의 완전성은 `platform/secret-stores/` 디렉터리가 있는 트리에서만 요구한다(부분 트리 픽스처를 오탐하지 않기 위해).
 - 검사 9가 **보지 않는 것**: 라이브 store의 `status`(`Ready`/`reason`/`message`), Vault role·정책의 실제 존재(그쪽은 모노레포 `infra/vault/`와 하네스 `eso-1`), `caProvider`의 `type`/`name`/`key` 값, `conditions`가 **실제로** 어느 ExternalSecret을 막았는지(라이브 `denied by spec.condition`). 특히 vault store에서 `serviceAccountRef.namespace`를 빠뜨리면 라이브는 로그인 없이 `Ready=True/reason=Valid`가 되어 **status로는 절대 드러나지 않는다** — 그 한 가지를 잡는 것이 9.2 `CSS-auth-referent`의 존재 이유이고, CRD 스키마에 필수 필드가 아니라 kubeconform으로는 잡히지 않는다.
+- 검사 10(`REL` — T046 · 계약 §validate.yml 4 「(T046)」)이 **보는 것**: `platform/reloader`의 `kustomize build` **렌더 하나**(경로 정확 일치 — 중첩된 `platform/reloader/vd9-probe` 렌더를 따로 보지는 않지만 부모 렌더에 포함되므로 10.4는 그 객체도 본다).
+  - 10.1 `ClusterRole`·`ClusterRoleBinding` **0**(scoped 모드의 증거)
+  - 10.2 Deployment `reloader`(ns `reloader`) 첫 컨테이너 `args`의 `--namespaces` 인자가 **정확히 1개**이고(`--namespaces x`처럼 값을 다음 인자로 넘기는 형식도 세며, 형식은 `--namespaces=<쉼표 목록>` 하나만 허용) 원소 집합이 `REL_WATCH_NS`(계약 목록) + 릴리스 ns와 정확 일치(누락·여분·중복·빈 원소 FAIL). 2개 이상이 FAIL인 이유는 "뒤의 값이 이긴다"가 아니라 **목록이 합쳐진다**는 것이다 — Reloader v1.4.21 `util.go`가 `StringSliceVar`로 정의하고 pflag StringSlice는 두 번째 값부터 덧붙인다(감시 범위 확대)
+  - 10.3 같은 `args`의 `--reload-strategy` 인자가 정확히 1개이고 `--reload-strategy=annotations`(이쪽은 `StringVar`라 여럿이면 마지막 값이 적용된다)
+  - 인자 수·플래그 수는 **yq 안에서 직접 센다**. 예전처럼 args를 구분자로 이어 셸 `read`로 나누면 개행이 든 인자에서 읽기가 끝나 그 뒤의 두 번째 `--namespaces=`를 놓쳤다(가짜 PASS — `fixtures/rel-scoped/args-newline`). 제어 문자(개행·CR·탭 등)가 든 인자가 있으면 **10.0 `REL-args`** FAIL이고, 개수 판정은 그대로 하되 집합·값 비교는 생략한다(고친 뒤 다시 돌린다)
+  - 10.4 `REL-rbac-ns` 렌더 전체의 `Role`·`RoleBinding`(이름 무관) ns 집합이 kind마다 `REL_WATCH_NS` + 릴리스 ns와 정확 일치 — 모노레포 하네스 `reloader-2`가 라이브 `status.resources`에서 보는 것과 같은 불변식이다(하네스는 Role `reloader-role`만 본다)
+  - 10.4 `REL-image` 렌더 전체의 모든 `image` 키에서 저장소(태그·digest를 뗀 값)가 `…/stakater/reloader`(레지스트리 무관)인 컨테이너가 **정확히 1개**이고, 그것이 Deployment `reloader/reloader`의 `containers[0]`(10.2·10.3이 보는 자리)이며, 저장소가 `ghcr.io/stakater/reloader`이고 `command`가 없다. 10.2·10.3의 시야 밖에서 감시 범위를 넓히는 경로 — 이름이 다른 두 번째 Reloader(`fixtures/rel-scoped/second-deploy`) · 두 번째 컨테이너(`second-container`) · `command` 안의 `--namespaces=`(`command` — args는 command 뒤에 붙어 pflag가 두 목록을 합친다) — 를 닫는다(셋 다 10.4 이전에는 가짜 PASS였다 — 2026-09-22 독립 리뷰 실측)
+  - 10.0 fail-closed: 렌더 없음(kustomize build 실패 — 차트의 `fail` 가드 포함) · Deployment 부재·중복 · yq 추출 실패 · 저장소 루트에서 `platform/reloader` 부재. 부분 트리 픽스처에 `platform/reloader`가 없으면 "대상 없음" PASS다. Deployment가 없거나 렌더가 없으면 10.2–10.4는 돌지 않는다
+  - 원본 values가 아니라 렌더를 보는 이유: 차트 기본값이 `watchGlobally: true`이고 values 스키마가 키 오타를 막지 않는다. `watchGlobaly` 한 키 오타는 차트 가드가 렌더를 멈추지만(→ 10.0), 부모 키 `reloader:` 오타처럼 두 키가 함께 빠지면 렌더는 **성공한 채** 전역 모드가 된다(→ 10.1·10.2·10.3·10.4 `REL-rbac-ns`). 픽스처 `fixtures/rel-scoped/{typo-key,typo-parent,cloudflared,env-vars}`가 values 갈래를 실제 차트 렌더로 재현하고(helm·네트워크 필요), `{second-deploy,command,second-container,args-newline}`은 긍정 트리의 사본에 결함 하나를 더한 순수 매니페스트다(helm 불필요 — `deployment.yaml`·`rbac.yaml`은 `fixtures/positive/platform/reloader/`의 사본이므로 함께 고친다).
+- 검사 10이 **보지 않는 것**: Role의 **규칙**과 RoleBinding의 `roleRef`·`subjects`(`platform/reloader/README.md` §1의 yq 체크리스트가 사람 손으로 본다), 다른 컴포넌트 렌더에 든 Reloader, `stakater/reloader`가 아닌 이름으로 다시 올린 이미지, args의 `$(VAR)` 치환(kubelet이 컨테이너 env로 펼친다 — 정적으로 알 수 없다), 소비자 Deployment의 `reloader.stakater.com/auto` 어노테이션 유무·위치, 라이브에서 Reloader가 실제로 그 ns만 감시하는지(시작 로그)와 Application `status.resources`(모노레포 하네스 `reloader-2` · README §3 판정 ⑥), Argo와의 드리프트(VD-9 — README §3).

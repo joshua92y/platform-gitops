@@ -1,6 +1,89 @@
-# platform/reloader/ — Stakater Reloader 차트 2.2.16(VD-9: scoped 모드 기본 가정, T046에서 확정)
-# sync-wave: 계약 gitops-repo.md §sync-wave 단일 표 참조(wave 번호는 표에만 기재 — 중복 금지).
-# 빈 뼈대(T003) — 실제 매니페스트는 T031+에서 작성한다.
+# platform/reloader/ — Stakater Reloader 차트 2.2.16(appVersion v1.4.21) · scoped 모드 (T046 G1)
+#
+# 역할: 감시 ns의 Secret·ConfigMap이 바뀌면 어노테이션 `reloader.stakater.com/auto: "true"`를 단 Deployment를
+#   롤링 재시작한다(ESO가 Vault 값을 새로 써도 파드는 env를 다시 읽지 않는다 — 그 공백을 메운다).
+#
+# 정본 계약(모노레포 specs/003-platform-foundation/contracts/):
+#   - gitops-repo.md §네임스페이스 `platform/reloader/` 항목 — 차트 버전 · **scoped 모드와 감시 ns 목록의 정본**
+#     · §validate.yml 4 (T046) 렌더 가드 · §이미지(태그에 `@sha256` 병기) · §워크로드 강화(securityContext 4항목 명시)
+#     · §sync-wave 단일 표(wave 번호는 그 표에만 — 여기 다시 적지 않는다)
+#   - network-policy.md(ns `reloader` = PSA restricted · `allow-kube-api` 6443만. metrics 수집 행이 없으므로 Service·모니터 0)
+#   설계: 모노레포 specs/003-platform-foundation/design/t046-design.md(F1–F11 · D1–D6 · §3 VD-9).
+#
+# scoped 모드: `watchGlobally: false` + `namespaces` 목록 → 차트가 **감시 ns마다 Role + RoleBinding**만 만들고
+#   ClusterRole·ClusterRoleBinding은 만들지 않는다. 릴리스 ns `reloader`는 차트가 자동으로 포함한다
+#   (Deployment 인자 `--namespaces=identity,jt-dev,jt-prod,reloader`). 새 소비자 ns는 **계약 목록 먼저** → 이 values →
+#   `tests/validate.sh`의 REL_WATCH_NS 순서로 한 줄씩 늘린다(README §0).
+#
+# `cloudflared`는 감시하지 않는다: 터널 커넥터는 SSH(노드 A·B)와 K8s API의 **유일한 경로**이고, Secret이 바뀌어도
+#   운영자가 **1개씩 수동 교체**하는 것이 안전장치다(T045 G4 — 자동 재시작이 붙으면 잘못된 kv 값이 두 커넥터를 한꺼번에
+#   교체한다. `platform/cloudflared/README.md` ⑨ · `secrets/cloudflared/externalsecret-cloudflared-tunnel.yaml` 머리 주석).
+#
+# ⚠ 차트 기본값이 `watchGlobally: true`다. 그리고 `values.schema.json`에 `additionalProperties: false`가 없어 키 오타는
+#   조용히 무시된다. `watchGlobally` 오타는 `namespaces`와 함께 있으면 차트가 렌더를 `fail`로 멈추지만(F1), 부모 키
+#   `reloader:` 오타·들여쓰기 실수처럼 두 키가 함께 빠지면 **조용히 전역 모드 + ClusterRole**로 돌아간다(F5).
+#   막는 것은 렌더 결과 검사 `tests/validate.sh` 10 REL(ClusterRole·ClusterRoleBinding 0 · `--namespaces` 집합 ·
+#   `--reload-strategy=annotations` · Role·RoleBinding ns 집합 · Reloader 이미지 컨테이너 1개(containers[0] · command 없음))이다
+#   — README §1의 yq 체크리스트가 같은 대조를 사람 손으로 한다.
+#
+# 권한 사실(F4 · 설계 D3 — 차트 기본값 유지): 감시 ns마다 Role 규칙은
+#   secrets·configmaps get/list/watch(= **그 ns의 Secret 전부 읽기**) · deployments·daemonsets·statefulsets
+#   get/list/update/patch · cronjobs get/list · **jobs create/delete/get/list** · events create/patch.
+#   jobs·cronjobs 규칙은 values와 무관하게 항상 렌더된다. Reloader가 반드시 가져야 하는 `patch deployments`만으로도
+#   그 ns에서 임의 코드를 실행할 수 있으므로(이미지·명령 교체) Job `create`는 위험 수준을 올리지 않는다 — 그래서 수기
+#   RBAC로 깎지 않는다. 잔여 위험은 README §2.
+#
+# ⚠ 최상위 `namespace:` 변환기를 두지 않는다 — 두면 `vd9-probe`(ns `jt-dev`)와 차트가 감시 ns에 만드는 Role·RoleBinding의
+#   ns가 전부 `reloader`로 덮여 scoped 모드가 깨진다. 차트 리소스의 ns는 `helmCharts[].namespace`가 정한다.
+#
+# 설치 방식 = kustomize `helmCharts` 인플레이트(cert-manager T042 · vault T044 · external-secrets T045 선례). 전제: argocd-cm
+#   `kustomize.buildOptions: --enable-helm`. 로컬 재현: `kustomize build --enable-helm platform/reloader`(helm 필요).
+#   ⚠ 이 차트는 **HTTPS helm repo**다 — `repo:`에 `oci://`를 붙이지 않는다.
+#   `includeCRDs: false` — 이 차트에는 CRD가 없다(명시만 한다).
+#
+# 이 디렉터리가 만들지 "않는" 것: Namespace·PSA 라벨·NetworkPolicy(→ `platform/policies/`) · Service·ServiceMonitor·PodMonitor·
+#   PDB·VPA·차트 NetworkPolicy(모두 차트 기본값이 off — 렌더 0을 README §1이 확인한다) · 시크릿 값(없다).
+#
+# 되돌리기: README §5(`prune: false` — revert 뒤 운영자가 Deployment·SA·Role·RoleBinding을 지운다).
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-resources: []
+
+resources:
+  # ⚠ 일시 — VD-9 판정 뒤 제거 PR에서 **이 한 줄과 `vd9-probe/` 디렉터리**를 지운다(README §4).
+  #   `prune: false`라 Git에서 지워도 클러스터에는 남는다 → 운영자가 Deployment·Secret `vd9-probe`를 지운다.
+  - vd9-probe
+
+helmCharts:
+  - name: reloader
+    repo: https://stakater.github.io/stakater-charts   # HTTPS helm repo — `oci://` 금지
+    version: 2.2.16                                    # 대조용 실측(값 고정 아님): tgz sha256
+                                                       #   5389fb496a120d6aac8f2b33c54ba21ed59014131def14cfc78f9d4a9374d2b7 (2026-09-22)
+    releaseName: reloader
+    namespace: reloader
+    includeCRDs: false
+    valuesInline:
+      fullnameOverride: reloader       # 하네스 reloader-1이 Deployment 이름 `reloader`를 본다(기본값이면 `reloader-reloader`)
+      image:
+        # 이 차트는 `image.digest`를 주면 태그를 버리고 `repo@digest`만 렌더한다 → 태그 문자열에 병기(external-secrets 선례).
+        # digest = 멀티아치 **인덱스** digest(linux/arm64 포함 — 노드 2대 arm64). ghcr.io 레지스트리 API로 확인(2026-09-22).
+        tag: "v1.4.21@sha256:b253579350a835082cdad8d8736671cedaa0f8309437c894bd1bf1c2f0e0d45e"
+      reloader:
+        watchGlobally: false           # 차트 기본 true — 이 줄이 scoped 모드의 전부다(오타는 10 REL이 잡는다)
+        namespaces: [identity, jt-dev, jt-prod]   # 정본은 계약 목록. 릴리스 ns `reloader`는 차트가 자동 포함
+        reloadStrategy: annotations    # 파드 템플릿 어노테이션 `reloader.stakater.com/last-reloaded-from`만 바꾼다(env 불변)
+        readOnlyRootFileSystem: true   # 컨테이너 readOnlyRootFilesystem + emptyDir `/tmp`
+        deployment:
+          replicas: 1                  # enableHA 없이 1(차트가 min(replicas,1)로 자른다)
+          nodeSelector: { role: platform }
+          resources:                   # 초기 추정 — T097 실측으로 교정. CPU limit은 두지 않는다(저장소 관례)
+            requests: { cpu: 10m, memory: 50Mi }
+            limits: { memory: 128Mi }
+          securityContext:             # 파드 수준(차트 기본값과 같지만 계약 §워크로드 강화가 명시를 요구한다)
+            runAsNonRoot: true
+            runAsUser: 65534
+            seccompProfile: { type: RuntimeDefault }
+          containerSecurityContext:    # 차트 기본 `{}` — 4항목을 여기서 채운다(ns가 PSA restricted)
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+            runAsNonRoot: true
+            seccompProfile: { type: RuntimeDefault }

@@ -1,0 +1,55 @@
+# 긍정 픽스처 — Reloader Role·RoleBinding(차트 2.2.16 scoped 모드 렌더의 판정 대상 필드만: 감시 ns마다 한 쌍).
+#   검사 10.4 REL-rbac-ns가 kind마다 ns 집합 = 계약 목록(identity·jt-dev·jt-prod) + 릴리스 ns(reloader)를 요구한다.
+#   규칙은 차트의 첫 규칙 하나만 둔다(검사 10은 규칙을 보지 않는다 — 실제 규칙은 platform/reloader/README.md §2).
+#   tests/fixtures/rel-scoped/{second-deploy,command,second-container,args-newline}/platform/reloader/rbac.yaml은 이 파일의 사본이다.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: reloader-role, namespace: identity }
+rules:
+  - { apiGroups: [""], resources: [secrets, configmaps], verbs: [get, list, watch] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: reloader-role, namespace: jt-dev }
+rules:
+  - { apiGroups: [""], resources: [secrets, configmaps], verbs: [get, list, watch] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: reloader-role, namespace: jt-prod }
+rules:
+  - { apiGroups: [""], resources: [secrets, configmaps], verbs: [get, list, watch] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: reloader-role, namespace: reloader }
+rules:
+  - { apiGroups: [""], resources: [secrets, configmaps], verbs: [get, list, watch] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: reloader-role-binding, namespace: identity }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: reloader-role }
+subjects:
+  - { kind: ServiceAccount, name: reloader, namespace: reloader }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: reloader-role-binding, namespace: jt-dev }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: reloader-role }
+subjects:
+  - { kind: ServiceAccount, name: reloader, namespace: reloader }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: reloader-role-binding, namespace: jt-prod }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: reloader-role }
+subjects:
+  - { kind: ServiceAccount, name: reloader, namespace: reloader }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: reloader-role-binding, namespace: reloader }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: reloader-role }
+subjects:
+  - { kind: ServiceAccount, name: reloader, namespace: reloader }

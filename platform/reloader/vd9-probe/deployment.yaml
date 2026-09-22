@@ -1,0 +1,67 @@
+# platform/reloader/vd9-probe/deployment.yaml — VD-9 시험 대상 Deployment `jt-dev/vd9-probe` (일시 · T046 G1)
+#
+# 목적(VD-9 · 설계 t046-design.md §3): 실제 소비자와 **같은 구조** — Argo가 관리하는 Deployment + Argo 밖에서 값이 바뀌는
+#   Secret — 에서 두 가지를 잰다. ① Secret 값이 한 번 바뀌면 롤아웃이 **정확히 1회** 일어나는가(scoped 모드가 `jt-dev`를
+#   실제로 감시하는가) ② Reloader가 파드 템플릿에 넣은 어노테이션을 Argo(selfHeal · Server-Side Diff)가 되돌리지 않고
+#   `platform-reloader`가 Synced로 남는가. 판정 6항목과 운영자 명령은 `../README.md` §3.
+#   실제 소비자(T072 파드 템플릿 · T080 authentik · T082 openfga)는 "ESO가 쓴 Secret"이고 여기서는 운영자가 쓴 Secret이지만,
+#   Reloader는 Secret의 출처와 무관하게 Secret 변경을 본다(ESO → Secret 갱신은 T045 DR1에서 이미 실측 — 설계 D4 편차).
+#
+# ⚠ Secret `vd9-probe`는 **Git에 두지 않는다**(더미 값이지만 저장소 규약상 Secret 매니페스트 금지). 운영자가 **머지 전에**
+#   `kubectl -n jt-dev create secret generic vd9-probe --from-literal=probe=v1`로 만든다(`../README.md` §3 단계 0).
+#   `envFrom.secretRef`에 `optional`을 두지 않았으므로 Secret 없이 머지되면(라이브 미실측 — 소스·설정 대조로 정한 예상):
+#   파드 CreateContainerConfigError → Deployment Progressing → 기본 progressDeadlineSeconds(600초) 뒤 ProgressDeadlineExceeded
+#   → Argo health Degraded → `platform-reloader` Degraded → Application health Lua(bootstrap/argocd/argocd-cm.yaml)로 root도
+#   Degraded → 모노레포 하네스 argo-1 FAIL. 다른 워크로드 영향·root 동기화 차단은 없다(root의 마지막 sync-wave · ApplyOutOfSyncOnly).
+#   복구: Secret을 만들면 kubelet 재시도로 Available이 되고, reloadOnCreate=false라 Secret 생성은 롤아웃을 일으키지 않으므로
+#   revision은 1로 남아 판정 ①이 유효하다. 근거와 순서는 `../README.md` §3 단계 0.
+#
+# 일시 리소스 · 제거: VD-9 판정 뒤 제거 PR(G2)에서 이 디렉터리와 `../kustomization.yaml`의 `- vd9-probe` 한 줄을 지운다.
+#   `platform-reloader`는 `prune: false`라 Git 제거 뒤에도 남는다 → 운영자가 Deployment·Secret `vd9-probe`를 지운다(`../README.md` §4).
+#
+# 모양: 이미지 `pause`(아무 일도 하지 않는 프로세스 — 포트·프로브 없음) · replicas 1 · jt-dev PSA restricted 충족 ·
+#   jt-dev ResourceQuota(requests.memory 2Gi · limits.memory 4Gi · pods 20)와 LimitRange(defaultRequest.cpu · default.memory)
+#   안에서 requests·limits를 모두 명시한다(`platform/policies/quota.yaml`). CPU limit은 두지 않는다(저장소 관례).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vd9-probe
+  namespace: jt-dev
+  labels:
+    app: vd9-probe
+    app.kubernetes.io/part-of: t046-vd9-probe
+  annotations:
+    # 이 Deployment가 참조하는 Secret·ConfigMap(여기서는 envFrom의 `vd9-probe`)이 바뀌면 Reloader가 롤아웃한다
+    reloader.stakater.com/auto: "true"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vd9-probe
+  template:
+    metadata:
+      labels:
+        app: vd9-probe
+        app.kubernetes.io/part-of: t046-vd9-probe
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65535            # pause 3.10 이미지 설정의 `User: 65535:65535`와 같은 값(arm64 config blob 확인)
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: pause
+          # 멀티아치 **인덱스** digest(linux/arm64 포함). registry.k8s.io 레지스트리 API로 확인(2026-09-22).
+          image: registry.k8s.io/pause:3.10@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
+          envFrom:
+            - secretRef:
+                name: vd9-probe
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            readOnlyRootFilesystem: true
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { memory: 32Mi }

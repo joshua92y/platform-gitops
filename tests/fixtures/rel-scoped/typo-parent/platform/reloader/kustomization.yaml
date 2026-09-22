@@ -1,0 +1,21 @@
+# 부정 픽스처 10.1·10.2·10.3(typo-parent) — 부모 키 오타 `reloadr:`(한 글자 누락).
+#   아래 세 키가 **전부** 차트에 닿지 않아 기본값(`watchGlobally: true` · `namespaces: []` · `reloadStrategy: default`)이 된다 →
+#   렌더는 **성공한 채** 전역 모드: ClusterRole·ClusterRoleBinding `reloader-role(-binding)` 생성 · `--namespaces` 없음 ·
+#   `--reload-strategy` 없음(2026-09-22 실측). values 스키마에 `additionalProperties: false`가 없어 오타가 조용히 무시된다.
+#   → 검사 10이 세 하위 코드를 모두 내야 한다.
+#   helmCharts가 있으므로 이 픽스처는 helm과 네트워크(차트 pull)가 필요하다 — tests/fixtures/pol-port와 같다.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+helmCharts:
+  - name: reloader
+    repo: https://stakater.github.io/stakater-charts
+    version: 2.2.16
+    releaseName: reloader
+    namespace: reloader
+    includeCRDs: false
+    valuesInline:
+      fullnameOverride: reloader
+      reloadr:
+        watchGlobally: false
+        namespaces: [identity, jt-dev, jt-prod]
+        reloadStrategy: annotations

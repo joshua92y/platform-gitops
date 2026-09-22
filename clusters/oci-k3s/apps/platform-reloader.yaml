@@ -3,10 +3,14 @@
 # 역할: root(app-of-apps)가 이 파일을 읽어 child Application `platform-reloader`를 만들고,
 #   그 Application이 `platform/reloader`를 서버 사이드 적용한다.
 #
-# 현재 상태(T041 시점): `platform/reloader/kustomization.yaml`은 `resources: []` 뼈대다 → 렌더 결과 0개.
-#   리소스 0인 Application이 Synced/Healthy가 되는지는 설계 VD-E로 실측한다(아니면 이 Application을 컴포넌트
-#   태스크로 이월). 실제 매니페스트(helm 차트 · scoped/global 모드)는 T046이 채우며, 그때 VD-9(scoped 모드가
-#   동작하는지)를 실측해 확정한다 — 계약 §네임스페이스의 `platform/reloader/` 항목.
+# 현재 상태(T046 G1): `platform/reloader/kustomization.yaml`이 차트 2.2.16(appVersion v1.4.21)을 kustomize `helmCharts`로
+#   인플레이트한다 — **scoped 모드**(감시 ns `identity`·`jt-dev`·`jt-prod` + 릴리스 ns `reloader` · ClusterRole·ClusterRoleBinding 0 ·
+#   감시 ns마다 Role/RoleBinding) + VD-9 시험 대상 Deployment `jt-dev/vd9-probe`(일시 — 판정 뒤 제거 PR에서 지운다).
+#   그래서 이 Application은 destination ns(`reloader`) 밖의 `identity`·`jt-dev`·`jt-prod`에도 객체를 만든다 — AppProject
+#   `platform`의 destinations(네임스페이스 표 14개 전부)가 그것을 허용한다. 감시 ns 목록의 정본은 계약 §네임스페이스의
+#   `platform/reloader/` 항목이고, 렌더 가드는 `tests/validate.sh` 10 REL, 렌더 대조·VD-9 절차·뒷정리·되돌리기는
+#   `platform/reloader/README.md`다. 아래 syncPolicy가 `prune: false`라 Git에서 지운 객체(시험 대상 · revert 뒤의 차트 객체)는
+#   운영자가 지운다. 이 파일의 매니페스트 값은 T041 그대로다(T046은 주석만 바꿨다).
 #
 # sync-wave·destination.namespace: 값의 정본은 계약 contracts/gitops-repo.md §sync-wave 단일 표이고,
 #   코드 사본은 tests/validate.sh의 WAVE_TABLE 하나뿐이다. 아래 두 값은 그 표에서 기계적으로 읽어 넣었고

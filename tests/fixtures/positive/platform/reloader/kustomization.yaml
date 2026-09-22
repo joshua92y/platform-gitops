@@ -1,4 +1,11 @@
-# positive fixture - platform/reloader (empty skeleton; no manifests needed for this check)
+# 긍정 픽스처 — platform/reloader: 검사 10(REL)이 통과하는 최소 렌더(T046).
+#   실제 트리는 helm 차트 인플레이트지만, 긍정 픽스처는 네트워크·helm 없이 돌아야 하므로 차트가 렌더할 Deployment·Role·RoleBinding의
+#   **판정 대상 필드만** 순수 매니페스트로 둔다(ClusterRole 0 · `--namespaces` 집합 · `--reload-strategy=annotations` ·
+#   Role·RoleBinding ns 집합 · Reloader 이미지 컨테이너 1개(containers[0] · command 없음)).
+#   차트 렌더로 FAIL을 내는 부정 픽스처와, 이 트리의 사본에 결함 하나를 더한 부정 픽스처는 tests/fixtures/rel-scoped/.
+#   최상위 `namespace:` 변환기를 두지 않는다(실제 트리와 같다 — ns는 매니페스트가 정한다).
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-resources: []
+resources:
+  - deployment.yaml
+  - rbac.yaml

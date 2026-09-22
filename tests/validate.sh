@@ -58,6 +58,19 @@
 #   9.4  CSS-conditions     conditions = 정확히 1항목 · 그 키는 namespaces 하나 · namespaces 집합 = 계약 §ClusterSecretStore 표
 #                           (vault-platform은 §네임스페이스 표에서 jt-dev·jt-prod를 뺀 12개로 기계 유도). 중복 ns 금지
 #                           한계: 검사 9는 **선언된 값만** 본다 — 라이브 store의 status(reason=Valid 등)는 보지 않는다
+#   10   REL                (T046) platform/reloader **렌더**(Reloader scoped 모드 — 계약 §validate.yml 4 「(T046)」):
+#   10.1 REL-clusterrbac    ClusterRole·ClusterRoleBinding 0
+#   10.2 REL-namespaces     Deployment reloader(ns reloader) 첫 컨테이너 args의 `--namespaces` 인자 정확히 1개(yq가 직접 센다 —
+#                           2개 이상이면 pflag StringSlice가 목록을 합친다) · `--namespaces=<쉼표 목록>` 한 인자 형식 · 원소 집합 =
+#                           계약 목록(REL_WATCH_NS) + 릴리스 ns 정확 일치(누락·여분·중복·빈 원소 FAIL)
+#   10.3 REL-strategy       같은 args의 `--reload-strategy` 인자 정확히 1개 = `--reload-strategy=annotations`
+#   10.4 REL-rbac-ns        렌더 전체의 Role·RoleBinding(이름 무관) ns 집합 = REL_WATCH_NS + 릴리스 ns 정확 일치(kind마다 —
+#                           모노레포 하네스 reloader-2와 같은 불변식)
+#   10.4 REL-image          렌더 전체에서 이미지 저장소가 `…/stakater/reloader`(태그·digest 무관)인 컨테이너 정확히 1개 =
+#                           Deployment reloader/reloader의 containers[0] · 저장소 = REL_IMAGE_REPO · `command` 없음
+#   10.0 REL-render         fail-closed: 렌더 없음(kustomize build 실패 — 차트의 `fail` 가드 포함) · Deployment 부재·중복 ·
+#                           저장소 루트에서 platform/reloader 부재. 부분 트리 픽스처에 platform/reloader가 없으면 대상 없음
+#   10.0 REL-args           fail-closed: 같은 args에 제어 문자(개행·CR·탭 등)가 든 인자 — 값 비교(10.2·10.3의 집합·값)를 생략한다
 #
 # 입력(환경변수 또는 인자):
 #   --root <dir>            | VALIDATE_ROOT        검사 대상 트리(기본: 저장소 루트). 저장소 밖은 거부
@@ -259,6 +272,22 @@ vault-data data,identity
 k8s-data-ca identity,jt-dev,jt-prod
 '
 CSS_COND_PLATFORM_EXCLUDE='jt-dev jt-prod'
+
+# 검사 10 — gitops-repo.md §네임스페이스 `platform/reloader/` 항목 「(T046) scoped 모드」의 코드 사본.
+#   REL_WATCH_NS = 계약의 감시 ns 목록(`reloader.namespaces`). 릴리스 ns `reloader`는 차트가 자동 포함하므로 여기 적지 않고
+#   REL_RELEASE_NS로 더한다. `cloudflared`가 없는 것은 의도다(터널 커넥터는 수동 1개씩 교체 — T045 G4).
+#   새 소비자 ns는 **계약 목록 먼저** → platform/reloader values → 이 줄 순서로 늘린다(platform/reloader/README.md §0).
+#   계약이 정본, 이 블록이 유일한 코드 사본이다 — README·주석의 목록은 설명이지 대조 기준이 아니다.
+REL_DIR='platform/reloader'
+REL_DEPLOY='reloader'          # fullnameOverride — 모노레포 하네스 reloader-1이 같은 이름을 본다
+REL_RELEASE_NS='reloader'      # helmCharts[].namespace = 릴리스 ns
+REL_WATCH_NS='identity jt-dev jt-prod'
+REL_STRATEGY='annotations'
+# 10.4 REL-image: 렌더에서 "Reloader 컨테이너"를 찾는 저장소 패턴(태그·digest를 뗀 뒤 비교 — ghcr.io·Docker Hub 등 레지스트리 무관)과,
+#   찾은 1개가 가져야 할 저장소(차트 2.2.16 기본 `image.repository`). 패턴이 넓은 것은 의도다 — 다른 레지스트리의 같은 이미지로
+#   띄운 두 번째 Reloader도 세어야 한다.
+REL_IMAGE_REPO='ghcr.io/stakater/reloader'
+REL_IMAGE_ANY_RE='(^|/)stakater/reloader$'
 
 # 검사 7.3 — `secrets/<ns>/`의 유일한 배달자(설계 D3 = B · 조건 2). 이 파일 하나만 `secrets/` 아래를 base로 가질 수 있고,
 #   모든 `secrets/<ns>/`는 이 파일에 포함돼야 한다(포함되지 않으면 어떤 Application도 적용하지 않는 죽은 선언이다).
@@ -1489,6 +1518,216 @@ check_9_clustersecretstores() {
 }
 
 # -----------------------------------------------------------------------------
+# 검사 10 — Reloader scoped 모드(계약 gitops-repo.md §네임스페이스 `platform/reloader/` 항목 · §validate.yml 4 「(T046)」)
+#
+# 왜 원본 values가 아니라 **렌더**를 보는가: 차트 2.2.16의 기본값이 `watchGlobally: true`이고 values 스키마가 키 오타를
+#   막지 않는다(`additionalProperties: false` 없음). 부모 키 `reloader:` 오타·들여쓰기 실수처럼 `watchGlobally`와
+#   `namespaces`가 **함께** 빠지면 렌더는 성공한 채 전역 모드(ClusterRole + ClusterRoleBinding · `--namespaces` 없음 ·
+#   `--reload-strategy` 없음)로 돌아간다. `watchGlobally` 한 키만 틀리면(`watchGlobaly`) 차트의 `fail` 가드가 렌더를
+#   멈추므로 10.0이 잡는다(2026-09-22 실측 — tests/fixtures/rel-scoped/). Argo가 적용하는 것은 렌더이므로 판정도 렌더로 한다.
+# 범위: `platform/reloader` 렌더 하나(경로 정확 일치 — 중첩된 `platform/reloader/vd9-probe` 렌더는 따로 보지 않지만, 부모 렌더에
+#   포함되므로 10.4는 그 객체도 본다). 10.2·10.3은 Deployment reloader/reloader 첫 컨테이너의 args만 보므로, 그 시야 밖에서
+#   감시 범위를 넓히는 경로(이름이 다른 두 번째 Reloader · 두 번째 컨테이너 · `command` 안의 인자 — 2026-09-22 독립 리뷰 e1–e3에서
+#   가짜 PASS 실측)는 10.4가 렌더 전체에서 닫는다.
+# 한계: 라이브에서 Reloader가 실제로 그 ns만 감시하는지(시작 로그)·Application `status.resources`의 ClusterRole 0은
+#   모노레포 하네스 reloader-2가 본다. Role의 **규칙**과 RoleBinding의 roleRef·subjects는 보지 않는다(README §1의 yq
+#   체크리스트가 사람 손으로 대조한다). 다른 컴포넌트 렌더에 든 Reloader, `stakater/reloader`가 아닌 이름으로 다시 올린 이미지,
+#   args의 `$(VAR)` 치환(kubelet이 컨테이너 env로 펼친다)도 보지 않는다.
+# -----------------------------------------------------------------------------
+check_10_reloader() {
+  header 10 "Reloader(platform/reloader 렌더): ClusterRole·ClusterRoleBinding 0 · --namespaces 집합 = 계약 목록 + 릴리스 ns · --reload-strategy=$REL_STRATEGY · Role·RoleBinding ns 집합 · Reloader 이미지 컨테이너 1개"
+  local f0=$N_FAIL i idx=-1 kn kfile='' label rows line sel ndep ax counts v w
+  local nargs=0 nctl=0 nns=0 nstr=0 nsval='' strval='' miss='' extra='' dup='' empty=0 want
+  local kind have rk rns rname rpath rimg rcmd repo nimg=0 hits='' hit1='' repo1=''
+  local -a arr=() hv=()
+  local -A seen=()
+  for kn in kustomization.yaml kustomization.yml Kustomization; do
+    if [[ -f "$ROOT/$REL_DIR/$kn" ]]; then kfile="$ROOT/$REL_DIR/$kn"; break; fi
+  done
+  if [[ -z $kfile ]]; then
+    if [[ $ROOT == "$REPO_ROOT" ]]; then
+      fail "10.0 REL-render" "$REL_DIR/kustomization.yaml 없음 — 계약 §네임스페이스의 platform/reloader 컴포넌트가 저장소에 없다(fail-closed)"
+    else
+      pass "10 REL" "$REL_DIR 없음 — 부분 트리(픽스처)라 대상 없음"
+    fi
+    return 0
+  fi
+  need_tool "10 REL" yq || return 0
+  need_tool "10 REL" kustomize || return 0
+  if grep -Eq '^[[:space:]]*helmCharts:' "$kfile"; then need_tool "10 REL" helm || return 0; fi
+  for ((i = 0; i < SRC_N; i++)); do
+    if [[ ${SRC_KIND[$i]} == rendered && ${SRC_PATH[$i]} == "$REL_DIR" ]]; then idx=$i; fi
+  done
+  if [[ $idx -lt 0 ]]; then
+    fail "10.0 REL-render" "$REL_DIR 렌더 결과 없음 — kustomize build가 실패했다(검사 1의 KUST 줄 참조 · 차트의 fail 가드 포함). 판정할 대상이 없으므로 fail-closed"
+    return 0
+  fi
+  label=${SRC_LABEL[$idx]}
+
+  # 10.1 클러스터 범위 RBAC 0
+  if ! rows=$(src_extract "$idx" 'select(.kind == "ClusterRole" or .kind == "ClusterRoleBinding") | .kind + "/" + (.metadata.name // "-")'); then
+    fail "10.0 REL-render" "$label: yq 추출 실패(ClusterRole·ClusterRoleBinding) — fail-closed"
+    return 0
+  fi
+  while IFS= read -r line; do
+    [[ -n $line ]] || continue
+    fail "10.1 REL-clusterrbac" "$label $line: scoped 모드는 ClusterRole·ClusterRoleBinding 0이어야 한다 — 전역 모드로 돌아갔다(values 키 오타·watchGlobally 누락 · 계약 §네임스페이스 platform/reloader)"
+  done <<< "$rows"
+
+  # Deployment reloader/reloader 정확히 1개 — 없으면 인자를 판정할 수 없으므로 fail-closed
+  sel="select(.kind == \"Deployment\" and .metadata.name == \"$REL_DEPLOY\" and (.metadata.namespace // \"-\") == \"$REL_RELEASE_NS\")"
+  # ⚠ `select(...) | "D"`처럼 **문자열 리터럴**을 내보내면 yq v4는 선택되지 않은 문서마다에도 그 리터럴을 낸다(2026-09-22 실측,
+  #   v4.53.6) — 문서 수가 세어진다. 그래서 선택된 문서의 필드(`.kind`)를 낸다.
+  if ! rows=$(src_extract "$idx" "$sel | .kind"); then
+    fail "10.0 REL-render" "$label: yq 추출 실패(Deployment) — fail-closed"
+    return 0
+  fi
+  ndep=0
+  while IFS= read -r line; do
+    if [[ -n $line ]]; then ndep=$((ndep + 1)); fi
+  done <<< "$rows"
+  if [[ $ndep -eq 0 ]]; then
+    fail "10.0 REL-render" "$label: Deployment $REL_RELEASE_NS/$REL_DEPLOY 없음 — 인자를 판정할 대상이 없으므로 fail-closed(fullnameOverride · helmCharts[].namespace 확인)"
+    return 0
+  elif [[ $ndep -gt 1 ]]; then
+    fail "10.0 REL-render" "$label: Deployment $REL_RELEASE_NS/$REL_DEPLOY ${ndep}개 — 정확히 1개여야 한다"
+    return 0
+  fi
+  # 첫 컨테이너 args — 인자 수·제어 문자가 든 인자 수·플래그 수를 **yq 안에서** 센다. 셸에서 인자를 구분자로 이어 `read`로
+  #   나누면 개행이 든 인자에서 읽기가 끝나 그 뒤 인자(두 번째 `--namespaces=` 등)를 놓친다(2026-09-22 독립 리뷰 e5 — 가짜 PASS 실측).
+  #   `=` 형식뿐 아니라 값을 다음 인자로 넘기는 형식(`--namespaces x`)도 센다.
+  #   ⚠ 수집자 `[...]`는 선택되지 않은 문서마다 빈 결과(빈 줄 — src_extract가 지운다)를 낸다(2026-09-22 실측, v4.53.6) —
+  #   그래서 결과가 "숫자 4개 한 줄"인지 확인하고, 아니면 fail-closed다.
+  ax="$sel | ((.spec.template.spec.containers // [])[0].args // []) | map(tostring)"
+  if ! counts=$(src_extract "$idx" "$ax"' | [ length, (map(select(test("[[:cntrl:]]"))) | length), (map(select(test("^--?namespaces(=|$)"))) | length), (map(select(test("^--?reload-strategy(=|$)"))) | length) ] | map(tostring) | join(" ")'); then
+    fail "10.0 REL-render" "$label: yq 추출 실패(args) — fail-closed"
+    return 0
+  fi
+  if [[ ! $counts =~ ^([0-9]+)\ ([0-9]+)\ ([0-9]+)\ ([0-9]+)$ ]]; then
+    fail "10.0 REL-render" "$label: args 계수 결과 '$counts' — 숫자 4개 한 줄이 아니다(fail-closed)"
+    return 0
+  fi
+  nargs=${BASH_REMATCH[1]}; nctl=${BASH_REMATCH[2]}; nns=${BASH_REMATCH[3]}; nstr=${BASH_REMATCH[4]}
+  if [[ $nctl -gt 0 ]]; then
+    fail "10.0 REL-args" "$label Deployment/$REL_RELEASE_NS/$REL_DEPLOY: 첫 컨테이너 args ${nargs}개 중 ${nctl}개에 제어 문자(개행·CR·탭 등) — 줄 단위 추출로는 값을 그대로 비교할 수 없다(fail-closed). --namespaces·--reload-strategy 개수는 yq가 직접 센 값으로 판정하고, 집합·값 비교는 생략한다"
+  fi
+
+  # 10.2 --namespaces 집합 = REL_WATCH_NS + REL_RELEASE_NS
+  #   2개 이상이면 뒤의 값이 이기는 것이 아니라 목록이 **합쳐진다**: Reloader v1.4.21 `internal/pkg/util/util.go`가 이 플래그를
+  #   `StringSliceVar`로 정의하고, pflag(v1.0.10) StringSlice의 Set은 첫 호출만 기본값을 대체하고 그 뒤로는 덧붙인다 → 감시 범위 확대.
+  #   (`--reload-strategy`는 `StringVar`라 마지막 값이 이긴다.)
+  want="$REL_WATCH_NS $REL_RELEASE_NS"
+  if [[ $nns -ne 1 ]]; then
+    fail "10.2 REL-namespaces" "$label Deployment/$REL_RELEASE_NS/$REL_DEPLOY: 첫 컨테이너 args의 --namespaces 인자 ${nns}개 — 정확히 1개여야 한다(0개 = 전역 또는 단일 ns 모드 · 2개 이상 = 목록이 합쳐진다 — pflag StringSlice(Reloader v1.4.21 util.go StringSliceVar) · 감시 범위 확대)"
+  elif [[ $nctl -gt 0 ]]; then
+    :   # 값 비교 생략 — 10.0 REL-args가 이미 FAIL을 냈다(고친 뒤 다시 돌린다)
+  elif ! nsval=$(src_extract "$idx" "$ax"' | map(select(test("^--?namespaces(=|$)"))) | .[0]'); then
+    fail "10.0 REL-render" "$label: yq 추출 실패(--namespaces) — fail-closed"
+    return 0
+  elif [[ $nsval != --namespaces=* ]]; then
+    fail "10.2 REL-namespaces" "$label Deployment/$REL_RELEASE_NS/$REL_DEPLOY: 인자 '$nsval' — '--namespaces=<쉼표 목록>' 한 인자 형식만 허용한다"
+  else
+    # 끝에 쉼표 하나를 덧붙여 읽는다 — bash `read`는 마지막 빈 필드를 버리므로 `a,b,`의 빈 원소가 사라진다(덧붙인 쉼표가 대신 버려진다)
+    IFS=',' read -r -a arr <<< "${nsval#--namespaces=},"
+    for v in "${arr[@]}"; do
+      if [[ -z $v ]]; then empty=$((empty + 1)); continue; fi
+      if [[ -n ${seen[$v]:-} ]]; then
+        if [[ ", $dup," != *", $v,"* ]]; then dup+="${dup:+, }$v"; fi
+      else
+        seen[$v]=1
+      fi
+    done
+    for w in $want; do
+      [[ -n ${seen[$w]:-} ]] || miss+="${miss:+, }$w"
+    done
+    for v in "${arr[@]}"; do
+      [[ -n $v ]] || continue
+      if [[ " $want " != *" $v "* && ", $extra," != *", $v,"* ]]; then extra+="${extra:+, }$v"; fi
+    done
+    [[ $empty -eq 0 ]] || fail "10.2 REL-namespaces" "$label Deployment/$REL_RELEASE_NS/$REL_DEPLOY: '$nsval'에 빈 원소 ${empty}개(빈 ns는 client-go에서 전체 ns를 뜻할 수 있다)"
+    [[ -z $dup ]] || fail "10.2 REL-namespaces" "$label Deployment/$REL_RELEASE_NS/$REL_DEPLOY: --namespaces 중복 [$dup]"
+    if [[ -n $miss || -n $extra ]]; then
+      fail "10.2 REL-namespaces" "$label Deployment/$REL_RELEASE_NS/$REL_DEPLOY: --namespaces 집합 불일치 — 빠짐 [$miss] 여분 [$extra](기대 = 계약 목록 ${REL_WATCH_NS// /·} + 릴리스 ns $REL_RELEASE_NS · 여분만큼 그 ns의 Secret을 읽고 워크로드를 재시작한다)"
+    fi
+  fi
+
+  # 10.3 --reload-strategy=annotations 정확히 1개
+  if [[ $nstr -ne 1 ]]; then
+    fail "10.3 REL-strategy" "$label Deployment/$REL_RELEASE_NS/$REL_DEPLOY: 첫 컨테이너 args의 --reload-strategy 인자 ${nstr}개 — 정확히 1개(--reload-strategy=$REL_STRATEGY)여야 한다(0개 = 바이너리 기본 전략 env-vars · 2개 이상 = 마지막 값이 적용된다 — StringVar)"
+  elif [[ $nctl -gt 0 ]]; then
+    :   # 값 비교 생략 — 10.0 REL-args
+  elif ! strval=$(src_extract "$idx" "$ax"' | map(select(test("^--?reload-strategy(=|$)"))) | .[0]'); then
+    fail "10.0 REL-render" "$label: yq 추출 실패(--reload-strategy) — fail-closed"
+    return 0
+  elif [[ $strval != "--reload-strategy=$REL_STRATEGY" ]]; then
+    fail "10.3 REL-strategy" "$label Deployment/$REL_RELEASE_NS/$REL_DEPLOY: 인자 '$strval' ≠ --reload-strategy=$REL_STRATEGY(계약 — 파드 템플릿 어노테이션만 바꾸는 전략)"
+  fi
+
+  # 10.4 REL-rbac-ns — 렌더 전체의 Role·RoleBinding(이름 무관) ns 집합 = REL_WATCH_NS + 릴리스 ns, kind마다 정확 일치.
+  #   모노레포 하네스 reloader-2가 라이브 `status.resources`에서 보는 불변식과 같다(하네스는 Role `reloader-role`의 ns를 보고, 여기는
+  #   이름과 무관하게 모든 Role·RoleBinding을 본다 — 이름을 바꾼 두 번째 Role도 센다). 같은 ns의 두 번째 Role(`reloader-metadata-role`)은
+  #   집합이라 한 번만 센다. ns가 없는 객체는 '-'로 세어 여분이 된다.
+  if ! rows=$(src_extract "$idx" 'select(.kind == "Role" or .kind == "RoleBinding") | .kind + strenv(YQ_SEP) + (.metadata.namespace // "-")'); then
+    fail "10.0 REL-render" "$label: yq 추출 실패(Role·RoleBinding) — fail-closed"
+    return 0
+  fi
+  for kind in Role RoleBinding; do
+    have=' '
+    while IFS=$YQ_SEP read -r rk rns; do
+      [[ $rk == "$kind" ]] || continue
+      [[ $have == *" $rns "* ]] || have+="$rns "
+    done <<< "$rows"
+    miss=''; extra=''
+    read -r -a hv <<< "$have"
+    for w in $want; do
+      [[ $have == *" $w "* ]] || miss+="${miss:+, }$w"
+    done
+    for v in "${hv[@]}"; do
+      [[ " $want " == *" $v "* ]] || extra+="${extra:+, }$v"
+    done
+    if [[ -n $miss || -n $extra ]]; then
+      fail "10.4 REL-rbac-ns" "$label: $kind ns 집합 불일치 — 빠짐 [$miss] 여분 [$extra](기대 = 계약 목록 ${REL_WATCH_NS// /·} + 릴리스 ns $REL_RELEASE_NS · 모노레포 하네스 reloader-2와 같은 불변식. 여분 ns에는 Reloader 권한이 생기고, 빠진 ns는 감시해도 권한이 없다)"
+    fi
+  done
+
+  # 10.4 REL-image — 렌더 전체에서 이미지 저장소가 `…/stakater/reloader`인 컨테이너가 정확히 1개이고, 그것이 Deployment
+  #   reloader/reloader의 containers[0](10.2·10.3이 보는 자리)이며, 저장소 = REL_IMAGE_REPO, `command`가 없다.
+  #   닫는 가짜 PASS(2026-09-22 독립 리뷰 실측): 이름이 다른 두 번째 Reloader Deployment(e1) · 같은 파드의 두 번째 컨테이너(e3)
+  #   · `command` 안의 `--namespaces=`(e2 — args는 command 뒤에 붙으므로 pflag가 두 목록을 합친다).
+  #   대상 = 렌더의 모든 `image` 키(containers·initContainers 등 — 위치를 경로로 보고한다). 저장소는 digest(`@…`)와 마지막 경로
+  #   조각의 태그(`:…`)를 뗀 값이다(레지스트리 포트 `:5000`은 남는다).
+  # shellcheck disable=SC2016  # $k·$ns·$n 은 yq 변수다
+  if ! rows=$(src_extract "$idx" '(.kind // "-") as $k | (.metadata.namespace // "-") as $ns | (.metadata.name // "-") as $n | .. | select(tag == "!!map") | select(has("image")) | [ $k, $ns, $n, (path | join(".")), (.image | tostring), (has("command") | tostring) ] | join(strenv(YQ_SEP))'); then
+    fail "10.0 REL-render" "$label: yq 추출 실패(image) — fail-closed"
+    return 0
+  fi
+  while IFS=$YQ_SEP read -r kind rns rname rpath rimg rcmd; do
+    [[ -n $kind ]] || continue
+    repo=${rimg%%@*}
+    if [[ ${repo##*/} == *:* ]]; then repo=${repo%:*}; fi
+    [[ $repo =~ $REL_IMAGE_ANY_RE ]] || continue
+    nimg=$((nimg + 1))
+    hits+="${hits:+, }$kind/$rns/$rname $rpath"
+    hit1="$kind/$rns/$rname $rpath"; repo1=$repo
+    if [[ $rcmd == true ]]; then
+      fail "10.4 REL-image" "$label $kind/$rns/$rname $rpath: command 있음 — Reloader 컨테이너는 command를 두지 않는다(args는 command 뒤에 붙으므로 command 안의 --namespaces=는 10.2가 보지 않은 채 pflag가 목록을 합친다 · 감시 범위 확대)"
+    fi
+  done <<< "$rows"
+  if [[ $nimg -ne 1 ]]; then
+    fail "10.4 REL-image" "$label: Reloader 이미지(…/stakater/reloader) 컨테이너 ${nimg}개 [$hits] — 렌더 전체에서 정확히 1개(Deployment/$REL_RELEASE_NS/$REL_DEPLOY spec.template.spec.containers.0)여야 한다(10.2·10.3은 그 컨테이너의 args만 본다 — 다른 Reloader는 다른 ns를 감시할 수 있다)"
+  else
+    if [[ $hit1 != "Deployment/$REL_RELEASE_NS/$REL_DEPLOY spec.template.spec.containers.0" ]]; then
+      fail "10.4 REL-image" "$label: Reloader 이미지 컨테이너가 '$hit1'에 있다 — Deployment/$REL_RELEASE_NS/$REL_DEPLOY spec.template.spec.containers.0이어야 한다(10.2·10.3이 보는 자리)"
+    fi
+    if [[ $repo1 != "$REL_IMAGE_REPO" ]]; then
+      fail "10.4 REL-image" "$label $hit1: 이미지 저장소 '$repo1' ≠ $REL_IMAGE_REPO(차트 2.2.16 기본 image.repository)"
+    fi
+  fi
+
+  finish_group "10 REL" "$label: ClusterRole·ClusterRoleBinding 0 · Deployment $REL_RELEASE_NS/$REL_DEPLOY --namespaces 집합 = {${want// /,}} · --reload-strategy=$REL_STRATEGY · Role·RoleBinding ns 집합 = 같은 목록 · Reloader 이미지 컨테이너 1개(containers.0 · command 없음)" "$f0"
+}
+
+# -----------------------------------------------------------------------------
 # 실행
 # -----------------------------------------------------------------------------
 load_wave_table
@@ -1503,6 +1742,7 @@ check_6_author
 check_7_sync_wave
 check_8_gitleaks
 check_9_clustersecretstores
+check_10_reloader
 
 printf '\n== 요약 ==\n'
 printf 'PASS %d · FAIL %d · WARN %d · SKIP %d\n' "$N_PASS" "$N_FAIL" "$N_WARN" "$N_SKIP"

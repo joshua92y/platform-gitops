@@ -1,0 +1,18 @@
+# 부정 픽스처 10.4(second-container · 독립 리뷰 e3) — 긍정 트리(`deployment.yaml`·`rbac.yaml`은 positive 사본)의 Deployment
+#   reloader/reloader에 **두 번째 컨테이너**(같은 Reloader 이미지 · `--namespaces=cloudflared`)를 더했다. 10.2·10.3은 첫 컨테이너의
+#   args만 보므로 PASS — 10.4 이전에는 가짜 PASS였다. 10.4 REL-image(Reloader 이미지 컨테이너 2개)만 FAIL해야 한다.
+#   실제 트리에서 같은 결함이 들어올 자리(kustomize patches)를 그대로 쓴다. helm·네트워크가 필요 없다.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - deployment.yaml
+  - rbac.yaml
+patches:
+  - target: { kind: Deployment, name: reloader, namespace: reloader }
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/-
+        value:
+          name: reloader-cf
+          image: ghcr.io/stakater/reloader:v1.4.21@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          args: ["--namespaces=cloudflared"]

@@ -1,0 +1,12 @@
+# platform/reloader/vd9-probe/ — VD-9 실측용 시험 대상(일시 · T046 G1)
+#
+# ⚠ 일시 리소스: VD-9 판정 뒤 제거 PR(G2)에서 이 디렉터리와 `../kustomization.yaml`의 `- vd9-probe` 한 줄을 지운다.
+#   `prune: false`라 Git 제거만으로는 클러스터에 남는다 → 운영자가 Deployment·Secret `vd9-probe`를 지운다(`../README.md` §4).
+# 목적·판정은 `deployment.yaml` 머리 주석과 `../README.md` §3.
+#
+# `namespace:` 변환기를 두지 않는다 — ns는 매니페스트의 `metadata.namespace: jt-dev`가 정한다(부모도 변환기가 없다).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - deployment.yaml

@@ -1,0 +1,31 @@
+# 긍정 픽스처 — Reloader Deployment(차트 2.2.16 scoped 모드 렌더의 판정 대상 필드만). 이미지 digest는 가짜 값
+#   tests/fixtures/rel-scoped/{second-deploy,command,second-container,args-newline}/platform/reloader/deployment.yaml은 이 파일의 사본이다.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: reloader
+  namespace: reloader
+  labels: { app: reloader }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: reloader } }
+  template:
+    metadata:
+      labels: { app: reloader }
+    spec:
+      serviceAccountName: reloader
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: reloader
+          image: ghcr.io/stakater/reloader:v1.4.21@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          args:
+            - --log-level=info
+            - --namespaces=identity,jt-dev,jt-prod,reloader
+            - --reload-strategy=annotations
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+            readOnlyRootFilesystem: true

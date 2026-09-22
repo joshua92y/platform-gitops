@@ -1,0 +1,19 @@
+# 부정 픽스처 10.0 REL-args(args-newline · 독립 리뷰 e5) — 긍정 트리(`deployment.yaml`·`rbac.yaml`은 positive 사본)의 Reloader
+#   args 끝에 **개행이 든 인자**(`"--log-format=\n"`)와 그 뒤의 두 번째 `--namespaces=cloudflared`를 더했다. 예전 검사는 args를
+#   셸에서 줄 단위로 읽어 개행에서 멈췄으므로 뒤 인자를 보지 못한 채 PASS했다(가짜 PASS). 이제 yq가 직접 세므로
+#   10.0 REL-args(제어 문자가 든 인자 1개)와 10.2 REL-namespaces(--namespaces 인자 2개 — 목록이 합쳐진다)가 FAIL해야 한다.
+#   실제 트리에서 같은 결함이 들어올 자리(kustomize patches)를 그대로 쓴다. helm·네트워크가 필요 없다.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - deployment.yaml
+  - rbac.yaml
+patches:
+  - target: { kind: Deployment, name: reloader, namespace: reloader }
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: "--log-format=\n"
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --namespaces=cloudflared
