@@ -17,7 +17,8 @@
 #   2    APP-SSA            Application마다 syncOptions에 ServerSideApply=true
 #   3.0  ES-apiVersion/store/dataFrom/sourceRef   ExternalSecret 규약 보강(계약 §이름·인증 규약)
 #   3.1  ES-①              remoteRef.key 정규식 ^(platform|dev|prod)/[a-z0-9_./-]+$ (k8s-data-ca 제외)
-#   3.2  ES-②              scope ↔ 위치(overlays/dev → vault-dev+dev/, overlays/prod → vault-prod+prod/, secrets/** → vault-platform+platform/)
+#   3.2  ES-②              scope ↔ 위치(overlays/dev → vault-dev+dev/, overlays/prod → vault-prod+prod/, secrets/** → vault-platform+platform/
+#                           · T045 G4: 배달자 렌더 platform/secrets 도 secrets/** 와 같은 규칙으로 본다)
 #   3.3  ES-③              platform/{cnpg-databases,kafka-topics,dragonfly,authentik,openfga}: vault-data(열거 접두) 또는 vault-platform(platform/)
 #   3.4  ES-④              k8s-data-ca: key ∈ {pg-main-ca, jt-kafka-cluster-ca-cert} + property ca.crt, dataFrom 금지
 #   3.5  ES-⑤              Deployment·StatefulSet·DaemonSet·CronJob의 `-migrate` Secret 참조 금지
@@ -46,6 +47,8 @@
 #                           위치 판정 불가로 FAIL) · (b) `secrets/**` 파일의 ES와 같은 이름이 배달자 밖 소스에도 있으면 FAIL
 #                           · (c) `secrets/**` 파일의 ES가 platform/secrets 렌더에 없으면 죽은 선언(kustomize 있을 때) ·
 #                           (d) secrets/* 를 가리키는 Application 금지(multi-source 포함) + 배달자를 적용하는 Application 필요
+#                           · (e) (T045 G4) 변환 키 금지 — 배달자 최상위 키 = {apiVersion,kind,resources}, secrets/** 의
+#                           kustomization = 거기에 namespace 까지(그 밖의 키는 FAIL · YAML 맵으로 못 읽어도 FAIL)
 #   8    LEAK               gitleaks 파일 스캔 — 스캔 대상 0개(빈 트리)면 FAIL
 #   9.1  CSS-set            ClusterSecretStore 이름 집합 = 계약 5개 · 위치 platform/secret-stores/ · metadata.namespace 금지
 #   9.2  CSS-auth           vault provider: serviceAccountRef.namespace(referent auth 금지)·audiences·mountPath·server/path/version
@@ -262,6 +265,12 @@ CSS_COND_PLATFORM_EXCLUDE='jt-dev jt-prod'
 #   `secrets/`를 가리키는 Application은 만들 수 없다(7.1의 `platform-<comp>` ↔ `platform/<comp>` 규약) — 그래서 배달자가 있다.
 SECRETS_OWNER_KUST='platform/secrets/kustomization.yaml'
 SECRETS_OWNER_DIR='platform/secrets'
+# 검사 7.3 (e) — 계약 §validate.yml 4 「(T045 G4) 배달자는 base를 묶기만 한다」의 허용 최상위 키.
+#   배달자는 `{apiVersion, kind, resources}`뿐, `secrets/<ns>/`는 거기에 `namespace`까지다.
+#   변환 키(`patches`·`replacements`·`transformers`·`namePrefix`·`helmCharts` …)가 있으면 원본 파일은 그대로인 채
+#   **Argo가 실제로 적용하는 렌더에서만** store·`remoteRef`·`creationPolicy`가 바뀐다(그 렌더에 터널 자격이 있다).
+SECRETS_OWNER_KEYS='["apiVersion","kind","resources"]'
+SECRETS_NS_KEYS='["apiVersion","kind","resources","namespace"]'
 SECRETS_SRC_DIR='secrets'
 
 # ExternalSecret 규약 정규식(계약 §validate.yml ExternalSecret 검사)
@@ -647,8 +656,11 @@ check_3_externalsecrets() {
     want_store=''; want_prefix=''
     if [[ $p =~ $RE_LOC_DEV ]]; then want_store=vault-dev; want_prefix=dev/
     elif [[ $p =~ $RE_LOC_PROD ]]; then want_store=vault-prod; want_prefix=prod/
-    elif [[ $p =~ $RE_LOC_SECRETS ]]; then want_store=vault-platform; want_prefix=platform/
+    elif [[ $p =~ $RE_LOC_SECRETS || $p == "$SECRETS_OWNER_DIR" ]]; then want_store=vault-platform; want_prefix=platform/
     fi
+    # ⚠ `$p == $SECRETS_OWNER_DIR`(배달자 렌더)를 함께 보는 이유: 원본 파일이 아니라 **Argo가 실제로 적용하는 렌더**가
+    #   기준이어야 한다(계약 §validate.yml 4 · T045 G4). 배달자에 변환 키가 있으면 원본은 그대로인 채 렌더에서만
+    #   store·key가 바뀐다 — 그 구조 자체는 7.3이 금지하고, 여기서는 결과를 한 번 더 본다.
     if [[ -n $want_store ]]; then
       [[ $store == "$want_store" ]] || fail "3.2 ES-②" "$es: 위치 '$p'는 store $want_store 이어야 함(현재 $store)"
       for k in "${keys[@]}"; do
@@ -1164,10 +1176,14 @@ check_7_sync_wave() {
   #       kustomize가 없으면(렌더 0) 이 갈래는 돌지 않는다(5.6의 "원본 N · 렌더 M" 관례와 같다).
   #   (d) 적용 주체: `secrets` 또는 `secrets/*`를 가리키는 Application은 없어야 하고(multi-source의 두 번째 source 포함),
   #       배달자가 있으면 `source.path == platform/secrets`인 Application이 있어야 한다.
+  #   (e) 구조 금지(계약 §validate.yml 4 · T045 G4): 배달자의 최상위 키는 `{apiVersion, kind, resources}`,
+  #       `secrets/**`의 kustomization은 거기에 `namespace`까지만. 변환 키가 있으면 원본은 그대로인 채 배달자 **렌더에서만**
+  #       store·`remoteRef`·`creationPolicy`가 바뀐다(3.2의 위치 판정은 원본 경로 기준이라 그 변형을 보지 못했다 — 같은 PR에서
+  #       3.2에 배달자 렌더를 더해 결과도 함께 본다). YAML 맵으로 읽히지 않으면 fail-closed로 FAIL한다.
   #   디렉터리 단위 완전성((c)의 보완 · kustomize 없이도 도는 그물)은 **실제 저장소 루트에서는 항상** 본다.
   #   부분 트리 예외(배달자 구조를 쓰지 않는 픽스처)는 `--root`가 저장소 루트가 아닐 때만 적용한다.
-  local f3=$N_FAIL nref=0 nown=0 nself=0 ndir=0 nin=0 nskip=0 owner=0 owner_rendered=0 napp_owner=0
-  local nes_src=0 nes_render=0 kfile rk kdir entry r rd sdir msg3 i p ns name app apath
+  local f3=$N_FAIL nref=0 nown=0 nself=0 ndir=0 nin=0 nskip=0 owner=0 owner_rendered=0 napp_owner=0 nkey=0
+  local nes_src=0 nes_render=0 kfile rk kdir entry r rd sdir msg3 i p ns name app apath kallow extra
   local -A SEC_INCLUDED=() ES_FILE_SRC=() ES_FILE_NS=() ES_OWNER_RENDER=() ES_FOREIGN=()
   if [[ -f "$ROOT/$SECRETS_OWNER_KUST" ]]; then owner=1; fi
   if need_tool "7.3 WAVE-secrets-base" yq; then
@@ -1201,6 +1217,23 @@ check_7_sync_wave() {
           fail "7.3 WAVE-secrets-base" "$rk: base '$entry'(→ $r) — secrets/ 아래를 base로 가질 수 있는 kustomization은 $SECRETS_OWNER_KUST 하나뿐이다(단일 소유 — 두 Application이 한 ExternalSecret을 각자 적용하면 소유권이 갈린다)"
         fi
       done < <(yq_lines "$YQ_KUST_BASES" "$kfile" || true)
+    done
+
+    # (e) 변환 키 금지 — 배달자와 `secrets/**`의 kustomization은 base를 묶기만 한다(계약 §validate.yml 4 · T045 G4)
+    for kfile in "${KUST_FILES[@]}"; do
+      rk=$(rel "$kfile")
+      if [[ $rk == "$SECRETS_OWNER_KUST" ]]; then kallow=$SECRETS_OWNER_KEYS
+      elif [[ $rk == "$SECRETS_SRC_DIR"/* ]]; then kallow=$SECRETS_NS_KEYS
+      else continue
+      fi
+      nkey=$((nkey + 1))
+      if ! extra=$(yq -N "keys - $kallow | join(\",\")" "$kfile" 2>/dev/null); then
+        fail "7.3 WAVE-secrets-base" "$rk: 최상위 키를 읽지 못했다(YAML 맵이 아니거나 파싱 실패) — 변환 키 검사 불가라 fail-closed"
+        continue
+      fi
+      extra=$(printf '%s' "$extra" | tr -d '\n' | tr -s ',' ',')
+      extra=${extra%,}; extra=${extra#,}
+      [[ -z $extra ]] || fail "7.3 WAVE-secrets-base" "$rk: 최상위 키 '$extra' 금지 — 허용은 $kallow 뿐이다(배달자·secrets/<ns>는 base를 묶기만 한다: 계약 §validate.yml 4). 변환 키가 있으면 원본 파일은 그대로인 채 Argo가 적용하는 렌더에서만 store·remoteRef·creationPolicy가 바뀐다"
     done
 
     # (b)(c) ExternalSecret 소유자 대조. 이름으로 맞춘다 — `secrets/<ns>/kustomization.yaml`의 `namespace:` 변환기가
@@ -1261,7 +1294,7 @@ check_7_sync_wave() {
         fi
       done
     fi
-    msg3="secrets/ 경로 base 참조 ${nref}건(배달자 ${nown} · secrets/<ns> 자기 디렉터리 ${nself}) · secrets/<ns> ${ndir}개 중 배달자 포함 ${nin}개 · secrets/** 파일 ES ${nes_src}개 ↔ 배달자 렌더 ES ${nes_render}개"
+    msg3="secrets/ 경로 base 참조 ${nref}건(배달자 ${nown} · secrets/<ns> 자기 디렉터리 ${nself}) · secrets/<ns> ${ndir}개 중 배달자 포함 ${nin}개 · secrets/** 파일 ES ${nes_src}개 ↔ 배달자 렌더 ES ${nes_render}개 · 배달자·secrets/** kustomization ${nkey}개 변환 키 없음"
     [[ $owner_rendered == 1 ]] || msg3+=" · 배달자 렌더 0(kustomize 없음이거나 배달자가 없는 트리 — 파일 단위 죽은 선언·소유자 대조는 돌지 않았다)"
     [[ $nskip -eq 0 ]] || msg3+=" · 배달자 구조가 아닌 트리라 완전성 검사 제외 ${nskip}개"
     finish_group "7.3 WAVE-secrets-base" "$msg3" "$f3"

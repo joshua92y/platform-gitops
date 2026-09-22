@@ -90,7 +90,9 @@ positive_asserts=('+[PASS] 2 APP-SSA' '+[PASS] 3 ES' '+[PASS] 3.5 ES-⑤⑥' '+[
   '+결과: PASS' '-[FAIL]')
 if command -v kustomize >/dev/null 2>&1 && command -v kubeconform >/dev/null 2>&1; then
   # 5.6 PASS 줄의 소스 수는 kustomize 유무로 갈린다(SKIP 모드에서는 "렌더 0" — 한계 절 참조)
-  positive_asserts+=('+[PASS] 1 KUST' '+[PASS] 1b KUST-plain' '+ExternalSecret 23개(파일+렌더링)'
+  # ES 수: `secrets/<ns>`의 ES는 파일 · 자기 디렉터리 렌더 · 배달자 렌더로 3번 세어진다 —
+  # 배달자에 ns를 하나 더하면 +3이다(T045 G4에서 두 번째 ns를 더해 23 → 26).
+  positive_asserts+=('+[PASS] 1 KUST' '+[PASS] 1b KUST-plain' '+ExternalSecret 26개(파일+렌더링)'
     '+webhook 정책을 담은 소스: 원본 1 · 렌더 1')
 else
   positive_asserts+=('+webhook 정책을 담은 소스: 원본 1 · 렌더 0')
@@ -273,6 +275,23 @@ run_case secrets-owner-no-app "$FIX/secrets-owner/no-app" 1 \
 #   no-owner: 배달자가 통째로 없는 트리 — "배달자 … 가 없음" 가지를 문구로 고정한다
 run_case secrets-owner-no-owner "$FIX/secrets-owner/no-owner" 1 \
   "+[FAIL] 7.3 WAVE-secrets-base — secrets/cert-manager/: 배달자 platform/secrets/kustomization.yaml 가 없음 — 이 디렉터리를 적용하는 Application이 없다(죽은 선언)" \
+  '-[FAIL] 7.3 WAVE-secrets-base — Application 없음'
+# 7.3 (e) 변환 키 금지(T045 G4 · 계약 §validate.yml 4 「배달자는 base를 묶기만 한다」). 두 트리로 양쪽 경로를 덮는다.
+#   deliverer-patch: 배달자에 `patches:` — 원본 파일은 정상이고 **Argo가 적용하는 렌더에서만** creationPolicy가 Owner가 되고
+#     remoteRef.key가 DNS 토큰 경로로 바뀐다. store도 키 접두도 그대로라 **3.2는 잡지 못한다**(음성 단언으로 고정한다 —
+#     이것이 구조 금지가 필요한 이유다). 다른 갈래((b)(c))도 걸리지 않아야 한다.
+run_case secrets-owner-deliverer-patch "$FIX/secrets-owner/deliverer-patch" 1 \
+  "+[FAIL] 7.3 WAVE-secrets-base — platform/secrets/kustomization.yaml: 최상위 키 'patches' 금지 — 허용은 [\"apiVersion\",\"kind\",\"resources\"] 뿐이다" \
+  '-[FAIL] 3.2 ES-②' \
+  '-렌더에 없다' \
+  '-배달자 밖 소스에도 있다' \
+  '-[FAIL] 7.3 WAVE-secrets-base — Application 없음'
+#   ns-transform: `secrets/<ns>`에 `namePrefix` — 허용 키 4개(`namespace`까지)를 벗어난다. 이름까지 바뀌므로
+#     (c)「죽은 선언」도 함께 걸린다(원본 ES 이름이 배달자 렌더에 없다) — 두 줄을 모두 고정한다.
+run_case secrets-owner-ns-transform "$FIX/secrets-owner/ns-transform" 1 \
+  "+[FAIL] 7.3 WAVE-secrets-base — secrets/cloudflared/kustomization.yaml: 최상위 키 'namePrefix' 금지 — 허용은 [\"apiVersion\",\"kind\",\"resources\",\"namespace\"] 뿐이다" \
+  "+[FAIL] 7.3 WAVE-secrets-base — secrets/cloudflared/externalsecret.yaml ExternalSecret 'cloudflared-tunnel': platform/secrets 렌더에 없다" \
+  "-최상위 키 'patches' 금지" \
   '-[FAIL] 7.3 WAVE-secrets-base — Application 없음'
 
 # --- gitleaks: 대상 0개 = FAIL --------------------------------------------------

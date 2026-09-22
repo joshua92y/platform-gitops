@@ -9,9 +9,10 @@ Cloudflare 터널 커넥터(`joshuatech-tunnel`)의 클러스터 쪽 배포. 터
 | `kustomization.yaml` | `namespace: cloudflared` + `deployment.yaml`. 이 디렉터리가 만들지 않는 것(ns·Application·Secret)의 경계가 머리 주석에 있다 |
 | `deployment.yaml` | replica 2(노드 A·B 각 1, required anti-affinity), 이미지 digest 핀, `TUNNEL_TOKEN` secretKeyRef, restricted securityContext |
 
-- **이 저장소에 비밀은 없다.** 터널 토큰은 운영자 비밀번호 관리자(→ T045 뒤 Vault `kv/platform/cloudflare/tunnel`)에만 있다.
+- **이 저장소에 비밀은 없다.** 터널 토큰은 Vault `kv/platform/cloudflare/tunnel`(필드 `token`)과 운영자 비밀번호 관리자에만 있다 —
+  T045 G4부터 라이브 Secret의 관리 주체는 ExternalSecret이다(⑨).
 - 순서: ① ns 수동 생성 → ② Secret 수동 생성 → ③ 수동 apply → **(터널 동작 확인)** → ⑤⑥ 워크스테이션 접속 전환 → ⑧ 임시 22 규칙 제거 →
-  (T041) ④ Argo CD 인수 확인 → (T045) ⑨ ExternalSecret 전환. ⑦은 세션마다 반복한다.
+  (T041) ④ Argo CD 인수 확인 → (T045) ⑨ ExternalSecret 인수. ⑦은 세션마다 반복한다.
 
 ---
 
@@ -34,6 +35,9 @@ kubectl get namespace cloudflared -o jsonpath='{.metadata.labels}'; echo
 
 ## ② 최초 Secret 수동 생성 (값은 저장소에 없다)
 
+⚠ **이 절차는 콜드 부트스트랩과 인수 해제 뒤 복구 전용이다 — T045 G4 인수 뒤의 토큰 회전에는 쓰지 않는다.**
+Secret만 새 값으로 바꾸면 ESO가 ≤5분 안에 kv의 옛 값으로 되돌린다. 회전은 ⑨(kv 정정 → ESO 반영 확인 → 파드 1개씩 교체).
+
 Secret `cloudflared-tunnel`, 키 `TUNNEL_TOKEN`(=`deployment.yaml`의 `secretKeyRef`). 값은 비밀번호 관리자의 터널 실행 토큰.
 
 **금지**: `--from-literal=TUNNEL_TOKEN=<값>`(토큰이 명령줄 → 셸 히스토리와 `ps` 출력에 남는다) ·
@@ -42,8 +46,10 @@ Secret `cloudflared-tunnel`, 키 `TUNNEL_TOKEN`(=`deployment.yaml`의 `secretKey
 
 ### 워크스테이션(Windows/PowerShell) — 기본 경로, 임시 파일 없음
 
-파이프로만 넘기므로 토큰이 디스크에 닿지 않는다. `apply --server-side`라 회전 시 재실행해도 되고,
+파이프로만 넘기므로 토큰이 디스크에 닿지 않는다. `apply --server-side`라 재실행해도 멱등이고,
 `last-applied-configuration` 어노테이션(토큰 사본)이 생기지 않는다.
+⚠ T045 G4 뒤에는 이 절차가 **회전 수단이 아니다** — Secret만 바꾸면 ESO가 ≤5분 안에 kv 값으로 되돌린다.
+회전은 ⑨의 순서(kv 먼저)를 따르고, 이 절차는 콜드 부트스트랩과 인수 해제(⑨ · `../secrets/README.md` §5) 뒤 복구에만 쓴다.
 
 ```powershell
 Set-PSReadLineOption -HistorySaveStyle SaveNothing      # 이 세션 히스토리 저장 끄기
@@ -228,41 +234,71 @@ oci network nsg rules list --nsg-id <nsg-cluster OCID> --all --query 'length(dat
 - `tofu plan`이 깨끗한 것은 증명이 되지 않는다 — OpenTofu가 만들지 않은 규칙은 상태에 없다. 반드시 `nsg rules list`로 확인한다.
 - 제거 뒤 SSH 경로는 터널뿐이다. 터널이 죽으면 다시 예외 규칙을 여는 것이 break-glass 절차다(런북).
 
-## ⑨ T045 뒤 ExternalSecret 전환 (예고)
+## ⑨ ExternalSecret 인수 (T045 G4)
 
-> ⚠ **2026-09-17 정정(T045 G0) — 아래에 있던 옛 전환 순서("수동 Secret을 지운다 → ExternalSecret 머지 → `rollout restart`")는 폐기했다. 실행하지 않는다.**
-> 이 Secret은 SSH·K8s API의 유일한 접근 경로(터널)의 자격이다. 지운 채로 파드가 교체되면 운영자가 잠긴다.
-> T045 설계의 확정 방식: **기존 Secret을 지우지 않고** ExternalSecret(`creationPolicy: Orphan` · `deletionPolicy: Retain`)이 인수한다.
-> 값은 라이브 Secret에서 Vault로 파이프 복사해 바이트 동일성을 먼저 보장하고, 인수 전후 UID·값 해시·ownerReferences 부재를 확인하며,
-> `rollout restart`는 하지 않는다(파드 1개만 교체하는 드릴로 확인). 정확한 매니페스트와 절차는 T045의 `secrets/cloudflared/` PR(G4)과
-> 모노레포 `docs/runbooks/bootstrap.md` §3 T045 절이 정본이며, 그 PR이 이 절을 최종 문면으로 교체한다.
+Secret `cloudflared-tunnel`(키 `TUNNEL_TOKEN`)의 관리 주체는 **G4 머지 시점부터 ExternalSecret
+`cloudflared/cloudflared-tunnel`**이다. 매니페스트 정본은 `../../secrets/cloudflared/externalsecret-cloudflared-tunnel.yaml`,
+적용 주체는 Application `platform-secrets`(`../secrets/README.md`), 값의 정본은 Vault `kv/platform/cloudflare/tunnel`의
+필드 `token`이다. **이 디렉터리는 바뀌지 않는다** — `deployment.yaml`은 전과 같은 이름·키의 Secret을 같은 `secretKeyRef`로
+계속 읽는다(G4의 렌더는 main과 바이트 동일하다).
 
-ESO와 `ClusterSecretStore vault-platform`이 생기면(T045) 수동 Secret을 `secrets/cloudflared/`의 ExternalSecret이 **인수**한다.
-전환 후에도 `deployment.yaml`은 그대로다(같은 Secret 이름·키를 본다).
+> ⚠ **폐기된 옛 지시(2026-09-17 T045 G0에서 정정).** 여기 있던 "수동 Secret을 지운다 → ExternalSecret 머지 →
+> `rollout restart`"는 **실행하지 않는다.** 이 Secret은 SSH·K8s API의 유일한 접근 경로(터널)의 자격이라, 지운 채 파드가
+> 교체되면 운영자가 잠긴다. 확정 방식은 **삭제 없는 인수**다(`creationPolicy: Orphan` · `deletionPolicy: Retain` —
+> ownerReference를 만들지 않는다): 라이브 Secret의 값을 Vault로 파이프 복사해 바이트 동일성을 먼저 보장하고(시드 —
+> 2026-09-21 완료), 인수 전후 **값 해시 불변 · UID 불변 · ownerReferences 없음 · 파드 이름·`restartCount` 불변**을 확인하며,
+> `rollout restart` 대신 **파드 1개만** 교체하는 드릴로 새 자격이 도는 것을 본다. 판정 항목은 `../secrets/README.md` §1·§2,
+> 실행 블록의 정본은 모노레포 `specs/003-platform-foundation/design/t045-blocks/g4/`의 **`g4-adopt.ps1`**(캡처·머지 대기·판정,
+> **클러스터 쓰기 0건**) · **`g4-drill.ps1`**(별도 입회 후 파드 1개 교체) · **`g4-restore.ps1`**(인수 해제 뒤 값 복구)과
+> 런북 `docs/runbooks/bootstrap.md` §3 T045 절이다. adopt의 **값 해시·UID**를 drill에서 다시 검증한다.
+> drill을 두 번 실행하면 옛 값을 든 커넥터의 안전망이 사라질 수 있으므로 자동 재실행하지 않는다.
+> 드릴 뒤에는 남은 파드 미접촉뿐 아니라 **창 A SSH 세션이 여전히 연결되는지**도 확인한다.
 
-```yaml
-# secrets/cloudflared/externalsecret.yaml — T045에서 추가한다(지금은 없다)
-apiVersion: external-secrets.io/v1
-kind: ExternalSecret
-metadata:
-  name: cloudflared-tunnel
-  namespace: cloudflared
-spec:
-  refreshInterval: 5m
-  secretStoreRef: { kind: ClusterSecretStore, name: vault-platform }
-  target: { name: cloudflared-tunnel, creationPolicy: Orphan, deletionPolicy: Retain }   # 확정 매니페스트는 G4 PR
-  data:
-    - secretKey: TUNNEL_TOKEN
-      remoteRef: { key: platform/cloudflare/tunnel, property: token }
-```
+**토큰 회전(T084)의 순서 — kv가 먼저다.**
 
-전환 순서(요약 — 정본은 위 정정문이 가리키는 곳):
+0. **시작 전.** ES `cloudflared-tunnel`이 `Ready=True`/`SecretSynced`다 — **Vault·ESO가 불가한 동안에는 Cloudflare에서
+   토큰을 Refresh하지 않는다**(G4 뒤로는 복구가 kv → ESO 경로에 의존한다). Secret의 `…/data-hash` 값을 **먼저 적어 둔다**
+   (2단계의 비교 기준이다). 노드 A SSH 세션과 OCI break-glass도 G4와 같이 확인한다.
+   > ⚠ Cloudflare에서 새 토큰을 발급(**Refresh**)하면 그 순간부터 **옛 토큰으로는 새 연결을 맺지 못한다**(기존 연결만
+   > 유지된다 — **Cloudflare 문서 기준 · 실측은 T084 VD**). 즉 라이브 Secret은 그때부터 죽은 자격이므로 1–3을
+   > **같은 창에서** 끝낸다. Cloudflare 문서의 'compromised token' 순서(연결 전부 삭제 · `cloudflared tunnel cleanup` ·
+   > 대시보드 connector 삭제)는 **두 파드가 모두 새 토큰으로 Ready·Registered인 것을 확인한 뒤에만** 한다 —
+   > 먼저 하면 두 커넥터가 한꺼번에 끊기고 kv를 고칠 경로까지 사라진다.
+1. **Vault kv를 정정한다**(`kv/platform/cloudflare/tunnel`의 `token`). 시드 블록이 아니라 모노레포
+   `specs/003-platform-foundation/design/t045-blocks/kv-correct.ps1`(정정 블록 — 런북 `bootstrap.md` §3 T045 절이
+   가리킨다)을 쓴다 — 시드 블록은 값이 이미 있으면 덮어쓰기를 거부하는 것이 설계다.
+2. **ESO 반영을 확인한다**(≤5분 — `refreshInterval: 5m`). Secret의 `…/data-hash`가 **0단계에 적어 둔 값과 달라졌고**
+   ES가 `Ready=True`다(둘을 함께 본다 — Vault 불가로 `SecretSyncedError`인 상태와 구분하기 위해서다).
+3. **파드를 1개씩 수동으로 교체한다.** env는 컨테이너가 시작할 때마다 다시 읽히므로, 교체 전까지 도는 커넥터는 마지막
+   시작 시점의 옛 토큰으로 동작한다. 앞 파드가 Ready이고 로그에 `Registered tunnel connection`이 찍힌 것을 본 뒤 다음
+   파드로 넘어간다 — **반대쪽 커넥터가 살아 있는 동안에만** 교체한다. **`rollout restart` 금지**: 두 커넥터를 동시에
+   교체하면 새 토큰이 틀렸을 때 복구할 손이 함께 끊긴다.
+   첫 파드가 Ready가 되지 않으면 **두 번째 파드는 건드리지 않고** kv를 다시 정정한다(실패한 파드는 kubelet이 컨테이너를
+   재시작할 때마다 Secret을 다시 읽으므로, kv만 고쳐 두면 스스로 회복한다).
 
-1. 라이브 Secret의 값을 Vault `kv/platform/cloudflare/tunnel`(키 `token`)로 파이프 복사하고 해시로 동일성을 확인한다(T045 시드 창).
-2. **수동 Secret은 지우지 않는다.** ExternalSecret을 머지하면 ESO가 같은 이름의 Secret을 인수한다(Orphan — ownerReference 없음).
-3. 인수 전후 Secret UID·값 해시가 같고 `ownerReferences`가 비어 있는지 확인한다. `rollout restart`는 하지 않는다.
-4. 파드 1개만 삭제해 새 파드가 같은 자격으로 터널에 등록되는지 본다(반대쪽 커넥터가 살아 있는 동안).
-   이 Deployment에는 `reloader.stakater.com/auto` 어노테이션이 없다(T046의 감시 대상 목록에도 없다) → 토큰 **회전** 때는 파드를 1개씩 수동으로 교체한다.
+- 이 Deployment에는 `reloader.stakater.com/auto` 어노테이션이 **없고** T046의 감시 대상 목록에도 넣지 않는다 —
+  그 수동성이 안전장치다(자동 재시작이 붙으면 잘못된 kv 값이 두 커넥터를 한꺼번에 교체한다).
+- ⚠ **Secret만 새 값으로 바꾸는 것은 회전이 아니다** — ESO가 다음 주기(≤5분)에 kv의 **옛(폐기된) 값**으로 되돌리고,
+  증상은 그때가 아니라 **다음 파드 교체 또는 컨테이너 재시작**에서야 나타난다. 값 문제의 복구 1순위도 같은 이유로 kv 정정이다.
+- ⚠ **env는 컨테이너가 시작할 때마다 다시 읽힌다** — 파드 교체뿐 아니라 같은 파드 안의 제자리 재시작(liveness `/ready`
+  10s × 6 실패 · OOMKill · 크래시 · 노드 재부팅 = 파드 이름 그대로, `restartCount`만 증가)도 포함이다. 그래서 "지금 도는
+  커넥터가 옛 값을 들고 있다"는 안전망은 **재시작되지 않는 동안만** 유효하다. 값이 틀린 상태는 **시한 상태**이므로
+  복구를 미루지 않고, 그동안 노드 재부팅·SUC Plan·drain을 하지 않는다(edge 단절이 ≈60초 이어지면 두 커넥터가 파드 교체
+  없이 거의 동시에 재시작한다).
+- 인수 자체를 해제해야 하면(ES는 없애고 Secret은 남긴다) 순서가 있다: revert PR 머지 → Argo 반영 확인 →
+  `kubectl -n cloudflared delete externalsecret cloudflared-tunnel` → Secret 잔존·UID·값(해시) 확인 →
+  **값이 깨졌으면 복구하고 해시를 다시 확인** → (값을 복구한 경우에만) 파드 **1개**씩 교체.
+  전문은 `../secrets/README.md` §5다(`prune: false`라 파일 revert만으로는 해제되지 않는다).
+- ⚠ Secret이 지워졌을 때의 재생성은 **다음 주기 refresh**다(최대 5분 · 2026-09-21 DR1 실측 302초). 그 창에서 실행 중
+  커넥터는 무영향이지만(**재시작되지 않는 한** — 재시작하면 Secret이 재생성될 때까지 `CreateContainerConfigError`),
+  **새 파드는 시작하지 못한다**.
+
+**콜드 부트스트랩(클러스터를 처음부터 다시 올릴 때)의 순서는 그대로다.**
+① 이 README ①②③대로 네임스페이스·**수동 Secret**·cloudflared를 **먼저** 올린다(그것이 운영자의 유일한 SSH·kubectl 경로다) →
+② Vault init·unseal(런북 `vault-unseal.md`) → kv 시드 → ③ 그 뒤에야 ESO가 이 Secret을 **인수**한다.
+즉 **ExternalSecret은 부트스트랩의 시작점이 아니라 인수 단계**다. root는 `platform-cloudflared`까지 한 번에 가지 못하고
+실제로 기다리는 곳은 Vault(init·unseal 전에는 Progressing)이며, kv 시드 순서는 Argo가 아니라 런북 절차가 보장한다
+(`../secrets/README.md` §4).
 
 ---
 
