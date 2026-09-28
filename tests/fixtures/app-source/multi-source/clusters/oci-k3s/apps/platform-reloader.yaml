@@ -1,0 +1,26 @@
+# 부정 픽스처 7.4 APP-source-multi(multi-source) — Application `platform-reloader`를 multi-source(`spec.sources`)로 바꾸고 두 번째
+#   source로 다른 경로(`platform/cloudflared`)를 더했다. 7.1은 첫 source의 path만 보므로 PASS다(이름·경로·wave 그대로). 원소마다
+#   저장소·리비전·오버라이드를 따로 둘 수 있어 Argo가 적용하는 렌더가 validate가 빌드한 렌더와 갈린다.
+#   7.4 APP-source-multi만 FAIL해야 한다(부분 트리 — 단언은 7.4 줄과 `-[PASS] 7.4 APP-source`다).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-reloader
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "60"
+spec:
+  project: platform
+  sources:
+    - repoURL: https://github.com/joshua92y/platform-gitops.git
+      targetRevision: main
+      path: platform/reloader
+    - repoURL: https://github.com/joshua92y/platform-gitops.git
+      targetRevision: main
+      path: platform/cloudflared
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: reloader
+  syncPolicy:
+    automated: { prune: false, selfHeal: true }
+    syncOptions: [ServerSideApply=true, CreateNamespace=true, Prune=confirm, Delete=confirm, SkipDryRunOnMissingResource=true]

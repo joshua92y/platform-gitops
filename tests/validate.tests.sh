@@ -5,6 +5,8 @@
 # tests/fixtures/<case>/ 마다 validate.sh를 --root 로 돌려 기대 exit 코드와 메시지(있어야/없어야)를 단언한다.
 #   - positive/            : 계약을 만족하는 최소 완전 트리 → exit 0
 #   - 그 밖의 디렉터리      : 검사 항목별 부정 픽스처(각 항목이 실제로 FAIL 코드를 내는 최소 예시) → exit 1 + 코드
+#                            ⚠ 부분 트리 픽스처의 exit 1은 판정 근거가 아니다 — 무관한 검사(5.x 등)도 FAIL하므로 결함이 없어도 1이다.
+#                            근거는 그 하위 검사에 고유한 `+[FAIL] <코드> — …` 단언과, 그룹 PASS 줄이 없다는 `-[PASS] <코드>` 음성 단언이다
 #   - author/*.diff        : 검사 6(봇 작성자) 입력 — positive 트리 위에서 환경변수로 넘긴다
 # 실제 트리 검사(validate.sh 기본 실행)는 tests/ 를 제외하므로 픽스처가 실제 결과에 섞이지 않는다.
 #
@@ -12,6 +14,11 @@
 # 대부분의 단언이 성립할 수 없으므로 즉시 실패한다(fail-closed). VALIDATE_TESTS_REQUIRE_TOOLS=1 또는 CI=true 이면
 # 도구 누락 시 SKIP 모드로 내려가지 않고 exit 1 (CI에서 조용히 불완전한 결과가 통과하지 않도록).
 # 각 케이스는 env -u 로 작성자 관련 환경변수를 지우고 시작한다(CI의 GITHUB_EVENT_NAME 등이 새지 않도록).
+#
+# 부분 실행: VALIDATE_TESTS_ONLY='<bash 확장 정규식>'이면 이름이 맞는 케이스만 돌리고 나머지는 건너뛴다(건너뛴 수를 센다).
+#   요약 줄이 "부분 실행 — 필터 '…' · 건너뜀 N"을 드러내고, 맞는 케이스가 0개면 exit 1이다(빈 실행을 통과로 읽지 않는다).
+#   예: VALIDATE_TESTS_ONLY='^(positive|app-source-)' bash tests/validate.tests.sh
+#   ⚠ 부분 실행은 반복 작업용이다 — PR·과제 마무리 판정은 필터 없는 전체 실행으로 한다(tests/README.md). 비어 있으면 필터 없음.
 # =============================================================================
 set -euo pipefail
 
@@ -42,8 +49,33 @@ fi
 N=0; NF=0
 FAILED=()
 
+# 부분 실행 필터(머리 주석 「부분 실행」). 정규식이 틀리면 조용히 0건이 되지 않도록 먼저 거른다([[ =~ ]]는 2를 돌려준다).
+ONLY=${VALIDATE_TESTS_ONLY:-}
+NSKIP=0
+if [[ -n $ONLY ]]; then
+  # 부분 실행은 반복 작업용이다. CI와 판정용 실행(도구 누락 규칙과 같은 두 스위치)에서는 부분 실행의 exit 0이 "전체 통과"로
+  # 읽히지 않도록 아예 실행하지 않는다(2026-09-28 범위 한정 검증 DV-4).
+  if [[ ${VALIDATE_TESTS_REQUIRE_TOOLS:-0} == 1 || ${CI:-} == true ]]; then
+    printf "VALIDATE_TESTS_ONLY='%s' — VALIDATE_TESTS_REQUIRE_TOOLS=1/CI=true 에서는 부분 실행을 허용하지 않는다(exit 1)\n" "$ONLY"
+    exit 1
+  fi
+  only_rc=0
+  [[ '' =~ $ONLY ]] || only_rc=$?
+  if [[ $only_rc == 2 ]]; then
+    printf "VALIDATE_TESTS_ONLY='%s'는 bash 확장 정규식이 아니다 — 실행하지 않는다(exit 1)\n" "$ONLY"
+    exit 1
+  fi
+fi
+# selected <케이스 이름> — 필터가 없거나 이름이 맞으면 0. 아니면 건너뜀을 세고 1
+selected() {
+  if [[ -z $ONLY ]] || [[ $1 =~ $ONLY ]]; then return 0; fi
+  NSKIP=$((NSKIP + 1))
+  return 1
+}
+
 # run_case <이름> <root> <기대 exit> [--env K=V]... [+있어야 할 문자열 | -있으면 안 되는 문자열]...
 run_case() {
+  selected "$1" || return 0
   local name=$1 root=$2 want=$3; shift 3
   local -a envs=() asserts=()
   while [[ $# -gt 0 ]]; do
@@ -86,6 +118,7 @@ positive_asserts=('+[PASS] 2 APP-SSA' '+[PASS] 3 ES' '+[PASS] 3.5 ES-⑤⑥' '+[
   '+[PASS] 5.1 POL-ns' '+[PASS] 5.2 POL-set' '+[PASS] 5.3 POL-egress' '+[PASS] 5.4 POL-port' '+[PASS] 5.5 POL-limitrange'
   '+[PASS] 5.6 POL-webhook-src'
   '+[PASS] 6 AUTHOR' '+[PASS] 7.1 WAVE' '+[PASS] 7.2 WAVE-dir' '+[PASS] 7.3 WAVE-secrets-base'
+  '+[PASS] 7.4 APP-source — Application 24개(파일+렌더링) spec.source 키 = {path, repoURL, targetRevision}'
   '+[PASS] 9.1 CSS-set' '+[PASS] 9.2 CSS-auth' '+[PASS] 9.3 CSS-k8s' '+[PASS] 9.4 CSS-conditions'
   '+결과: PASS' '-[FAIL]')
 if command -v kustomize >/dev/null 2>&1 && command -v kubeconform >/dev/null 2>&1; then
@@ -93,7 +126,10 @@ if command -v kustomize >/dev/null 2>&1 && command -v kubeconform >/dev/null 2>&
   # ES 수: `secrets/<ns>`의 ES는 파일 · 자기 디렉터리 렌더 · 배달자 렌더로 3번 세어진다 —
   # 배달자에 ns를 하나 더하면 +3이다(T045 G4에서 두 번째 ns를 더해 23 → 26).
   positive_asserts+=('+[PASS] 1 KUST' '+[PASS] 1b KUST-plain' '+ExternalSecret 26개(파일+렌더링)'
-    '+webhook 정책을 담은 소스: 원본 1 · 렌더 1')
+    '+webhook 정책을 담은 소스: 원본 1 · 렌더 1'
+    # 검사 10(T046): 긍정 트리의 platform/reloader는 순수 매니페스트라 helm 없이 렌더된다(kustomize만 필요).
+    #   ⚠ VD-9 시험 대상 제거 PR(G2)에서 `Deployment 2`·`합계 13`·`vd9-probe ns jt-dev`가 바뀐다(platform/reloader/README.md §4)
+    '+[PASS] 10 REL — platform/reloader (rendered): ClusterRole·ClusterRoleBinding 0 · Deployment reloader/reloader args = ["--log-level=info","--namespaces=identity,jt-dev,jt-prod,reloader","--reload-strategy=annotations"] · kind {ServiceAccount 1 · Deployment 2 · Role 5 · RoleBinding 5}(합계 13) · vd9-probe ns jt-dev · Role·RoleBinding ns 집합 = {identity,jt-dev,jt-prod,reloader} · RoleBinding → 같은 ns의 Role · 주체 = ServiceAccount reloader/reloader · reloader-role 규칙 동일·와일드카드 없음 · Reloader 이미지 컨테이너 1개(containers.0 · command 없음)')
 else
   positive_asserts+=('+webhook 정책을 담은 소스: 원본 1 · 렌더 0')
 fi
@@ -294,6 +330,35 @@ run_case secrets-owner-ns-transform "$FIX/secrets-owner/ns-transform" 1 \
   "-최상위 키 'patches' 금지" \
   '-[FAIL] 7.3 WAVE-secrets-base — Application 없음'
 
+# --- 7.4: Application은 source를 덮어쓰지 않는다(T046 · 계약 §validate.yml 4 「(T046)」 둘째 줄) ---------------
+# 다섯 트리 모두 부분 트리다(Application 파일 하나 — source-file은 거기에 `.argocd-source*.yaml` 둘) — exit 1은 5.x 등 무관한 FAIL로도 나므로 판정 근거가 아니다.
+# 근거는 그 하위 코드의 `+[FAIL]` 단언과 `-[PASS] 7.4 APP-source`(그룹이 통과하지 않았음) 음성 단언이다(2026-09-28 검증 V-A7).
+run_case app-source-kustomize-patches "$FIX/app-source/kustomize-patches" 1 \
+  "+[FAIL] 7.4 APP-source — clusters/oci-k3s/apps/platform-reloader.yaml Application/platform-reloader: spec.source 키 [kustomize,path,repoURL,targetRevision] ≠ {path, repoURL, targetRevision}" \
+  '-[PASS] 7.4 APP-source' '-[FAIL] 7.4 APP-source-multi' '-[FAIL] 7.4 APP-source-ref' '-[FAIL] 2 APP-SSA' '-[FAIL] 7.1'
+run_case app-source-multi-source "$FIX/app-source/multi-source" 1 \
+  "+[FAIL] 7.4 APP-source-multi — clusters/oci-k3s/apps/platform-reloader.yaml Application/platform-reloader: spec.sources(multi-source) 금지" \
+  '-[PASS] 7.4 APP-source' '-[FAIL] 7.4 APP-source —' '-[FAIL] 7.4 APP-source-ref' '-[FAIL] 2 APP-SSA' '-[FAIL] 7.1'
+run_case app-source-ref "$FIX/app-source/ref" 1 \
+  "+[FAIL] 7.4 APP-source-ref — clusters/oci-k3s/apps/platform-reloader.yaml Application/platform-reloader: spec.source.repoURL 'https://github.com/someone-else/platform-gitops.git' ≠ https://github.com/joshua92y/platform-gitops.git" \
+  "+[FAIL] 7.4 APP-source-ref — clusters/oci-k3s/apps/platform-reloader.yaml Application/platform-reloader: spec.source.targetRevision 'some-unreviewed-branch' ≠ main" \
+  '-[PASS] 7.4 APP-source' '-[FAIL] 7.4 APP-source —' '-[FAIL] 7.4 APP-source-multi' '-[FAIL] 2 APP-SSA' '-[FAIL] 7.1'
+# `spec.source`를 건드리지 않고 적용 렌더를 바꾸는 두 경로(2026-09-28 재검증 RB-1 — Argo CD v3.5.2 소스 판독, 라이브 미실측).
+#   source-file: Application은 정상(키 3개)이고 source 경로 안에 `.argocd-source.yaml` · `.argocd-source-<앱 이름>.yaml`이 있다
+#   — Argo가 두 파일을 source 파라미터에 합친다. 파일마다 7.4 APP-source-file 한 줄, 다른 7.4 코드는 없어야 한다.
+run_case app-source-source-file "$FIX/app-source/source-file" 1 \
+  "+[FAIL] 7.4 APP-source-file — platform/reloader/.argocd-source-platform-reloader.yaml: " \
+  "+[FAIL] 7.4 APP-source-file — platform/reloader/.argocd-source.yaml: " \
+  '-[PASS] 7.4 APP-source' '-[FAIL] 7.4 APP-source —' '-[FAIL] 7.4 APP-source-multi' '-[FAIL] 7.4 APP-source-ref' '-[FAIL] 7.4 APP-source-hydrator' '-[FAIL] 2 APP-SSA' '-[FAIL] 7.1'
+#   hydrator: `spec.source`는 키 3개 그대로인데 `spec.sourceHydrator`가 있다 — Argo는 `spec.source`보다 hydrator의 syncSource를 먼저 쓴다.
+run_case app-source-hydrator "$FIX/app-source/hydrator" 1 \
+  "+[FAIL] 7.4 APP-source-hydrator — clusters/oci-k3s/apps/platform-reloader.yaml Application/platform-reloader: spec.sourceHydrator 금지" \
+  '-[PASS] 7.4 APP-source' '-[FAIL] 7.4 APP-source —' '-[FAIL] 7.4 APP-source-multi' '-[FAIL] 7.4 APP-source-ref' '-[FAIL] 7.4 APP-source-file' '-[FAIL] 2 APP-SSA' '-[FAIL] 7.1'
+#   operation: `spec.source`는 키 3개 그대로인데 문서 최상위에 `operation`이 있다 — 한 번의 동기화 source를 바꾼다(DV-1).
+run_case app-source-operation "$FIX/app-source/operation" 1 \
+  "+[FAIL] 7.4 APP-source-operation — clusters/oci-k3s/apps/platform-reloader.yaml Application/platform-reloader: 최상위 operation 금지" \
+  '-[PASS] 7.4 APP-source' '-[FAIL] 7.4 APP-source —' '-[FAIL] 7.4 APP-source-multi' '-[FAIL] 7.4 APP-source-ref' '-[FAIL] 7.4 APP-source-hydrator' '-[FAIL] 7.4 APP-source-file' '-[FAIL] 2 APP-SSA' '-[FAIL] 7.1'
+
 # --- gitleaks: 대상 0개 = FAIL --------------------------------------------------
 run_case gitleaks-empty "$FIX/gitleaks-empty" 1 \
   '+[FAIL] 8 LEAK-no-target — 스캔 대상 파일 0개'
@@ -338,6 +403,151 @@ run_case css-auth-conditions "$FIX/css-auth/conditions" 1 \
   "-[FAIL] 9.3 CSS-k8s-audience" \
   "-[FAIL] 9.3 CSS-k8s-default"
 
+# --- 검사 10: Reloader scoped 모드(T046 · 계약 §validate.yml 4 「(T046)」 첫째 줄) --------------------------
+# 트리마다 그 결함이 실제로 낳는 하위 코드만 걸려야 한다(음성 단언) — 한 결함이 무관한 코드로 번지면 원인 분리가 안 된다.
+# 모든 트리에 `-[PASS] 10 REL`을 건다: 부분 트리라 exit 1은 5.x 등 무관한 FAIL로도 나므로 판정 근거가 아니다(2026-09-28 검증 V-A7).
+# 10.2의 단서 줄(`단서 — …`)은 같은 코드로 찍히는 진단이다 — 결함 종류마다 그 단서가 있고 다른 단서는 없어야 한다.
+REL_L='platform/reloader (rendered)'
+REL_ARGS_FAIL="+[FAIL] 10.2 REL-args-exact — $REL_L Deployment/reloader/reloader: 첫 컨테이너 args ≠ 기대 목록(원소 수·순서·값 정확 일치 — 계약 §validate.yml 4 「(T046)」) — 실제 "
+REL_HINT="[FAIL] 10.2 REL-args-exact — $REL_L Deployment/reloader/reloader: 단서 — "
+REL_OK_ARGS='"--log-level=info","--namespaces=identity,jt-dev,jt-prod,reloader","--reload-strategy=annotations"'
+
+# (a) 차트 values 갈래 — 네 트리는 **실제 차트 2.2.16 렌더**로 FAIL을 낸다(values 한 줄만 다르고, 실제 트리와 같이 시험 대상
+#   `vd9-probe.yaml`을 포함한다) — helm과 네트워크(차트 pull)가 필요하다(tests/fixtures/pol-port와 같다. 풀린 차트는 픽스처 아래
+#   charts/에 남고 .gitignore 대상이다). helm이나 kustomize가 없으면 검사 10은 "도구 없음"(SKIP 또는 fail-closed FAIL)이 정답이다.
+#   (전역 모드는 ClusterRole·인자·kind 개수·감시 ns Role이 **함께** 바뀌므로 typo-parent는 10.1–10.4가 모두 걸리는 것이 정답이다.)
+if command -v kustomize >/dev/null 2>&1 && command -v helm >/dev/null 2>&1; then
+  #   typo-key: `watchGlobaly` 오타 → 차트의 fail 가드가 렌더를 멈춘다 → 판정할 렌더가 없으므로 fail-closed
+  run_case rel-scoped-typo-key "$FIX/rel-scoped/typo-key" 1 \
+    "+[FAIL] 1 KUST — kustomize build 실패: platform/reloader" \
+    "+[FAIL] 10.0 REL-render — platform/reloader 렌더 결과 없음 — kustomize build가 실패했다" \
+    '-[PASS] 10 REL' '-[FAIL] 10.1' '-[FAIL] 10.2' '-[FAIL] 10.3' '-[FAIL] 10.4'
+  #   typo-parent: 부모 키 `reloadr:` 오타 → 렌더 성공 + 전역 모드(ClusterRole·ClusterRoleBinding · args는 --log-level 하나 ·
+  #   감시 ns Role 없음 — 릴리스 ns의 reloader-metadata-role 한 쌍만 남는다)
+  run_case rel-scoped-typo-parent "$FIX/rel-scoped/typo-parent" 1 \
+    "+[FAIL] 10.1 REL-clusterrbac — $REL_L ClusterRole/reloader-role: scoped 모드는 ClusterRole·ClusterRoleBinding 0이어야 한다" \
+    "+[FAIL] 10.1 REL-clusterrbac — $REL_L ClusterRoleBinding/reloader-role-binding: scoped 모드는" \
+    "${REL_ARGS_FAIL}[\"--log-level=info\"](1개)" \
+    "+${REL_HINT}--namespaces 인자 없음: 전역 모드" \
+    "+${REL_HINT}--reload-strategy 인자 없음: 바이너리 기본 전략 env-vars" \
+    "+[FAIL] 10.3 REL-kinds — $REL_L: kind별 개수 불일치 [ClusterRole 1≠0, ClusterRoleBinding 1≠0, Role 1≠5, RoleBinding 1≠5]" \
+    "+[FAIL] 10.4 REL-rbac-ns — $REL_L: Role ns 집합 불일치 — 빠짐 [identity, jt-dev, jt-prod] 여분 []" \
+    "+[FAIL] 10.4 REL-rbac-ns — $REL_L: RoleBinding ns 집합 불일치 — 빠짐 [identity, jt-dev, jt-prod] 여분 []" \
+    "+[FAIL] 10.4 REL-rbac-rules — $REL_L: Role reloader-role 없는 ns [identity, jt-dev, jt-prod, reloader]" \
+    '-[PASS] 10 REL' '-[FAIL] 10.0' '-[FAIL] 1 KUST' '-[FAIL] 10.3 REL-probe' '-[FAIL] 10.4 REL-rbac-bind' '-[FAIL] 10.4 REL-image' \
+    "-${REL_HINT}'=' 없는 플래그" "-${REL_HINT}같은 플래그"
+  #   cloudflared: 감시 목록에 cloudflared 추가 → scoped 그대로(10.1 PASS)지만 인자 · Role·RoleBinding ns 집합 · 개수가 달라진다
+  run_case rel-scoped-cloudflared "$FIX/rel-scoped/cloudflared" 1 \
+    "${REL_ARGS_FAIL}[\"--log-level=info\",\"--namespaces=cloudflared,identity,jt-dev,jt-prod,reloader\",\"--reload-strategy=annotations\"](3개)" \
+    "+${REL_HINT}cloudflared가 든 인자 [\"--namespaces=cloudflared,identity,jt-dev,jt-prod,reloader\"]: 계약 위반 단서" \
+    "+[FAIL] 10.3 REL-kinds — $REL_L: kind별 개수 불일치 [Role 6≠5, RoleBinding 6≠5]" \
+    "+[FAIL] 10.4 REL-rbac-ns — $REL_L: Role ns 집합 불일치 — 빠짐 [] 여분 [cloudflared]" \
+    "+[FAIL] 10.4 REL-rbac-ns — $REL_L: RoleBinding ns 집합 불일치 — 빠짐 [] 여분 [cloudflared]" \
+    '-[PASS] 10 REL' '-[FAIL] 10.0' '-[FAIL] 10.1' '-[FAIL] 10.3 REL-probe' '-[FAIL] 10.4 REL-rbac-bind' '-[FAIL] 10.4 REL-rbac-rules' '-[FAIL] 10.4 REL-image' \
+    "-${REL_HINT}'=' 없는 플래그" "-${REL_HINT}같은 플래그"
+  #   env-vars: 전략만 다르다 — 목록 불일치 한 줄, 단서 없음
+  run_case rel-scoped-env-vars "$FIX/rel-scoped/env-vars" 1 \
+    "${REL_ARGS_FAIL}[\"--log-level=info\",\"--namespaces=identity,jt-dev,jt-prod,reloader\",\"--reload-strategy=env-vars\"](3개)" \
+    '-[PASS] 10 REL' '-[FAIL] 10.0' '-[FAIL] 10.1' '-[FAIL] 10.3' '-[FAIL] 10.4' "-${REL_HINT}"
+else
+  for c in typo-key typo-parent cloudflared env-vars; do
+    run_case "rel-scoped-$c" "$FIX/rel-scoped/$c" 1 '+10 REL — 도구 없음'
+  done
+fi
+#   no-deployment: 렌더는 성공하지만 Deployment가 없다(뼈대) → PASS가 아니라 fail-closed. helm 불필요
+no_dep_asserts=()
+if command -v kustomize >/dev/null 2>&1; then
+  no_dep_asserts+=("+[FAIL] 10.0 REL-render — platform/reloader (rendered): Deployment reloader/reloader 없음 — 인자를 판정할 대상이 없으므로 fail-closed" \
+    '-[PASS] 10 REL' '-[FAIL] 10.1' '-[FAIL] 10.2' '-[FAIL] 10.3' '-[FAIL] 10.4')
+else
+  no_dep_asserts+=('+[SKIP] 10 REL — 도구 없음(kustomize)')
+fi
+run_case rel-scoped-no-deployment "$FIX/rel-scoped/no-deployment" 1 "${no_dep_asserts[@]}"
+
+# (b) 순수 매니페스트 갈래 — 긍정 트리의 사본(deployment.yaml·rbac.yaml·vd9-probe.yaml)에 결함 하나씩을 더했다(helm·네트워크 불필요 —
+#   kustomize만. kustomize가 없으면 "도구 없음"이 정답이다). 앞의 넷(e1·e2·e3·e5)은 2026-09-22 독립 리뷰, 뒤의 열하나는 2026-09-28
+#   적대적 검증(V-A1·A3·A4·A5·A6·A8·A9)이 예전 검사에서 가짜 PASS(또는 단언 없는 분기)로 실측한 경로다.
+REL_PURE='second-deploy command second-container args-newline swallow-ns swallow-strategy extra-arg var-expansion args-order decoy-container image-registry rb-subject role-wildcard extra-kind probe-namespace'
+if command -v kustomize >/dev/null 2>&1; then
+  #   second-deploy(e1): 이름이 다른 두 번째 Reloader Deployment + cloudflared ns Role·RoleBinding(규칙 2개 — 다른 ns와 다르다)
+  run_case rel-scoped-second-deploy "$FIX/rel-scoped/second-deploy" 1 \
+    "+[FAIL] 10.4 REL-image — $REL_L: Reloader 이미지(…/stakater/reloader) 컨테이너 2개 [Deployment/reloader/reloader spec.template.spec.containers.0, Deployment/reloader/reloader-cf spec.template.spec.containers.0]" \
+    "+[FAIL] 10.4 REL-rbac-ns — $REL_L: Role ns 집합 불일치 — 빠짐 [] 여분 [cloudflared]" \
+    "+[FAIL] 10.4 REL-rbac-ns — $REL_L: RoleBinding ns 집합 불일치 — 빠짐 [] 여분 [cloudflared]" \
+    "+[FAIL] 10.3 REL-kinds — $REL_L: kind별 개수 불일치 [Deployment 3≠2, Role 6≠5, RoleBinding 6≠5]" \
+    "+[FAIL] 10.4 REL-rbac-rules — $REL_L Role/cloudflared/reloader-role: rules ≠ 다수 규칙(4/5장" \
+    '-[PASS] 10 REL' '-[FAIL] 10.0' '-[FAIL] 10.1' '-[FAIL] 10.2' '-[FAIL] 10.3 REL-probe' '-[FAIL] 10.4 REL-rbac-bind' '-command 있음' \
+    "-[FAIL] 10.4 REL-rbac-rules — $REL_L Role/identity/"
+  #   command(e2): Reloader 컨테이너의 command에 --namespaces=cloudflared
+  run_case rel-scoped-command "$FIX/rel-scoped/command" 1 \
+    "+[FAIL] 10.4 REL-image — $REL_L Deployment/reloader/reloader spec.template.spec.containers.0: command 있음" \
+    '-[PASS] 10 REL' '-[FAIL] 10.0' '-[FAIL] 10.1' '-[FAIL] 10.2' '-[FAIL] 10.3' '-[FAIL] 10.4 REL-rbac' '-Reloader 이미지(…/stakater/reloader) 컨테이너'
+  #   second-container(e3): 같은 파드에 두 번째 Reloader 컨테이너
+  run_case rel-scoped-second-container "$FIX/rel-scoped/second-container" 1 \
+    "+[FAIL] 10.4 REL-image — $REL_L: Reloader 이미지(…/stakater/reloader) 컨테이너 2개 [Deployment/reloader/reloader spec.template.spec.containers.0, Deployment/reloader/reloader spec.template.spec.containers.1]" \
+    '-[PASS] 10 REL' '-[FAIL] 10.0' '-[FAIL] 10.1' '-[FAIL] 10.2' '-[FAIL] 10.3' '-[FAIL] 10.4 REL-rbac' '-command 있음'
+  #   args-newline(e5): 개행이 든 인자 뒤의 두 번째 --namespaces= — JSON(이스케이프된 `\n`)으로 비교하므로 뒤 인자까지 보인다
+  run_case rel-scoped-args-newline "$FIX/rel-scoped/args-newline" 1 \
+    "+[FAIL] 10.0 REL-args — $REL_L Deployment/reloader/reloader: 첫 컨테이너 args 5개 중 1개에 제어 문자" \
+    "${REL_ARGS_FAIL}[${REL_OK_ARGS},\"--log-format=\n\",\"--namespaces=cloudflared\"](5개)" \
+    "+${REL_HINT}같은 플래그 2개 이상 [\"--namespaces ×2\"]: --namespaces는 목록이 **합쳐진다**(StringSlice" \
+    "+${REL_HINT}cloudflared가 든 인자 [\"--namespaces=cloudflared\"]" \
+    '-[PASS] 10 REL' '-[FAIL] 10.0 REL-render' '-[FAIL] 10.1' '-[FAIL] 10.3' '-[FAIL] 10.4' "-${REL_HINT}'=' 없는 플래그"
+  #   swallow-ns(V-A1 a01): 값 없는 --log-format이 --namespaces= 앞 — pflag가 뒤 인자를 삼켜 감시 목록이 빈다
+  run_case rel-scoped-swallow-ns "$FIX/rel-scoped/swallow-ns" 1 \
+    "${REL_ARGS_FAIL}[\"--log-level=info\",\"--log-format\",\"--namespaces=identity,jt-dev,jt-prod,reloader\",\"--reload-strategy=annotations\"](4개)" \
+    "+${REL_HINT}'=' 없는 플래그 [\"--log-format\"]: 값을 받는 플래그(문자열·목록)는 **다음 인자를 값으로 삼킨다**(pflag)" \
+    '-[PASS] 10 REL' '-[FAIL] 10.0' '-[FAIL] 10.1' '-[FAIL] 10.3' '-[FAIL] 10.4' "-${REL_HINT}같은 플래그" "-${REL_HINT}cloudflared" "-${REL_HINT}'\$('"
+  #   swallow-strategy(V-A1 a03): 값 없는 --pprof-addr가 --reload-strategy= 앞 — 전략이 바이너리 기본값이 된다
+  run_case rel-scoped-swallow-strategy "$FIX/rel-scoped/swallow-strategy" 1 \
+    "${REL_ARGS_FAIL}[\"--log-level=info\",\"--namespaces=identity,jt-dev,jt-prod,reloader\",\"--pprof-addr\",\"--reload-strategy=annotations\"](4개)" \
+    "+${REL_HINT}'=' 없는 플래그 [\"--pprof-addr\"]" \
+    '-[PASS] 10 REL' '-[FAIL] 10.0' '-[FAIL] 10.1' '-[FAIL] 10.3' '-[FAIL] 10.4' "-${REL_HINT}같은 플래그"
+  #   extra-arg(V-A9 a12): 여분 인자 --auto-reload-all=true — 목록 불일치 한 줄, 단서 없음
+  run_case rel-scoped-extra-arg "$FIX/rel-scoped/extra-arg" 1 \
+    "${REL_ARGS_FAIL}[${REL_OK_ARGS},\"--auto-reload-all=true\"](4개)" \
+    '-[PASS] 10 REL' '-[FAIL] 10.0' '-[FAIL] 10.1' '-[FAIL] 10.3' '-[FAIL] 10.4' "-${REL_HINT}"
+  #   var-expansion(V-A3 a04): args의 $(VAR) — kubelet이 펼친 뒤 --namespaces가 합쳐진다
+  run_case rel-scoped-var-expansion "$FIX/rel-scoped/var-expansion" 1 \
+    "${REL_ARGS_FAIL}[${REL_OK_ARGS},\"\$(RELOADER_EXTRA)\"](4개)" \
+    "+${REL_HINT}'\$(' 든 인자 [\"\$(RELOADER_EXTRA)\"]: kubelet 환경 변수 치환" \
+    '-[PASS] 10 REL' '-[FAIL] 10.0' '-[FAIL] 10.1' '-[FAIL] 10.3' '-[FAIL] 10.4' "-${REL_HINT}'=' 없는 플래그" "-${REL_HINT}같은 플래그"
+  #   args-order: 값·개수는 같고 순서만 다르다 — 목록 정확 일치라 FAIL(단서 없음)
+  run_case rel-scoped-args-order "$FIX/rel-scoped/args-order" 1 \
+    "${REL_ARGS_FAIL}[\"--namespaces=identity,jt-dev,jt-prod,reloader\",\"--log-level=info\",\"--reload-strategy=annotations\"](3개)" \
+    '-[PASS] 10 REL' '-[FAIL] 10.0' '-[FAIL] 10.1' '-[FAIL] 10.3' '-[FAIL] 10.4' "-${REL_HINT}"
+  #   decoy-container(V-A6 d05): containers[0]에 기대 args를 가진 미끼 → 10.2는 통과, REL-image 위치 판정만 잡는다
+  run_case rel-scoped-decoy-container "$FIX/rel-scoped/decoy-container" 1 \
+    "+[FAIL] 10.4 REL-image — $REL_L: Reloader 이미지 컨테이너가 'Deployment/reloader/reloader spec.template.spec.containers.1'에 있다" \
+    '-[PASS] 10 REL' '-[FAIL] 10.0' '-[FAIL] 10.1' '-[FAIL] 10.2' '-[FAIL] 10.3' '-[FAIL] 10.4 REL-rbac' '-이미지 저장소' '-command 있음' '-Reloader 이미지(…/stakater/reloader) 컨테이너'
+  #   image-registry(V-A6): 다른 레지스트리의 같은 이미지 → REL-image 저장소 판정만 잡는다
+  run_case rel-scoped-image-registry "$FIX/rel-scoped/image-registry" 1 \
+    "+[FAIL] 10.4 REL-image — $REL_L Deployment/reloader/reloader spec.template.spec.containers.0: 이미지 저장소 'docker.io/stakater/reloader' ≠ ghcr.io/stakater/reloader" \
+    '-[PASS] 10 REL' '-[FAIL] 10.0' '-[FAIL] 10.1' '-[FAIL] 10.2' '-[FAIL] 10.3' '-[FAIL] 10.4 REL-rbac' '-컨테이너가 ' '-command 있음' '-Reloader 이미지(…/stakater/reloader) 컨테이너'
+  #   rb-subject(V-A4 b03): jt-prod RoleBinding 주체가 다른 SA → REL-rbac-bind만
+  run_case rel-scoped-rb-subject "$FIX/rel-scoped/rb-subject" 1 \
+    "+[FAIL] 10.4 REL-rbac-bind — $REL_L RoleBinding/jt-prod/reloader-role-binding: subjects [{\"kind\":\"ServiceAccount\",\"name\":\"default\",\"namespace\":\"cloudflared\"}] ≠ [{\"kind\":\"ServiceAccount\",\"name\":\"reloader\",\"namespace\":\"reloader\"}]" \
+    '-[PASS] 10 REL' '-[FAIL] 10.0' '-[FAIL] 10.1' '-[FAIL] 10.2' '-[FAIL] 10.3' '-[FAIL] 10.4 REL-rbac-ns' '-[FAIL] 10.4 REL-rbac-rules' '-[FAIL] 10.4 REL-image' '-roleRef'
+  #   role-wildcard(V-A5 b05): jt-prod reloader-role에 */*/* 규칙 → REL-rbac-rules 두 줄(와일드카드 · 다수 규칙과 다름)
+  run_case rel-scoped-role-wildcard "$FIX/rel-scoped/role-wildcard" 1 \
+    "+[FAIL] 10.4 REL-rbac-rules — $REL_L Role/jt-prod/reloader-role: apiGroups·resources·verbs에 와일드카드 [\"*\"]" \
+    "+[FAIL] 10.4 REL-rbac-rules — $REL_L Role/jt-prod/reloader-role: rules ≠ 다수 규칙(3/4장" \
+    '-[PASS] 10 REL' '-[FAIL] 10.0' '-[FAIL] 10.1' '-[FAIL] 10.2' '-[FAIL] 10.3' '-[FAIL] 10.4 REL-rbac-ns' '-[FAIL] 10.4 REL-rbac-bind' '-[FAIL] 10.4 REL-image' \
+    "-[FAIL] 10.4 REL-rbac-rules — $REL_L Role/identity/"
+  #   extra-kind(V-A4): 표 밖 kind(ConfigMap) → REL-kinds만
+  run_case rel-scoped-extra-kind "$FIX/rel-scoped/extra-kind" 1 \
+    "+[FAIL] 10.3 REL-kinds — $REL_L: kind별 개수 불일치 [ConfigMap 1≠0] — 실제 {ConfigMap 1 · Deployment 2 · Role 5 · RoleBinding 5 · ServiceAccount 1}(합계 14)" \
+    '-[PASS] 10 REL' '-[FAIL] 10.0' '-[FAIL] 10.1' '-[FAIL] 10.2' '-[FAIL] 10.3 REL-probe' '-[FAIL] 10.4'
+  #   probe-namespace(V-A8 d02): 시험 대상이 다른 ns로 옮겨짐 → REL-probe만(개수는 그대로)
+  run_case rel-scoped-probe-namespace "$FIX/rel-scoped/probe-namespace" 1 \
+    "+[FAIL] 10.3 REL-probe — $REL_L: Deployment reloader/vd9-probe — ns ≠ jt-dev" \
+    '-[PASS] 10 REL' '-[FAIL] 10.0' '-[FAIL] 10.1' '-[FAIL] 10.2' '-[FAIL] 10.3 REL-kinds' '-[FAIL] 10.4'
+else
+  for c in $REL_PURE; do
+    run_case "rel-scoped-$c" "$FIX/rel-scoped/$c" 1 '+[SKIP] 10 REL — 도구 없음(kustomize)'
+  done
+fi
+
 # --- 작성자(봇) 경로 lint: positive 트리 + diff 입력 ---------------------------------
 run_case author-bot-ok "$FIX/positive" 0 \
   --env "PR_AUTHOR=jt-ci[bot]" --env "CHANGED_FILES=$DIGEST_FILE" --env "CHANGED_DIFF=$FIX/author/ok.diff" \
@@ -372,12 +582,22 @@ run_case author-push-event-ok "$FIX/positive" 0 \
   "+[PASS] 6 AUTHOR — PR 작성자 미지정(push 이벤트 등)"
 
 # --- 저장소 밖 root 거부(exit 2) — 실제 트리 검사는 여기서 하지 않는다(트리 상태에 따라 결과가 달라지므로) -----
-outside_rc=0
-bash "$VALIDATE" --root / >/dev/null 2>&1 || outside_rc=$?
-N=$((N + 1))
-if [[ $outside_rc == 2 ]]; then printf '[PASS] root-outside-repo-rejected\n'; else NF=$((NF + 1)); FAILED+=(root-outside-repo-rejected); printf '[FAIL] root-outside-repo-rejected (exit %s ≠ 2)\n' "$outside_rc"; fi
+if selected root-outside-repo-rejected; then
+  outside_rc=0
+  bash "$VALIDATE" --root / >/dev/null 2>&1 || outside_rc=$?
+  N=$((N + 1))
+  if [[ $outside_rc == 2 ]]; then printf '[PASS] root-outside-repo-rejected\n'; else NF=$((NF + 1)); FAILED+=(root-outside-repo-rejected); printf '[FAIL] root-outside-repo-rejected (exit %s ≠ 2)\n' "$outside_rc"; fi
+fi
 
-printf '\n== 자기검사 요약: %d 케이스, 실패 %d ==\n' "$N" "$NF"
+if [[ -n $ONLY ]]; then
+  printf "\n== 자기검사 요약(부분 실행 — 필터 '%s' · 건너뜀 %d): %d 케이스, 실패 %d ==\n" "$ONLY" "$NSKIP" "$N" "$NF"
+  if [[ $N -eq 0 ]]; then
+    printf "필터 '%s'에 맞는 케이스 0개 — 빈 실행을 통과로 읽지 않는다(exit 1)\n" "$ONLY"
+    exit 1
+  fi
+else
+  printf '\n== 자기검사 요약: %d 케이스, 실패 %d ==\n' "$N" "$NF"
+fi
 if [[ $NF -gt 0 ]]; then
   printf '실패: %s\n' "${FAILED[*]}"
   exit 1

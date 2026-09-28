@@ -1,0 +1,32 @@
+# 긍정 픽스처 — VD-9 시험 대상 Deployment `jt-dev/vd9-probe`(일시 · 실제 트리 platform/reloader/vd9-probe/의 판정 대상 필드만).
+#   검사 10.3 REL-kinds(Deployment 2)와 10.3 REL-probe(vd9-probe 정확히 1개 · ns jt-dev)가 요구한다. 이미지 digest는 가짜 값.
+#   ⚠ VD-9 시험 대상 제거 PR(G2)에서 이 파일과 그 사본(tests/fixtures/rel-scoped/*/platform/reloader/vd9-probe.yaml)을 함께 지운다
+#   (validate.sh의 REL_KINDS·REL_PROBE와 같은 PR — platform/reloader/README.md §4).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vd9-probe
+  namespace: jt-dev
+  labels: { app: vd9-probe }
+  annotations: { reloader.stakater.com/auto: "true" }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: vd9-probe } }
+  template:
+    metadata:
+      labels: { app: vd9-probe }
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65535
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.10@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          envFrom:
+            - secretRef: { name: vd9-probe }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+            readOnlyRootFilesystem: true

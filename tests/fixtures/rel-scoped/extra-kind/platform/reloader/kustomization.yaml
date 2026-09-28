@@ -1,0 +1,11 @@
+# 부정 픽스처 10.3 REL-kinds(extra-kind · 2026-09-28 검증 V-A4) — 긍정 트리(`deployment.yaml`·`rbac.yaml`·`vd9-probe.yaml`은
+#   positive 사본)에 계약 표에 없는 kind(ConfigMap 1)를 더했다(`extra.yaml`). 무해한 객체지만, 같은 자리에 K3s `HelmChart` CR(전역
+#   모드 차트를 따로 설치)이나 다른 이미지 이름의 Reloader를 둘 수 있다 — 렌더의 kind·개수를 계약 표로 고정하는 이유다.
+#   10.3 REL-kinds(ConfigMap 1 ≠ 0 · 합계 14)만 FAIL해야 한다. helm·네트워크가 필요 없다.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - deployment.yaml
+  - rbac.yaml
+  - vd9-probe.yaml
+  - extra.yaml

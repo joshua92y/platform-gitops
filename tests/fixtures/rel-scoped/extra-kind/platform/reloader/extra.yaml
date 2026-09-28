@@ -1,0 +1,6 @@
+# 부정 픽스처 10.3 REL-kinds(extra-kind)의 결함 — 계약 표(ServiceAccount·Deployment·Role·RoleBinding)에 없는 kind 하나
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: reloader-extra, namespace: reloader }
+data:
+  note: extra-kind-fixture

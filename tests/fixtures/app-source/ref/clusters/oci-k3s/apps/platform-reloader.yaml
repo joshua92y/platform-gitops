@@ -1,0 +1,23 @@
+# 부정 픽스처 7.4 APP-source-ref(ref · 2026-09-28 검증 V-A2 d07) — Application `platform-reloader`의 source 키는 세 개 그대로지만
+#   `repoURL`을 포크로, `targetRevision`을 리뷰되지 않은 브랜치로 바꿨다. Argo는 그 저장소·브랜치의 매니페스트를 적용하고, validate는
+#   이 저장소의 main 트리만 본다. 7.4 APP-source-ref 두 줄(repoURL · targetRevision)만 FAIL해야 한다(부분 트리 — 단언은 7.4 줄과
+#   `-[PASS] 7.4 APP-source`다).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-reloader
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "60"
+spec:
+  project: platform
+  source:
+    repoURL: https://github.com/someone-else/platform-gitops.git
+    targetRevision: some-unreviewed-branch
+    path: platform/reloader
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: reloader
+  syncPolicy:
+    automated: { prune: false, selfHeal: true }
+    syncOptions: [ServerSideApply=true, CreateNamespace=true, Prune=confirm, Delete=confirm, SkipDryRunOnMissingResource=true]

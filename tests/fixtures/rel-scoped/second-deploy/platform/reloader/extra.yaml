@@ -1,0 +1,43 @@
+# 부정 픽스처 10.4(second-deploy)의 결함 — 두 번째 Reloader(같은 SA)와 cloudflared ns 권한. 이미지 digest는 가짜 값
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: reloader-cf
+  namespace: reloader
+  labels: { app: reloader-cf }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: reloader-cf } }
+  template:
+    metadata:
+      labels: { app: reloader-cf }
+    spec:
+      serviceAccountName: reloader
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: reloader
+          image: ghcr.io/stakater/reloader:v1.4.21@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          args:
+            - --namespaces=cloudflared
+            - --reload-strategy=env-vars
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+            readOnlyRootFilesystem: true
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: reloader-role, namespace: cloudflared }
+rules:
+  - { apiGroups: [""], resources: [secrets, configmaps], verbs: [get, list, watch] }
+  - { apiGroups: [apps], resources: [deployments], verbs: [get, list, update, patch] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: reloader-role-binding, namespace: cloudflared }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: reloader-role }
+subjects:
+  - { kind: ServiceAccount, name: reloader, namespace: reloader }

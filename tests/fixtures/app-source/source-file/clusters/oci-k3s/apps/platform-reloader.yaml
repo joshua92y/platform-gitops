@@ -1,0 +1,25 @@
+# 부정 픽스처 7.4 APP-source-file(source-file · 2026-09-28 재검증 RB-1) — Application `platform-reloader` 자체는 정상이다(source 키 3개 ·
+#   이 저장소 · main). 결함은 source 경로 `platform/reloader/` 안의 `.argocd-source-platform-reloader.yaml`·`.argocd-source.yaml` 두 파일이다
+#   (Argo CD v3.5.2 repo-server가 매 렌더마다 source 파라미터에 합친다 — `spec.source`를 건드리지 않고 적용 렌더를 바꾼다).
+#   7.4 코드는 APP-source-file 두 줄만 FAIL해야 한다(부분 트리 — 단언은 7.4 줄과 `-[PASS] 7.4 APP-source`다). 이 부분 트리에서는
+#   `platform/reloader/`에 kustomization이 없어 두 파일이 1b KUST-plain(kind 없음)으로도 FAIL하지만 판정 근거가 아니다 — 실제 트리처럼
+#   kustomization이 있는 디렉터리에 두면 1b 대상이 아니고 7.4만 잡는다.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-reloader
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "60"
+spec:
+  project: platform
+  source:
+    repoURL: https://github.com/joshua92y/platform-gitops.git
+    targetRevision: main
+    path: platform/reloader
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: reloader
+  syncPolicy:
+    automated: { prune: false, selfHeal: true }
+    syncOptions: [ServerSideApply=true, CreateNamespace=true, Prune=confirm, Delete=confirm, SkipDryRunOnMissingResource=true]

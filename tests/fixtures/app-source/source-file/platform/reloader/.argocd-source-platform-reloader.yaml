@@ -1,0 +1,10 @@
+# 부정 픽스처 7.4 APP-source-file — 앱 이름 파일(`.argocd-source-<앱 이름>.yaml`). Argo는 이 내용을 Application `platform-reloader`의
+#   source에 JSON merge patch로 합친다 — 아래 패치는 Reloader args에 `--namespaces=cloudflared`를 더한다(재검증 RB-1의 `argosrc` 변형).
+#   validate는 `kustomize build platform/reloader`만 보므로 이 파일이 없는 트리와 렌더가 같다 — 그래서 파일 존재 자체를 FAIL한다.
+kustomize:
+  patches:
+    - target: { kind: Deployment, name: reloader, namespace: reloader }
+      patch: |-
+        - op: add
+          path: /spec/template/spec/containers/0/args/-
+          value: --namespaces=cloudflared

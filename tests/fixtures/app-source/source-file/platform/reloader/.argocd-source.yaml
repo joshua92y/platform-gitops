@@ -1,0 +1,4 @@
+# 부정 픽스처 7.4 APP-source-file — 경로 공통 파일(`.argocd-source.yaml`). 이 경로를 source로 쓰는 모든 Application에 합쳐진다.
+#   아래는 이름 접두를 바꿔 validate가 빌드한 렌더와 다른 객체 이름을 적용하게 한다.
+kustomize:
+  namePrefix: unreviewed-

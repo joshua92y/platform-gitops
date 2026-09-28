@@ -1,0 +1,16 @@
+# 부정 픽스처 10.4 REL-rbac-rules(role-wildcard · 2026-09-28 검증 V-A5 b05) — 긍정 트리(`deployment.yaml`·`rbac.yaml`·`vd9-probe.yaml`은
+#   positive 사본)의 `jt-prod` Role `reloader-role`에 와일드카드 규칙(`apiGroups`·`resources`·`verbs` 전부 `*`)을 더했다 — Reloader SA가
+#   jt-prod의 관리자가 된다. 개수·ns 집합·주체는 그대로라 10.3·10.4 REL-rbac-ns·REL-rbac-bind는 PASS다. 10.4 REL-rbac-rules가 두 줄
+#   (와일드카드 · 다른 ns의 `reloader-role`과 규칙이 다름)로 FAIL해야 한다. helm·네트워크가 필요 없다.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - deployment.yaml
+  - rbac.yaml
+  - vd9-probe.yaml
+patches:
+  - target: { kind: Role, name: reloader-role, namespace: jt-prod }
+    patch: |-
+      - op: add
+        path: /rules/-
+        value: { apiGroups: ["*"], resources: ["*"], verbs: ["*"] }
