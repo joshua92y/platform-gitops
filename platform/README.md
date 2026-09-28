@@ -17,6 +17,6 @@
 | `external-secrets/` | T045 G1 | helmCharts 인플레이트 ESO 2.10.0(CRD 25 + Deployment 3) + `eso-*` SA 5 + `eso-ca-reader` RBAC |
 | `secret-stores/` | T045 G2 | ClusterSecretStore 5장. ESO와 **다른 Application**인 이유는 그 디렉터리 README §0 |
 | `secrets/` | T045 G3 | 매니페스트 0장 — `kustomization.yaml`이 `../../secrets/<ns>`를 base로 끌어오는 **배달자**다(ExternalSecret 원본은 저장소 루트 `secrets/<ns>/`). 소비자 컴포넌트가 같은 base를 끌어가지 않는 이유와 단일 소유(validate 7.3)는 그 디렉터리 README §0·§3 |
-| `reloader/` | T046 G1 | helmCharts 인플레이트 Reloader 차트 2.2.16 **scoped 모드**(감시 ns `identity`·`jt-dev`·`jt-prod` — `cloudflared` 제외 · ClusterRole 0 · 렌더 가드 validate 10) + VD-9 시험 대상 `jt-dev/vd9-probe`(**일시** — 판정 뒤 제거 PR). 감시 ns 목록의 정본은 계약, 절차는 그 디렉터리 README |
+| `reloader/` | T046 G1 | helmCharts 인플레이트 Reloader 차트 2.2.16 **scoped 모드**(감시 ns `identity`·`jt-dev`·`jt-prod` — `cloudflared` 제외 · ClusterRole 0 · 렌더 가드 validate 10). 감시 ns 목록의 정본은 계약, 절차는 그 디렉터리 README |
 
 **아직 뼈대**(`resources: []`) — `cnpg/`(T052) · `cnpg-cluster/`(T053) · `cnpg-databases/`(T054) · `kafka/`(T055) · `kafka-topics/`(T056) · `dragonfly/`(T057) · `authentik/`(T080) · `openfga/`(T082) · `monitoring/`(T098).

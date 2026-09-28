@@ -128,8 +128,7 @@ if command -v kustomize >/dev/null 2>&1 && command -v kubeconform >/dev/null 2>&
   positive_asserts+=('+[PASS] 1 KUST' '+[PASS] 1b KUST-plain' '+ExternalSecret 26개(파일+렌더링)'
     '+webhook 정책을 담은 소스: 원본 1 · 렌더 1'
     # 검사 10(T046): 긍정 트리의 platform/reloader는 순수 매니페스트라 helm 없이 렌더된다(kustomize만 필요).
-    #   ⚠ VD-9 시험 대상 제거 PR(G2)에서 `Deployment 2`·`합계 13`·`vd9-probe ns jt-dev`가 바뀐다(platform/reloader/README.md §4)
-    '+[PASS] 10 REL — platform/reloader (rendered): ClusterRole·ClusterRoleBinding 0 · Deployment reloader/reloader args = ["--log-level=info","--namespaces=identity,jt-dev,jt-prod,reloader","--reload-strategy=annotations"] · kind {ServiceAccount 1 · Deployment 2 · Role 5 · RoleBinding 5}(합계 13) · vd9-probe ns jt-dev · Role·RoleBinding ns 집합 = {identity,jt-dev,jt-prod,reloader} · RoleBinding → 같은 ns의 Role · 주체 = ServiceAccount reloader/reloader · reloader-role 규칙 동일·와일드카드 없음 · Reloader 이미지 컨테이너 1개(containers.0 · command 없음)')
+    '+[PASS] 10 REL — platform/reloader (rendered): ClusterRole·ClusterRoleBinding 0 · Deployment reloader/reloader args = ["--log-level=info","--namespaces=identity,jt-dev,jt-prod,reloader","--reload-strategy=annotations"] · kind {ServiceAccount 1 · Deployment 1 · Role 5 · RoleBinding 5}(합계 12) · Role·RoleBinding ns 집합 = {identity,jt-dev,jt-prod,reloader} · RoleBinding → 같은 ns의 Role · 주체 = ServiceAccount reloader/reloader · reloader-role 규칙 동일·와일드카드 없음 · Reloader 이미지 컨테이너 1개(containers.0 · command 없음)')
 else
   positive_asserts+=('+webhook 정책을 담은 소스: 원본 1 · 렌더 0')
 fi
@@ -412,8 +411,8 @@ REL_ARGS_FAIL="+[FAIL] 10.2 REL-args-exact — $REL_L Deployment/reloader/reload
 REL_HINT="[FAIL] 10.2 REL-args-exact — $REL_L Deployment/reloader/reloader: 단서 — "
 REL_OK_ARGS='"--log-level=info","--namespaces=identity,jt-dev,jt-prod,reloader","--reload-strategy=annotations"'
 
-# (a) 차트 values 갈래 — 네 트리는 **실제 차트 2.2.16 렌더**로 FAIL을 낸다(values 한 줄만 다르고, 실제 트리와 같이 시험 대상
-#   `vd9-probe.yaml`을 포함한다) — helm과 네트워크(차트 pull)가 필요하다(tests/fixtures/pol-port와 같다. 풀린 차트는 픽스처 아래
+# (a) 차트 values 갈래 — 네 트리는 **실제 차트 2.2.16 렌더**로 FAIL을 낸다(values 한 줄만 다르다)
+#   — helm과 네트워크(차트 pull)가 필요하다(tests/fixtures/pol-port와 같다. 풀린 차트는 픽스처 아래
 #   charts/에 남고 .gitignore 대상이다). helm이나 kustomize가 없으면 검사 10은 "도구 없음"(SKIP 또는 fail-closed FAIL)이 정답이다.
 #   (전역 모드는 ClusterRole·인자·kind 개수·감시 ns Role이 **함께** 바뀌므로 typo-parent는 10.1–10.4가 모두 걸리는 것이 정답이다.)
 if command -v kustomize >/dev/null 2>&1 && command -v helm >/dev/null 2>&1; then
@@ -434,7 +433,7 @@ if command -v kustomize >/dev/null 2>&1 && command -v helm >/dev/null 2>&1; then
     "+[FAIL] 10.4 REL-rbac-ns — $REL_L: Role ns 집합 불일치 — 빠짐 [identity, jt-dev, jt-prod] 여분 []" \
     "+[FAIL] 10.4 REL-rbac-ns — $REL_L: RoleBinding ns 집합 불일치 — 빠짐 [identity, jt-dev, jt-prod] 여분 []" \
     "+[FAIL] 10.4 REL-rbac-rules — $REL_L: Role reloader-role 없는 ns [identity, jt-dev, jt-prod, reloader]" \
-    '-[PASS] 10 REL' '-[FAIL] 10.0' '-[FAIL] 1 KUST' '-[FAIL] 10.3 REL-probe' '-[FAIL] 10.4 REL-rbac-bind' '-[FAIL] 10.4 REL-image' \
+    '-[PASS] 10 REL' '-[FAIL] 10.0' '-[FAIL] 1 KUST' '-[FAIL] 10.4 REL-rbac-bind' '-[FAIL] 10.4 REL-image' \
     "-${REL_HINT}'=' 없는 플래그" "-${REL_HINT}같은 플래그"
   #   cloudflared: 감시 목록에 cloudflared 추가 → scoped 그대로(10.1 PASS)지만 인자 · Role·RoleBinding ns 집합 · 개수가 달라진다
   run_case rel-scoped-cloudflared "$FIX/rel-scoped/cloudflared" 1 \
@@ -443,7 +442,7 @@ if command -v kustomize >/dev/null 2>&1 && command -v helm >/dev/null 2>&1; then
     "+[FAIL] 10.3 REL-kinds — $REL_L: kind별 개수 불일치 [Role 6≠5, RoleBinding 6≠5]" \
     "+[FAIL] 10.4 REL-rbac-ns — $REL_L: Role ns 집합 불일치 — 빠짐 [] 여분 [cloudflared]" \
     "+[FAIL] 10.4 REL-rbac-ns — $REL_L: RoleBinding ns 집합 불일치 — 빠짐 [] 여분 [cloudflared]" \
-    '-[PASS] 10 REL' '-[FAIL] 10.0' '-[FAIL] 10.1' '-[FAIL] 10.3 REL-probe' '-[FAIL] 10.4 REL-rbac-bind' '-[FAIL] 10.4 REL-rbac-rules' '-[FAIL] 10.4 REL-image' \
+    '-[PASS] 10 REL' '-[FAIL] 10.0' '-[FAIL] 10.1' '-[FAIL] 10.4 REL-rbac-bind' '-[FAIL] 10.4 REL-rbac-rules' '-[FAIL] 10.4 REL-image' \
     "-${REL_HINT}'=' 없는 플래그" "-${REL_HINT}같은 플래그"
   #   env-vars: 전략만 다르다 — 목록 불일치 한 줄, 단서 없음
   run_case rel-scoped-env-vars "$FIX/rel-scoped/env-vars" 1 \
@@ -464,19 +463,19 @@ else
 fi
 run_case rel-scoped-no-deployment "$FIX/rel-scoped/no-deployment" 1 "${no_dep_asserts[@]}"
 
-# (b) 순수 매니페스트 갈래 — 긍정 트리의 사본(deployment.yaml·rbac.yaml·vd9-probe.yaml)에 결함 하나씩을 더했다(helm·네트워크 불필요 —
-#   kustomize만. kustomize가 없으면 "도구 없음"이 정답이다). 앞의 넷(e1·e2·e3·e5)은 2026-09-22 독립 리뷰, 뒤의 열하나는 2026-09-28
-#   적대적 검증(V-A1·A3·A4·A5·A6·A8·A9)이 예전 검사에서 가짜 PASS(또는 단언 없는 분기)로 실측한 경로다.
-REL_PURE='second-deploy command second-container args-newline swallow-ns swallow-strategy extra-arg var-expansion args-order decoy-container image-registry rb-subject role-wildcard extra-kind probe-namespace'
+# (b) 순수 매니페스트 갈래 — 긍정 트리의 사본(deployment.yaml·rbac.yaml)에 결함 하나씩을 더했다(helm·네트워크 불필요 —
+#   kustomize만. kustomize가 없으면 "도구 없음"이 정답이다). 앞의 넷(e1·e2·e3·e5)은 2026-09-22 독립 리뷰, 뒤의 열은 2026-09-28
+#   적대적 검증(V-A1·A3·A4·A5·A6·A9)이 예전 검사에서 가짜 PASS(또는 단언 없는 분기)로 실측한 경로다.
+REL_PURE='second-deploy command second-container args-newline swallow-ns swallow-strategy extra-arg var-expansion args-order decoy-container image-registry rb-subject role-wildcard extra-kind'
 if command -v kustomize >/dev/null 2>&1; then
   #   second-deploy(e1): 이름이 다른 두 번째 Reloader Deployment + cloudflared ns Role·RoleBinding(규칙 2개 — 다른 ns와 다르다)
   run_case rel-scoped-second-deploy "$FIX/rel-scoped/second-deploy" 1 \
     "+[FAIL] 10.4 REL-image — $REL_L: Reloader 이미지(…/stakater/reloader) 컨테이너 2개 [Deployment/reloader/reloader spec.template.spec.containers.0, Deployment/reloader/reloader-cf spec.template.spec.containers.0]" \
     "+[FAIL] 10.4 REL-rbac-ns — $REL_L: Role ns 집합 불일치 — 빠짐 [] 여분 [cloudflared]" \
     "+[FAIL] 10.4 REL-rbac-ns — $REL_L: RoleBinding ns 집합 불일치 — 빠짐 [] 여분 [cloudflared]" \
-    "+[FAIL] 10.3 REL-kinds — $REL_L: kind별 개수 불일치 [Deployment 3≠2, Role 6≠5, RoleBinding 6≠5]" \
+    "+[FAIL] 10.3 REL-kinds — $REL_L: kind별 개수 불일치 [Deployment 2≠1, Role 6≠5, RoleBinding 6≠5]" \
     "+[FAIL] 10.4 REL-rbac-rules — $REL_L Role/cloudflared/reloader-role: rules ≠ 다수 규칙(4/5장" \
-    '-[PASS] 10 REL' '-[FAIL] 10.0' '-[FAIL] 10.1' '-[FAIL] 10.2' '-[FAIL] 10.3 REL-probe' '-[FAIL] 10.4 REL-rbac-bind' '-command 있음' \
+    '-[PASS] 10 REL' '-[FAIL] 10.0' '-[FAIL] 10.1' '-[FAIL] 10.2' '-[FAIL] 10.4 REL-rbac-bind' '-command 있음' \
     "-[FAIL] 10.4 REL-rbac-rules — $REL_L Role/identity/"
   #   command(e2): Reloader 컨테이너의 command에 --namespaces=cloudflared
   run_case rel-scoped-command "$FIX/rel-scoped/command" 1 \
@@ -536,12 +535,8 @@ if command -v kustomize >/dev/null 2>&1; then
     "-[FAIL] 10.4 REL-rbac-rules — $REL_L Role/identity/"
   #   extra-kind(V-A4): 표 밖 kind(ConfigMap) → REL-kinds만
   run_case rel-scoped-extra-kind "$FIX/rel-scoped/extra-kind" 1 \
-    "+[FAIL] 10.3 REL-kinds — $REL_L: kind별 개수 불일치 [ConfigMap 1≠0] — 실제 {ConfigMap 1 · Deployment 2 · Role 5 · RoleBinding 5 · ServiceAccount 1}(합계 14)" \
-    '-[PASS] 10 REL' '-[FAIL] 10.0' '-[FAIL] 10.1' '-[FAIL] 10.2' '-[FAIL] 10.3 REL-probe' '-[FAIL] 10.4'
-  #   probe-namespace(V-A8 d02): 시험 대상이 다른 ns로 옮겨짐 → REL-probe만(개수는 그대로)
-  run_case rel-scoped-probe-namespace "$FIX/rel-scoped/probe-namespace" 1 \
-    "+[FAIL] 10.3 REL-probe — $REL_L: Deployment reloader/vd9-probe — ns ≠ jt-dev" \
-    '-[PASS] 10 REL' '-[FAIL] 10.0' '-[FAIL] 10.1' '-[FAIL] 10.2' '-[FAIL] 10.3 REL-kinds' '-[FAIL] 10.4'
+    "+[FAIL] 10.3 REL-kinds — $REL_L: kind별 개수 불일치 [ConfigMap 1≠0] — 실제 {ConfigMap 1 · Deployment 1 · Role 5 · RoleBinding 5 · ServiceAccount 1}(합계 13)" \
+    '-[PASS] 10 REL' '-[FAIL] 10.0' '-[FAIL] 10.1' '-[FAIL] 10.2' '-[FAIL] 10.4'
 else
   for c in $REL_PURE; do
     run_case "rel-scoped-$c" "$FIX/rel-scoped/$c" 1 '+[SKIP] 10 REL — 도구 없음(kustomize)'
