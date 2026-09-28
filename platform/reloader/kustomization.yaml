@@ -22,9 +22,9 @@
 # ⚠ 차트 기본값이 `watchGlobally: true`다. 그리고 `values.schema.json`에 `additionalProperties: false`가 없어 키 오타는
 #   조용히 무시된다. `watchGlobally` 오타는 `namespaces`와 함께 있으면 차트가 렌더를 `fail`로 멈추지만(F1), 부모 키
 #   `reloader:` 오타·들여쓰기 실수처럼 두 키가 함께 빠지면 **조용히 전역 모드 + ClusterRole**로 돌아간다(F5).
-#   막는 것은 렌더 결과 검사 `tests/validate.sh` 10 REL(ClusterRole·ClusterRoleBinding 0 · `--namespaces` 집합 ·
-#   `--reload-strategy=annotations` · Role·RoleBinding ns 집합 · Reloader 이미지 컨테이너 1개(containers[0] · command 없음))이다
-#   — README §1의 yq 체크리스트가 같은 대조를 사람 손으로 한다.
+#   막는 것은 렌더 결과 검사 `tests/validate.sh` 10 REL(ClusterRole·ClusterRoleBinding 0 · Deployment args **목록 정확 일치** ·
+#   kind별 개수 · Role·RoleBinding ns 집합·주체·규칙 · Reloader 이미지 컨테이너 1개(containers[0] · command 없음))이고, Application
+#   수준 오버라이드는 7.4 APP-source가 막는다 — README §1의 yq 체크리스트가 같은 대조를 사람 손으로 한다.
 #
 # 권한 사실(F4 · 설계 D3 — 차트 기본값 유지): 감시 ns마다 Role 규칙은
 #   secrets·configmaps get/list/watch(= **그 ns의 Secret 전부 읽기**) · deployments·daemonsets·statefulsets
@@ -33,8 +33,9 @@
 #   그 ns에서 임의 코드를 실행할 수 있으므로(이미지·명령 교체) Job `create`는 위험 수준을 올리지 않는다 — 그래서 수기
 #   RBAC로 깎지 않는다. 잔여 위험은 README §2.
 #
-# ⚠ 최상위 `namespace:` 변환기를 두지 않는다 — 두면 `vd9-probe`(ns `jt-dev`)와 차트가 감시 ns에 만드는 Role·RoleBinding의
-#   ns가 전부 `reloader`로 덮여 scoped 모드가 깨진다. 차트 리소스의 ns는 `helmCharts[].namespace`가 정한다.
+# ⚠ 최상위 `namespace:` 변환기를 두지 않는다 — 차트 객체의 ns는 `helmCharts[].namespace`가 정하며 변환기의 영향을 받지 않고,
+#   `vd9-probe`만 그 ns로 옮겨진다(kustomize 5.8.1 실측 2026-09-28). 옮겨진 시험 대상은 Secret `vd9-probe`가 없는 ns라 시험이
+#   성립하지 않는다(validate 10.3 REL-probe가 잡는다).
 #
 # 설치 방식 = kustomize `helmCharts` 인플레이트(cert-manager T042 · vault T044 · external-secrets T045 선례). 전제: argocd-cm
 #   `kustomize.buildOptions: --enable-helm`. 로컬 재현: `kustomize build --enable-helm platform/reloader`(helm 필요).
@@ -49,7 +50,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
-  # ⚠ 일시 — VD-9 판정 뒤 제거 PR에서 **이 한 줄과 `vd9-probe/` 디렉터리**를 지운다(README §4).
+  # ⚠ 일시 — VD-9 판정 뒤 제거 PR에서 **이 한 줄과 `vd9-probe/` 디렉터리**를 지운다(함께 고칠 곳 전체는 README §4 — validate 10.3 상수 포함).
   #   `prune: false`라 Git에서 지워도 클러스터에는 남는다 → 운영자가 Deployment·Secret `vd9-probe`를 지운다.
   - vd9-probe
 

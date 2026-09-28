@@ -1,0 +1,31 @@
+# 부정 픽스처 7.4 APP-source(kustomize-patches · 2026-09-28 검증 V-A2 d03) — Application `platform-reloader`의 `spec.source`에
+#   `kustomize.patches`(Reloader args에 `--namespaces=cloudflared` 추가)를 넣었다. Argo는 이 패치를 얹어 렌더하지만 validate는
+#   `kustomize build platform/reloader`만 보므로, 예전에는 검사 10을 포함한 전체가 이 오버라이드가 없는 트리와 똑같이 PASS였다.
+#   7.4 APP-source(source 키 [kustomize,path,repoURL,targetRevision])만 FAIL해야 한다(부분 트리라 5.x 등 다른 검사의 FAIL은 판정 근거가
+#   아니다 — 단언은 7.4 줄과 `-[PASS] 7.4 APP-source`다).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-reloader
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "60"
+spec:
+  project: platform
+  source:
+    repoURL: https://github.com/joshua92y/platform-gitops.git
+    targetRevision: main
+    path: platform/reloader
+    kustomize:
+      patches:
+        - target: { kind: Deployment, name: reloader, namespace: reloader }
+          patch: |-
+            - op: add
+              path: /spec/template/spec/containers/0/args/-
+              value: --namespaces=cloudflared
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: reloader
+  syncPolicy:
+    automated: { prune: false, selfHeal: true }
+    syncOptions: [ServerSideApply=true, CreateNamespace=true, Prune=confirm, Delete=confirm, SkipDryRunOnMissingResource=true]

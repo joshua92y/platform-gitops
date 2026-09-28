@@ -1,0 +1,16 @@
+# 부정 픽스처 10.2 REL-args-exact(swallow-strategy · 2026-09-28 검증 V-A1 a03) — 긍정 트리(`deployment.yaml`·`rbac.yaml`·
+#   `vd9-probe.yaml`은 positive 사본)의 Reloader args에서 `--reload-strategy=annotations` **바로 앞에 값 없는 `--pprof-addr`**를 넣었다.
+#   pflag가 뒤 인자를 `--pprof-addr`의 값으로 삼켜 전략이 바이너리 기본값(env-vars)이 된다(하네스 실측). 예전 10.3은 PASS였다.
+#   10.2 REL-args-exact(목록 불일치 + 단서 '=' 없는 플래그)만 FAIL해야 한다. helm·네트워크가 필요 없다.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - deployment.yaml
+  - rbac.yaml
+  - vd9-probe.yaml
+patches:
+  - target: { kind: Deployment, name: reloader, namespace: reloader }
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/args/2
+        value: --pprof-addr

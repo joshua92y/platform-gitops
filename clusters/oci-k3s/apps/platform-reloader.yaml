@@ -11,6 +11,8 @@
 #   `platform/reloader/` 항목이고, 렌더 가드는 `tests/validate.sh` 10 REL, 렌더 대조·VD-9 절차·뒷정리·되돌리기는
 #   `platform/reloader/README.md`다. 아래 syncPolicy가 `prune: false`라 Git에서 지운 객체(시험 대상 · revert 뒤의 차트 객체)는
 #   운영자가 지운다. 이 파일의 매니페스트 값은 T041 그대로다(T046은 주석만 바꿨다).
+#   ⚠ `spec.source`에 `kustomize`·`helm` 같은 오버라이드를 넣지 않는다 — Argo가 적용하는 렌더가 validate가 검사한 렌더와 달라진다
+#   (validate 7.4 APP-source: source 키 = {repoURL, targetRevision, path} · targetRevision main · multi-source 금지 — 계약 §validate.yml 4).
 #
 # sync-wave·destination.namespace: 값의 정본은 계약 contracts/gitops-repo.md §sync-wave 단일 표이고,
 #   코드 사본은 tests/validate.sh의 WAVE_TABLE 하나뿐이다. 아래 두 값은 그 표에서 기계적으로 읽어 넣었고

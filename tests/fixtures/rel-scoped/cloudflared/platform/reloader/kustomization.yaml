@@ -1,10 +1,13 @@
-# 부정 픽스처 10.2 REL-namespaces(cloudflared) — 감시 목록에 `cloudflared`를 더했다.
-#   렌더는 scoped 모드 그대로라 ClusterRole은 0이지만(10.1 PASS), `--namespaces=cloudflared,identity,jt-dev,jt-prod,reloader`가
-#   계약 목록 + 릴리스 ns와 달라 10.2가 여분 [cloudflared]로 FAIL해야 한다. 계약은 터널 커넥터를 감시하지 않는다
-#   (수동 1개씩 교체가 안전장치 — T045 G4).
+# 부정 픽스처 10.2 REL-args-exact(cloudflared) — 감시 목록에 `cloudflared`를 더했다.
+#   렌더는 scoped 모드 그대로라 ClusterRole은 0이지만(10.1 PASS), 인자 `--namespaces=cloudflared,identity,jt-dev,jt-prod,reloader`가
+#   기대 목록과 달라 10.2가 FAIL(단서: cloudflared)해야 하고, 차트가 cloudflared에도 Role·RoleBinding을 만들므로 10.4 REL-rbac-ns
+#   (여분 [cloudflared])와 10.3 REL-kinds(Role 6 · RoleBinding 6)도 FAIL한다. 계약은 터널 커넥터를 감시하지 않는다
+#   (수동 1개씩 교체가 안전장치 — T045 G4). `vd9-probe.yaml`(positive 사본)은 실제 트리의 시험 대상 자리다.
 #   helmCharts가 있으므로 이 픽스처는 helm과 네트워크(차트 pull)가 필요하다 — tests/fixtures/pol-port와 같다.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
+resources:
+  - vd9-probe.yaml
 helmCharts:
   - name: reloader
     repo: https://stakater.github.io/stakater-charts

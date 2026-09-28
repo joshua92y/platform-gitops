@@ -1,5 +1,5 @@
 # 긍정 픽스처 — Reloader Deployment(차트 2.2.16 scoped 모드 렌더의 판정 대상 필드만). 이미지 digest는 가짜 값
-#   tests/fixtures/rel-scoped/{second-deploy,command,second-container,args-newline}/platform/reloader/deployment.yaml은 이 파일의 사본이다.
+#   tests/fixtures/rel-scoped/의 순수 매니페스트 케이스(helm을 쓰지 않는 것 전부)의 deployment.yaml은 이 파일의 사본이다.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
