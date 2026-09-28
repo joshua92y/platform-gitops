@@ -1,4 +1,4 @@
-# 부정 픽스처 10.4 REL-rbac-bind(rb-subject · 2026-09-28 검증 V-A4 b03) — 긍정 트리(`deployment.yaml`·`rbac.yaml`·`vd9-probe.yaml`은
+# 부정 픽스처 10.4 REL-rbac-bind(rb-subject · 2026-09-28 검증 V-A4 b03) — 긍정 트리(`deployment.yaml`·`rbac.yaml`은
 #   positive 사본)의 `jt-prod` RoleBinding 주체를 **다른 ServiceAccount**(`cloudflared/default`)로 바꿨다. 그 SA가 jt-prod의 Secret을
 #   전부 읽고 Deployment를 patch할 수 있게 된다. RoleBinding·Role의 개수와 ns 집합은 그대로라 10.3·10.4 REL-rbac-ns는 PASS다 —
 #   10.4 REL-rbac-bind(subjects 불일치)만 FAIL해야 한다. helm·네트워크가 필요 없다.
@@ -7,7 +7,6 @@ kind: Kustomization
 resources:
   - deployment.yaml
   - rbac.yaml
-  - vd9-probe.yaml
 patches:
   - target: { kind: RoleBinding, name: reloader-role-binding, namespace: jt-prod }
     patch: |-

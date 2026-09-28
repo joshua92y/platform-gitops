@@ -72,8 +72,7 @@
 #                           플래그가 앞에 오면 pflag가 뒤 인자를 값으로 삼키고, 같은 플래그를 반복하면 --namespaces 목록이 합쳐진다).
 #                           불일치 시 실제·기대 목록(JSON — 제어 문자도 이스케이프된다)과 단서('=' 없는 플래그 · 같은 플래그 반복 ·
 #                           `$(` 치환 · cloudflared · --namespaces/--reload-strategy 부재)를 같은 코드로 찍는다
-#   10.3 REL-kinds          렌더 전체의 kind별 개수 = REL_KINDS(ServiceAccount 1 · Deployment 2 · Role 5 · RoleBinding 5 = 13) · 그 밖의 kind 0
-#   10.3 REL-probe          VD-9 시험 대상이 있는 동안(REL_PROBE) Deployment vd9-probe 정확히 1개 · ns = jt-dev
+#   10.3 REL-kinds          렌더 전체의 kind별 개수 = REL_KINDS(ServiceAccount 1 · Deployment 1 · Role 5 · RoleBinding 5 = 12) · 그 밖의 kind 0
 #   10.4 REL-rbac-ns        렌더 전체의 Role·RoleBinding(이름 무관) ns 집합 = REL_WATCH_NS + 릴리스 ns 정확 일치(kind마다 —
 #                           모노레포 하네스 reloader-2와 같은 불변식)
 #   10.4 REL-rbac-bind      모든 RoleBinding: roleRef.kind = Role · 그 이름의 Role이 같은 ns에 렌더됨 · subjects = 정확히
@@ -302,14 +301,10 @@ REL_LOG_LEVEL='info'           # 차트 2.2.16 기본 `reloader.logLevel` — 10
 # 10.2 REL-args-exact의 기대 목록 = [--log-level=$REL_LOG_LEVEL, --namespaces=<목록>, --reload-strategy=$REL_STRATEGY].
 #   <목록>은 REL_WATCH_NS + REL_RELEASE_NS를 **사전순**(LC_ALL=C)으로 중복 없이 쉼표로 잇는다 — 차트 헬퍼가 `uniq | sortAlpha`로
 #   만든 인자와 같은 모양이다. check_10_reloader가 여기서 유도한다(목록을 두 번 적지 않는다).
-# 10.3 REL-kinds — 렌더 전체의 kind별 개수(차트 12 = ServiceAccount 1 · Deployment 1 · Role 5 · RoleBinding 5, 여기에 VD-9 시험 대상
-#   Deployment 1). 그 밖의 kind는 0이어야 한다. Role·RoleBinding 5 = 감시 ns 3 + 릴리스 ns 1의 `reloader-role(-binding)` + 릴리스 ns의
+# 10.3 REL-kinds — 렌더 전체의 kind별 개수(차트 12 = ServiceAccount 1 · Deployment 1 · Role 5 · RoleBinding 5). 그 밖의 kind는
+#   0이어야 한다. Role·RoleBinding 5 = 감시 ns 3 + 릴리스 ns 1의 `reloader-role(-binding)` + 릴리스 ns의
 #   `reloader-metadata-role(-binding)`이다 — 감시 ns를 하나 늘리면 둘 다 +1(platform/reloader/README.md §0).
-#   ⚠ VD-9 시험 대상 제거 PR(G2)에서 `Deployment:2` → `Deployment:1`(합계 13 → 12)로 바꾸고 10.3 REL-probe 검사(REL_PROBE·REL_PROBE_NS와
-#   check_10_reloader의 그 블록)를 지운다(platform/reloader/README.md §4 — 픽스처의 vd9-probe.yaml과 단언 문자열도 같은 PR).
-REL_KINDS='ServiceAccount:1 Deployment:2 Role:5 RoleBinding:5'
-REL_PROBE='vd9-probe'          # 10.3 REL-probe: 시험 대상 Deployment 이름(빈 문자열이면 검사하지 않는다)
-REL_PROBE_NS='jt-dev'          # 시험 대상이 있어야 할 ns(Secret vd9-probe가 있는 곳)
+REL_KINDS='ServiceAccount:1 Deployment:1 Role:5 RoleBinding:5'
 REL_ROLE='reloader-role'       # 10.4 REL-rbac-rules: 차트가 감시 ns + 릴리스 ns마다 만드는 Role 이름
 # 10.4 REL-image: 렌더에서 "Reloader 컨테이너"를 찾는 저장소 패턴(태그·digest를 뗀 뒤 비교 — ghcr.io·Docker Hub 등 레지스트리 무관)과,
 #   찾은 1개가 가져야 할 저장소(차트 2.2.16 기본 `image.repository`). 패턴이 넓은 것은 의도다 — 다른 레지스트리의 같은 이미지로
@@ -1629,8 +1624,7 @@ check_9_clustersecretstores() {
 #   `namespaces`가 **함께** 빠지면 렌더는 성공한 채 전역 모드(ClusterRole + ClusterRoleBinding · `--namespaces` 없음 ·
 #   `--reload-strategy` 없음)로 돌아간다. `watchGlobally` 한 키만 틀리면(`watchGlobaly`) 차트의 `fail` 가드가 렌더를
 #   멈추므로 10.0이 잡는다(2026-09-22 실측 — tests/fixtures/rel-scoped/). Argo가 적용하는 것은 렌더이므로 판정도 렌더로 한다.
-# 범위: `platform/reloader` 렌더 하나(경로 정확 일치 — 중첩된 `platform/reloader/vd9-probe` 렌더는 따로 보지 않지만, 부모 렌더에
-#   포함되므로 10.3·10.4는 그 객체도 본다). 10.2는 Deployment reloader/reloader 첫 컨테이너의 args만 보므로, 그 시야 밖에서
+# 범위: `platform/reloader` 렌더 하나(경로 정확 일치). 10.2는 Deployment reloader/reloader 첫 컨테이너의 args만 보므로, 그 시야 밖에서
 #   감시 범위·권한을 넓히는 경로 — 이름이 다른 두 번째 Reloader · 두 번째 컨테이너 · `command` 안의 인자(2026-09-22 독립 리뷰
 #   e1–e3) · 감시 ns 안의 추가 권한·다른 주체·와일드카드 · 여분 kind(HelmChart CR 등 — 2026-09-28 검증 V-A4·V-A5) — 는
 #   10.3·10.4가 렌더 전체에서 닫는다.
@@ -1639,8 +1633,8 @@ check_9_clustersecretstores() {
 #   `$(VAR)`는 kubelet이 펼친 뒤 `--namespaces`를 하나 더 만들 수 있으며(목록 합침), `--auto-reload-all=true` 같은 여분 플래그는
 #   어노테이션 없는 워크로드까지 재시작한다. 인자를 하나씩 세던 예전 검사는 셋 다 PASS시켰다.
 # 한계: 라이브 — Application `status.resources`의 ClusterRole·ClusterRoleBinding 0과 Role `reloader-role` ns 집합, Deployment 인자는
-#   모노레포 하네스 `reloader-2`가 본다(kind별 개수는 보지 않는다 — 그것은 README §3 판정 ⑥ 명령). Reloader 시작 로그(실제로 감시하는 ns)도
-#   platform/reloader/README.md §3 판정 ⑥의 운영자 명령이 본다(`reloader-2`는 로그를 읽지 않는다).
+#   모노레포 하네스 `reloader-2`가 본다. kind별 개수와 Reloader 시작 로그(실제로 감시하는 ns)는 상시 라이브 가드가 없다 — VD-9 판정 ⑥에서
+#   한 번 실측했다(platform/reloader/README.md §3 판정 기록 · `reloader-2`는 개수와 로그를 보지 않는다).
 #   정적으로 보지 않는 것: **다른 컴포넌트 렌더**가 ServiceAccount reloader/reloader에 주는 RoleBinding·ClusterRoleBinding과 그 안의
 #   Reloader(T047 후보 — 전 렌더 교차 검사), `reloader-metadata-role`의 규칙 내용(와일드카드만 본다), `stakater/reloader`가 아닌
 #   이름으로 다시 올린 이미지를 **같은 파드의 두 번째 컨테이너**로 넣는 경우(두 번째 Deployment로 올리면 10.3의 개수가 잡는다),
@@ -1655,7 +1649,7 @@ check_10_reloader() {
   local f0=$N_FAIL i idx=-1 kn kfile='' label rows line sel ndep ax row v w x kv
   local nargs=0 nctl=0 nns=0 nstr=0 ajson='' ejson='' wantcsv='' noeq dups dollar cf miss='' extra='' want
   local kind have rk rns rname rpath rimg rcmd repo nimg=0 hits='' hit1='' repo1=''
-  local ntot=0 wtot=0 kmis='' kact='' kexp='' nprobe=0 probes='' probens=''
+  local ntot=0 wtot=0 kmis='' kact='' kexp=''
   local rref rrefk rsubj esubj rrules rwild rrns=' ' nrr=0 best=-1 j
   local -a arr=() hv=() eargs=() ks=() rrns_list=() rrules_list=() rcnt=()
   local -A kcount=() kwant=() roleset=()
@@ -1751,8 +1745,8 @@ check_10_reloader() {
 
   # 10.3 REL-kinds — 렌더 전체의 kind별 개수 = REL_KINDS, 그 밖의 kind 0. 문서 1개 = 1행(kind · ns · name — 선택 없이 모든 문서).
   #   여분 객체는 그대로 적용된다: 감시 ns 안의 추가 Role·RoleBinding, 이름 바꾼 이미지의 두 번째 Reloader, K3s `HelmChart` CR(전역
-  #   모드 차트를 따로 설치) 등은 10.2·10.4의 시야 밖이다(2026-09-28 검증 V-A4 b03·b04·c04·c10 — 넷 다 객체 수 13 → 14).
-  #   같은 행으로 10.3 REL-probe · 10.4 REL-rbac-ns를 판정하고, Role 이름 집합(10.4 REL-rbac-bind)도 여기서 모은다.
+  #   모드 차트를 따로 설치) 등은 10.2·10.4의 시야 밖이다(2026-09-28 검증 V-A4 b03·b04·c04·c10 — 넷 다 객체 수가 1 늘어난다).
+  #   같은 행으로 10.4 REL-rbac-ns를 판정하고, Role 이름 집합(10.4 REL-rbac-bind)도 여기서 모은다.
   if ! rows=$(src_extract "$idx" '[ (.kind // "-"), (.metadata.namespace // "-"), (.metadata.name // "-") ] | join(strenv(YQ_SEP))'); then
     fail "10.0 REL-render" "$label: yq 추출 실패(kind) — fail-closed"
     return 0
@@ -1765,9 +1759,6 @@ check_10_reloader() {
     [[ -n $rk ]] || continue
     kcount[$rk]=$(( ${kcount[$rk]:-0} + 1 )); ntot=$((ntot + 1))
     if [[ $rk == Role ]]; then roleset["$rns/$rname"]=1; fi
-    if [[ -n $REL_PROBE && $rk == Deployment && $rname == "$REL_PROBE" ]]; then
-      nprobe=$((nprobe + 1)); probes+="${probes:+, }$rns/$rname"; probens=$rns
-    fi
   done <<< "$rows"
   mapfile -t ks < <(printf '%s\n' "${!kcount[@]}" "${!kwant[@]}" | LC_ALL=C sort -u)
   for rk in "${ks[@]}"; do
@@ -1777,17 +1768,6 @@ check_10_reloader() {
   done
   if [[ -n $kmis ]]; then
     fail "10.3 REL-kinds" "$label: kind별 개수 불일치 [$kmis] — 실제 {$kact}(합계 $ntot) · 기대 {$kexp}(합계 $wtot) · 그 밖의 kind 0. 여분 객체는 그대로 적용된다(감시 ns 안의 추가 권한 · 이름 바꾼 두 번째 Reloader · HelmChart CR 등)"
-  fi
-
-  # 10.3 REL-probe — VD-9 시험 대상(REL_PROBE)이 있는 동안 그 Deployment는 정확히 1개이고 ns = REL_PROBE_NS.
-  #   최상위 `namespace:` 변환기는 차트 객체의 ns를 바꾸지 않고(`helmCharts[].namespace`가 정한다) 이 Deployment만 옮긴다
-  #   (kustomize 5.8.1 실측 — 2026-09-28 검증 V-A8·B4). 옮겨지면 Secret이 없는 ns라 시험이 성립하지 않는다.
-  if [[ -n $REL_PROBE ]]; then
-    if [[ $nprobe -ne 1 ]]; then
-      fail "10.3 REL-probe" "$label: Deployment $REL_PROBE ${nprobe}개 [$probes] — VD-9 시험 대상이 있는 동안 정확히 1개(ns $REL_PROBE_NS)여야 한다(시험 대상을 지우는 G2에서 REL_PROBE를 비운다)"
-    elif [[ $probens != "$REL_PROBE_NS" ]]; then
-      fail "10.3 REL-probe" "$label: Deployment $probens/$REL_PROBE — ns ≠ $REL_PROBE_NS(Secret $REL_PROBE가 있는 ns에서만 시험이 성립한다 · 최상위 namespace: 변환기는 차트 객체는 그대로 두고 이 Deployment만 옮긴다 — kustomize 5.8.1 실측)"
-    fi
   fi
 
   # 10.4 REL-rbac-ns — 렌더 전체의 Role·RoleBinding(이름 무관) ns 집합 = REL_WATCH_NS + 릴리스 ns, kind마다 정확 일치.
@@ -1916,7 +1896,7 @@ check_10_reloader() {
     fi
   fi
 
-  finish_group "10 REL" "$label: ClusterRole·ClusterRoleBinding 0 · Deployment $REL_RELEASE_NS/$REL_DEPLOY args = $ejson · kind {$kexp}(합계 $wtot)${REL_PROBE:+ · $REL_PROBE ns $REL_PROBE_NS} · Role·RoleBinding ns 집합 = {${want// /,}} · RoleBinding → 같은 ns의 Role · 주체 = ServiceAccount $REL_RELEASE_NS/$REL_SA · $REL_ROLE 규칙 동일·와일드카드 없음 · Reloader 이미지 컨테이너 1개(containers.0 · command 없음)" "$f0"
+  finish_group "10 REL" "$label: ClusterRole·ClusterRoleBinding 0 · Deployment $REL_RELEASE_NS/$REL_DEPLOY args = $ejson · kind {$kexp}(합계 $wtot) · Role·RoleBinding ns 집합 = {${want// /,}} · RoleBinding → 같은 ns의 Role · 주체 = ServiceAccount $REL_RELEASE_NS/$REL_SA · $REL_ROLE 규칙 동일·와일드카드 없음 · Reloader 이미지 컨테이너 1개(containers.0 · command 없음)" "$f0"
 }
 
 # -----------------------------------------------------------------------------

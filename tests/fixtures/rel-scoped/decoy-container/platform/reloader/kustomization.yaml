@@ -1,4 +1,4 @@
-# 부정 픽스처 10.4 REL-image(decoy-container · 2026-09-28 검증 V-A6 d05) — 긍정 트리(`deployment.yaml`·`rbac.yaml`·`vd9-probe.yaml`은
+# 부정 픽스처 10.4 REL-image(decoy-container · 2026-09-28 검증 V-A6 d05) — 긍정 트리(`deployment.yaml`·`rbac.yaml`은
 #   positive 사본)의 Deployment reloader/reloader `containers[0]` 자리에 **미끼 컨테이너**(pause 이미지 · 기대 args 그대로)를 넣었다.
 #   진짜 Reloader는 `containers.1`로 밀려나 `--namespaces=cloudflared`로 돈다. 10.2는 `containers[0]`의 args를 보므로 미끼가 통과시키고,
 #   이 결함을 잡는 것은 10.4 REL-image의 **위치 판정**(Reloader 이미지 컨테이너 = containers.0) 하나뿐이다 — 그 분기를 지우면 이 트리가
@@ -8,7 +8,6 @@ kind: Kustomization
 resources:
   - deployment.yaml
   - rbac.yaml
-  - vd9-probe.yaml
 patches:
   - target: { kind: Deployment, name: reloader, namespace: reloader }
     patch: |-

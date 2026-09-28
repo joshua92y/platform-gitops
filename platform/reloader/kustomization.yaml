@@ -33,10 +33,6 @@
 #   그 ns에서 임의 코드를 실행할 수 있으므로(이미지·명령 교체) Job `create`는 위험 수준을 올리지 않는다 — 그래서 수기
 #   RBAC로 깎지 않는다. 잔여 위험은 README §2.
 #
-# ⚠ 최상위 `namespace:` 변환기를 두지 않는다 — 차트 객체의 ns는 `helmCharts[].namespace`가 정하며 변환기의 영향을 받지 않고,
-#   `vd9-probe`만 그 ns로 옮겨진다(kustomize 5.8.1 실측 2026-09-28). 옮겨진 시험 대상은 Secret `vd9-probe`가 없는 ns라 시험이
-#   성립하지 않는다(validate 10.3 REL-probe가 잡는다).
-#
 # 설치 방식 = kustomize `helmCharts` 인플레이트(cert-manager T042 · vault T044 · external-secrets T045 선례). 전제: argocd-cm
 #   `kustomize.buildOptions: --enable-helm`. 로컬 재현: `kustomize build --enable-helm platform/reloader`(helm 필요).
 #   ⚠ 이 차트는 **HTTPS helm repo**다 — `repo:`에 `oci://`를 붙이지 않는다.
@@ -48,11 +44,6 @@
 # 되돌리기: README §5(`prune: false` — revert 뒤 운영자가 Deployment·SA·Role·RoleBinding을 지운다).
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-
-resources:
-  # ⚠ 일시 — VD-9 판정 뒤 제거 PR에서 **이 한 줄과 `vd9-probe/` 디렉터리**를 지운다(함께 고칠 곳 전체는 README §4 — validate 10.3 상수 포함).
-  #   `prune: false`라 Git에서 지워도 클러스터에는 남는다 → 운영자가 Deployment·Secret `vd9-probe`를 지운다.
-  - vd9-probe
 
 helmCharts:
   - name: reloader

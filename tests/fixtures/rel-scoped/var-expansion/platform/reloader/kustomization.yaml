@@ -1,5 +1,5 @@
-# 부정 픽스처 10.2 REL-args-exact(var-expansion · 2026-09-28 검증 V-A3 a04) — 긍정 트리(`deployment.yaml`·`rbac.yaml`·
-#   `vd9-probe.yaml`은 positive 사본)의 Reloader args 끝에 `$(RELOADER_EXTRA)`를, 컨테이너 env에 `RELOADER_EXTRA=--namespaces=cloudflared`를
+# 부정 픽스처 10.2 REL-args-exact(var-expansion · 2026-09-28 검증 V-A3 a04) — 긍정 트리(`deployment.yaml`·`rbac.yaml`은
+#   positive 사본)의 Reloader args 끝에 `$(RELOADER_EXTRA)`를, 컨테이너 env에 `RELOADER_EXTRA=--namespaces=cloudflared`를
 #   더했다. kubelet이 인자를 펼치면 `--namespaces`가 두 개가 되고 pflag StringSlice가 목록을 합친다(감시에 cloudflared 추가 — 하네스
 #   실측). 렌더에는 `$(…)`만 보이므로 예전 10.2·10.3은 PASS였다. 10.2 REL-args-exact(목록 불일치 + 단서 `$(`)만 FAIL해야 한다.
 #   helm·네트워크가 필요 없다.
@@ -8,7 +8,6 @@ kind: Kustomization
 resources:
   - deployment.yaml
   - rbac.yaml
-  - vd9-probe.yaml
 patches:
   - target: { kind: Deployment, name: reloader, namespace: reloader }
     patch: |-
