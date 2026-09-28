@@ -1,0 +1,30 @@
+# 부정 픽스처 7.4 APP-source-operation(operation · 2026-09-28 범위 한정 검증 DV-1) — Application `platform-reloader`의 `spec.source`는
+#   키 3개 · 이 저장소 · main 그대로지만 문서 **최상위**에 `operation`을 더했다. `operation.sync.source`·`revision`은 한 번의
+#   동기화가 쓸 source를 바꾼다(Argo CD v3.5.2 types.go — 컨트롤러 동작은 라이브 미실측). Git에 선언하는 필드가 아니다.
+#   7.4 APP-source-operation 한 줄만 FAIL해야 한다(부분 트리 — 단언은 7.4 줄과 `-[PASS] 7.4 APP-source`다).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-reloader
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "60"
+spec:
+  project: platform
+  source:
+    repoURL: https://github.com/joshua92y/platform-gitops.git
+    targetRevision: main
+    path: platform/reloader
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: reloader
+  syncPolicy:
+    automated: { prune: false, selfHeal: true }
+    syncOptions: [ServerSideApply=true, CreateNamespace=true, Prune=confirm, Delete=confirm, SkipDryRunOnMissingResource=true]
+operation:
+  sync:
+    revision: some-unreviewed-branch
+    source:
+      repoURL: https://github.com/joshua92y/platform-gitops.git
+      targetRevision: some-unreviewed-branch
+      path: somewhere/else

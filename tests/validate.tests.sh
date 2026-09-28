@@ -14,6 +14,11 @@
 # 대부분의 단언이 성립할 수 없으므로 즉시 실패한다(fail-closed). VALIDATE_TESTS_REQUIRE_TOOLS=1 또는 CI=true 이면
 # 도구 누락 시 SKIP 모드로 내려가지 않고 exit 1 (CI에서 조용히 불완전한 결과가 통과하지 않도록).
 # 각 케이스는 env -u 로 작성자 관련 환경변수를 지우고 시작한다(CI의 GITHUB_EVENT_NAME 등이 새지 않도록).
+#
+# 부분 실행: VALIDATE_TESTS_ONLY='<bash 확장 정규식>'이면 이름이 맞는 케이스만 돌리고 나머지는 건너뛴다(건너뛴 수를 센다).
+#   요약 줄이 "부분 실행 — 필터 '…' · 건너뜀 N"을 드러내고, 맞는 케이스가 0개면 exit 1이다(빈 실행을 통과로 읽지 않는다).
+#   예: VALIDATE_TESTS_ONLY='^(positive|app-source-)' bash tests/validate.tests.sh
+#   ⚠ 부분 실행은 반복 작업용이다 — PR·과제 마무리 판정은 필터 없는 전체 실행으로 한다(tests/README.md). 비어 있으면 필터 없음.
 # =============================================================================
 set -euo pipefail
 
@@ -44,8 +49,33 @@ fi
 N=0; NF=0
 FAILED=()
 
+# 부분 실행 필터(머리 주석 「부분 실행」). 정규식이 틀리면 조용히 0건이 되지 않도록 먼저 거른다([[ =~ ]]는 2를 돌려준다).
+ONLY=${VALIDATE_TESTS_ONLY:-}
+NSKIP=0
+if [[ -n $ONLY ]]; then
+  # 부분 실행은 반복 작업용이다. CI와 판정용 실행(도구 누락 규칙과 같은 두 스위치)에서는 부분 실행의 exit 0이 "전체 통과"로
+  # 읽히지 않도록 아예 실행하지 않는다(2026-09-28 범위 한정 검증 DV-4).
+  if [[ ${VALIDATE_TESTS_REQUIRE_TOOLS:-0} == 1 || ${CI:-} == true ]]; then
+    printf "VALIDATE_TESTS_ONLY='%s' — VALIDATE_TESTS_REQUIRE_TOOLS=1/CI=true 에서는 부분 실행을 허용하지 않는다(exit 1)\n" "$ONLY"
+    exit 1
+  fi
+  only_rc=0
+  [[ '' =~ $ONLY ]] || only_rc=$?
+  if [[ $only_rc == 2 ]]; then
+    printf "VALIDATE_TESTS_ONLY='%s'는 bash 확장 정규식이 아니다 — 실행하지 않는다(exit 1)\n" "$ONLY"
+    exit 1
+  fi
+fi
+# selected <케이스 이름> — 필터가 없거나 이름이 맞으면 0. 아니면 건너뜀을 세고 1
+selected() {
+  if [[ -z $ONLY ]] || [[ $1 =~ $ONLY ]]; then return 0; fi
+  NSKIP=$((NSKIP + 1))
+  return 1
+}
+
 # run_case <이름> <root> <기대 exit> [--env K=V]... [+있어야 할 문자열 | -있으면 안 되는 문자열]...
 run_case() {
+  selected "$1" || return 0
   local name=$1 root=$2 want=$3; shift 3
   local -a envs=() asserts=()
   while [[ $# -gt 0 ]]; do
@@ -301,7 +331,7 @@ run_case secrets-owner-ns-transform "$FIX/secrets-owner/ns-transform" 1 \
   '-[FAIL] 7.3 WAVE-secrets-base — Application 없음'
 
 # --- 7.4: Application은 source를 덮어쓰지 않는다(T046 · 계약 §validate.yml 4 「(T046)」 둘째 줄) ---------------
-# 세 트리 모두 Application 파일 하나뿐인 부분 트리다 — exit 1은 5.x 등 무관한 FAIL로도 나므로 판정 근거가 아니다.
+# 다섯 트리 모두 부분 트리다(Application 파일 하나 — source-file은 거기에 `.argocd-source*.yaml` 둘) — exit 1은 5.x 등 무관한 FAIL로도 나므로 판정 근거가 아니다.
 # 근거는 그 하위 코드의 `+[FAIL]` 단언과 `-[PASS] 7.4 APP-source`(그룹이 통과하지 않았음) 음성 단언이다(2026-09-28 검증 V-A7).
 run_case app-source-kustomize-patches "$FIX/app-source/kustomize-patches" 1 \
   "+[FAIL] 7.4 APP-source — clusters/oci-k3s/apps/platform-reloader.yaml Application/platform-reloader: spec.source 키 [kustomize,path,repoURL,targetRevision] ≠ {path, repoURL, targetRevision}" \
@@ -313,6 +343,21 @@ run_case app-source-ref "$FIX/app-source/ref" 1 \
   "+[FAIL] 7.4 APP-source-ref — clusters/oci-k3s/apps/platform-reloader.yaml Application/platform-reloader: spec.source.repoURL 'https://github.com/someone-else/platform-gitops.git' ≠ https://github.com/joshua92y/platform-gitops.git" \
   "+[FAIL] 7.4 APP-source-ref — clusters/oci-k3s/apps/platform-reloader.yaml Application/platform-reloader: spec.source.targetRevision 'some-unreviewed-branch' ≠ main" \
   '-[PASS] 7.4 APP-source' '-[FAIL] 7.4 APP-source —' '-[FAIL] 7.4 APP-source-multi' '-[FAIL] 2 APP-SSA' '-[FAIL] 7.1'
+# `spec.source`를 건드리지 않고 적용 렌더를 바꾸는 두 경로(2026-09-28 재검증 RB-1 — Argo CD v3.5.2 소스 판독, 라이브 미실측).
+#   source-file: Application은 정상(키 3개)이고 source 경로 안에 `.argocd-source.yaml` · `.argocd-source-<앱 이름>.yaml`이 있다
+#   — Argo가 두 파일을 source 파라미터에 합친다. 파일마다 7.4 APP-source-file 한 줄, 다른 7.4 코드는 없어야 한다.
+run_case app-source-source-file "$FIX/app-source/source-file" 1 \
+  "+[FAIL] 7.4 APP-source-file — platform/reloader/.argocd-source-platform-reloader.yaml: " \
+  "+[FAIL] 7.4 APP-source-file — platform/reloader/.argocd-source.yaml: " \
+  '-[PASS] 7.4 APP-source' '-[FAIL] 7.4 APP-source —' '-[FAIL] 7.4 APP-source-multi' '-[FAIL] 7.4 APP-source-ref' '-[FAIL] 7.4 APP-source-hydrator' '-[FAIL] 2 APP-SSA' '-[FAIL] 7.1'
+#   hydrator: `spec.source`는 키 3개 그대로인데 `spec.sourceHydrator`가 있다 — Argo는 `spec.source`보다 hydrator의 syncSource를 먼저 쓴다.
+run_case app-source-hydrator "$FIX/app-source/hydrator" 1 \
+  "+[FAIL] 7.4 APP-source-hydrator — clusters/oci-k3s/apps/platform-reloader.yaml Application/platform-reloader: spec.sourceHydrator 금지" \
+  '-[PASS] 7.4 APP-source' '-[FAIL] 7.4 APP-source —' '-[FAIL] 7.4 APP-source-multi' '-[FAIL] 7.4 APP-source-ref' '-[FAIL] 7.4 APP-source-file' '-[FAIL] 2 APP-SSA' '-[FAIL] 7.1'
+#   operation: `spec.source`는 키 3개 그대로인데 문서 최상위에 `operation`이 있다 — 한 번의 동기화 source를 바꾼다(DV-1).
+run_case app-source-operation "$FIX/app-source/operation" 1 \
+  "+[FAIL] 7.4 APP-source-operation — clusters/oci-k3s/apps/platform-reloader.yaml Application/platform-reloader: 최상위 operation 금지" \
+  '-[PASS] 7.4 APP-source' '-[FAIL] 7.4 APP-source —' '-[FAIL] 7.4 APP-source-multi' '-[FAIL] 7.4 APP-source-ref' '-[FAIL] 7.4 APP-source-hydrator' '-[FAIL] 7.4 APP-source-file' '-[FAIL] 2 APP-SSA' '-[FAIL] 7.1'
 
 # --- gitleaks: 대상 0개 = FAIL --------------------------------------------------
 run_case gitleaks-empty "$FIX/gitleaks-empty" 1 \
@@ -537,12 +582,22 @@ run_case author-push-event-ok "$FIX/positive" 0 \
   "+[PASS] 6 AUTHOR — PR 작성자 미지정(push 이벤트 등)"
 
 # --- 저장소 밖 root 거부(exit 2) — 실제 트리 검사는 여기서 하지 않는다(트리 상태에 따라 결과가 달라지므로) -----
-outside_rc=0
-bash "$VALIDATE" --root / >/dev/null 2>&1 || outside_rc=$?
-N=$((N + 1))
-if [[ $outside_rc == 2 ]]; then printf '[PASS] root-outside-repo-rejected\n'; else NF=$((NF + 1)); FAILED+=(root-outside-repo-rejected); printf '[FAIL] root-outside-repo-rejected (exit %s ≠ 2)\n' "$outside_rc"; fi
+if selected root-outside-repo-rejected; then
+  outside_rc=0
+  bash "$VALIDATE" --root / >/dev/null 2>&1 || outside_rc=$?
+  N=$((N + 1))
+  if [[ $outside_rc == 2 ]]; then printf '[PASS] root-outside-repo-rejected\n'; else NF=$((NF + 1)); FAILED+=(root-outside-repo-rejected); printf '[FAIL] root-outside-repo-rejected (exit %s ≠ 2)\n' "$outside_rc"; fi
+fi
 
-printf '\n== 자기검사 요약: %d 케이스, 실패 %d ==\n' "$N" "$NF"
+if [[ -n $ONLY ]]; then
+  printf "\n== 자기검사 요약(부분 실행 — 필터 '%s' · 건너뜀 %d): %d 케이스, 실패 %d ==\n" "$ONLY" "$NSKIP" "$N" "$NF"
+  if [[ $N -eq 0 ]]; then
+    printf "필터 '%s'에 맞는 케이스 0개 — 빈 실행을 통과로 읽지 않는다(exit 1)\n" "$ONLY"
+    exit 1
+  fi
+else
+  printf '\n== 자기검사 요약: %d 케이스, 실패 %d ==\n' "$N" "$NF"
+fi
 if [[ $NF -gt 0 ]]; then
   printf '실패: %s\n' "${FAILED[*]}"
   exit 1

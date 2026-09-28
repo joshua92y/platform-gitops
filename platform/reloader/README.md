@@ -57,10 +57,11 @@ Stakater Reloader 차트 **2.2.16**(appVersion v1.4.21)을 **scoped 모드**로 
   | 이름이 다른 두 번째 Reloader · 같은 파드의 두 번째 컨테이너 · `command` 안의 `--namespaces=` · `containers[0]` 미끼 · 다른 레지스트리 이미지 | 10.4 REL-image(`second-deploy`·`second-container`·`command`·`decoy-container`·`image-registry`) |
   | 감시 목록 밖 ns의 Role·RoleBinding · 다른 주체·ClusterRole을 가리키는 RoleBinding · 한 ns만 넓힌 규칙·와일드카드 | 10.4 REL-rbac-ns · REL-rbac-bind · REL-rbac-rules(`rb-subject`·`role-wildcard`) |
   | 표 밖의 kind(K3s `HelmChart` CR 등) · 객체 수 · 시험 대상이 다른 ns로 옮겨짐 | 10.3 REL-kinds · REL-probe(`extra-kind`·`probe-namespace`) |
-  | Application 수준 오버라이드(`spec.source.kustomize.patches` 등) · 다른 리비전 · multi-source | 7.4 APP-source(`../../tests/fixtures/app-source/`) |
+  | Application `spec.source`의 오버라이드 키(`kustomize.patches` 등) · 다른 리비전 · multi-source · `spec.sourceHydrator` · source 경로의 `.argocd-source.yaml`·`.argocd-source-<앱 이름>.yaml` · Application 최상위 `operation`(`operation.sync`의 source·revision·manifests) | 7.4 APP-source · -ref · -multi · -hydrator · -file · -operation(`../../tests/fixtures/app-source/`) — **우회 경로를 전부 덮는다고 주장하지 않는다**(전수 열거는 T047): 사각(`kind: List`로 감싼 Application 등)은 `../../tests/README.md` 「검사 7.4가 보지 않는 것」 |
 
   **보지 않는 것**: 다른 컴포넌트 렌더가 ServiceAccount `reloader/reloader`에 주는 RoleBinding·ClusterRoleBinding(전 렌더 교차 검사는
-  T047 후보 — `../../tests/README.md` 「검사 10이 보지 않는 것」).
+  T047 후보), `reloader-role` 4장을 똑같이 넓힌 규칙 · 이름이 `reloader-role`이 아닌 Role의 규칙 내용(둘 다 §1의 대조가 잡는다) —
+  전체 목록은 `../../tests/README.md` 「검사 10이 보지 않는 것」.
 
 **새 소비자 ns를 더하는 순서**(한 줄씩, 세 곳):
 
@@ -176,6 +177,8 @@ bash tests/validate.sh                                                          
 | 단계 0 둘째 줄 · 단계 2 마지막 줄(Secret 값 확인) | 운영자(admin kubeconfig) | Secret get |
 | 단계 1 · 단계 3 · 판정 ⑥ | 운영자 또는 에이전트(`agent-view` 토큰) | 읽기만 — `applications` get·list + 기본 ClusterRole `view`(Deployment·ReplicaSet·`pods/log`) |
 
+에이전트가 돌릴 때는 도구 제한 시간이 **6분 이상**이어야 한다(단계 3은 5분 관찰 + 끝의 조회 — 짧으면 도중에 끊겨 끝의 OK/FAIL 줄이 찍히지 않는다).
+
 - **단계 1–3은 한 주체가 한 PowerShell 세션에서 돌린다.** 단계 3은 단계 1의 기준값(`$baseHistMax`·`$baseOpStart`·`$baseAuto`·`$baseHeal`)과
   단계 2의 `$t0`을 변수로 쓴다. 나눠 돌리면(예: 단계 2는 운영자, 단계 1·3은 에이전트 — 에이전트 실행은 호출마다 새 프로세스다) 단계 1·2가 찍은
   `base…=`·`t0=` 줄을 **기록해 두고**, 단계 3 첫머리의 주석 줄에 그 값을 적어 넣는다. 값이 없으면 단계 3은 throw로 멈춘다(기준 없이 판정하지 않는다).
@@ -251,22 +254,36 @@ $v = kubectl -n jt-dev get secret vd9-probe -o 'jsonpath={.data.probe}'; "probe=
 ```
 
 **단계 3 — 5분 관찰(읽기만)**. 30초마다 한 줄. 도중에 `rev`가 3 이상이 되면 그 자리에서 멈추고 판정 ③ FAIL로 기록한다.
+끝에 판정 ③④⑤를 **항목마다 OK/FAIL**로 찍는다 — `OK`만 남은 출력이나 빈 출력을 PASS로 읽지 않는다. 표본이 0개(관찰 창 `t0 + 5분`이 이미
+지났다)이거나 revision이 정수가 아니면(빈 값 포함) throw로 멈춘다(판정 불가 — 재측정 여부는 사용자가 정한다).
+표본이 있어도 **관찰 창을 덮지 못하면 `표본` 줄이 FAIL**이다 — 단계 3을 늦게 시작해 표본 한두 개로 ③④가 `OK`로 찍히는 일을 막는다
+(기대: 6개 이상 · 첫 표본 `t0`+60초 이내 · 마지막 표본 `t0`+240초 이상. 30초 간격에 조회 시간이 더해지므로 개수는 8–10개가 보통이다).
 
 ```powershell
 $ErrorActionPreference = 'Stop'
 function kq { $o = kubectl @args; if ($LASTEXITCODE -ne 0) { throw "kubectl $args → exit $LASTEXITCODE — 판정 불가" }; (@($o) -join "`n").TrimEnd() }
+function okf([bool]$c) { if ($c) { 'OK' } else { 'FAIL' } }
 # 단계 1·2와 다른 세션이면 기록한 값을 아래 주석을 풀어 적는다(같은 세션이면 그대로 둔다):
 # $t0 = [datetime]::Parse('<t0=의 값>', $null, 'RoundtripKind'); $baseHistMax = <n>; $baseOpStart = '<…>'; $baseAuto = '<…>'; $baseHeal = '<…>'
 if ($null -eq $t0 -or $null -eq $baseHistMax -or -not $baseOpStart) { throw '기준값($t0·$baseHistMax·$baseOpStart) 없음 — 단계 1·2를 같은 세션에서 돌리거나 기록한 값을 위 줄에 적는다' }
+$samples = [System.Collections.Generic.List[object]]::new()
 while ((Get-Date) - $t0 -lt [TimeSpan]::FromMinutes(5)) {
   $rev = kq -n jt-dev get deploy vd9-probe -o 'jsonpath={.metadata.annotations.deployment\.kubernetes\.io/revision}'
+  if ($rev -notmatch '^\d+$') { throw "revision '$rev' — 정수가 아니다(빈 값 포함) · 판정 불가" }
   $app = kq -n argocd get application platform-reloader -o 'jsonpath={.status.sync.status}/{.status.health.status}'
   $ops = kq -n argocd get application platform-reloader -o 'jsonpath={.status.operationState.startedAt}'
+  $sync, $health = $app -split '/', 2
+  $samples.Add([pscustomobject]@{ Rev = [int]$rev; Sync = $sync; Health = $health; At = [int]((Get-Date) - $t0).TotalSeconds })
   "{0:HH:mm:ss} rev={1} app={2} opStart={3}" -f (Get-Date), $rev, $app, $ops
   if ([int]$rev -ge 3) { '판정 ③ FAIL — revision 3 이상(여기서 멈춘다)'; break }
   Start-Sleep -Seconds 30
 }
-kq -n jt-dev get rs -l 'app=vd9-probe' -o 'jsonpath={range .items[*]}{.metadata.name} replicas={.spec.replicas} rev={.metadata.annotations.deployment\.kubernetes\.io/revision}{"\n"}{end}'
+if ($samples.Count -lt 1) { throw '표본 0개 — 관찰 창(t0 + 5분)이 이미 지났다 · 판정 불가' }
+$rs = kq -n jt-dev get rs -l 'app=vd9-probe' -o 'jsonpath={range .items[*]}{.metadata.name} replicas={.spec.replicas} rev={.metadata.annotations.deployment\.kubernetes\.io/revision}{"\n"}{end}'
+$rs
+$rsRows = @($rs -split "`r?`n" | Where-Object { $_ -ne '' } | ForEach-Object {
+  if ($_ -notmatch '^(\S+) replicas=(\d+) rev=(\d+)$') { throw "ReplicaSet 줄 형식 이상 '$_' · 판정 불가" }
+  [pscustomobject]@{ Replicas = [int]$Matches[2]; Rev = [int]$Matches[3] } })
 $lrf = kq -n jt-dev get deploy vd9-probe -o 'jsonpath={.spec.template.metadata.annotations.reloader\.stakater\.com/last-reloaded-from}'
 "last-reloaded-from=[$lrf]"
 $hist = kq -n argocd get application platform-reloader -o 'jsonpath={.status.history[*].id}'
@@ -278,8 +295,22 @@ if (-not $opStart) { throw 'operationState.startedAt 빈 값 — 판정 불가' 
 'opStart={0} (기준 {1}) {2}' -f $opStart, $baseOpStart, $(if ([string]::Equals($opStart, $baseOpStart, [StringComparison]::Ordinal)) { 'OK — 관찰 중 새 operation 없음' } else { 'FAIL — 관찰 중 새 operation(아래 두 값으로 종류를 가린다)' })
 'autoHealAttemptsCount=[{0}] (기준 [{1}]) · initiatedBy.automated=[{2}] (기준 [{3}]) — 빈 값 = 0·false(omitempty)' -f $heal, $baseHeal, $auto, $baseAuto
 'histMax={0} (기준 {1}) {2}' -f $histMax, $baseHistMax, $(if ($histMax -eq $baseHistMax) { 'OK — 전체 동기화가 끼어들지 않았다(보조 확인)' } else { '다름 — 전체 동기화가 끼어들었다(관찰 창 무효 · 재측정)' })
-@((kq -n reloader logs deploy/reloader '--since=10m') -split "`r?`n" | Select-String -SimpleMatch 'vd9-probe')
+$reload = @((kq -n reloader logs deploy/reloader '--since=10m') -split "`r?`n" | Select-String -SimpleMatch 'vd9-probe')
+$reload
+$last = $samples[$samples.Count - 1]
+$nSynced = @($samples | Where-Object { [string]::Equals($_.Sync, 'Synced', [StringComparison]::Ordinal) }).Count
+$old = @($rsRows | Where-Object { $_.Rev -eq 1 })
+'표본 = {0}개 · 첫 표본 t0+{1}s · 마지막 표본 t0+{2}s (기대 6개 이상 · 60초 이내 · 240초 이상) {3}' -f $samples.Count, $samples[0].At, $last.At, (okf ($samples.Count -ge 6 -and $samples[0].At -le 60 -and $last.At -ge 240))
+'③ 마지막 rev = {0} (기대 2) {1}' -f $last.Rev, (okf ($last.Rev -eq 2))
+'③ ReplicaSet = {0}개 · rev 1의 replicas = [{1}] (기대 2개 · 0) {2}' -f $rsRows.Count, (@($old | ForEach-Object { $_.Replicas }) -join ','), (okf ($rsRows.Count -eq 2 -and $old.Count -eq 1 -and $old[0].Replicas -eq 0))
+'④ sync = Synced 표본 {0}/{1} (기대 전부) {2}' -f $nSynced, $samples.Count, (okf ($nSynced -eq $samples.Count))
+'④ 마지막 health = {0} (기대 Healthy) {1}' -f $last.Health, (okf ([string]::Equals($last.Health, 'Healthy', [StringComparison]::Ordinal)))
+'⑤ last-reloaded-from 있음 (기대 비어 있지 않음) {0}' -f (okf (-not [string]::IsNullOrEmpty($lrf)))
+'⑤ 재적재 로그 줄 = {0} (기대 1) {1}' -f $reload.Count, (okf ($reload.Count -eq 1))
 ```
+
+위 `OK`/`FAIL` 줄과 `opStart` 줄이 전부 `OK`여야 ③④⑤가 PASS다(④의 "롤아웃 직후 표본의 `Progressing` 허용"은 관찰 줄을 사람이 본다 —
+마지막 표본이 `Healthy`인지만 기계로 가린다). `histMax` 줄이 `다름`이면 관찰 창이 무효다(재측정).
 
 **판정 ⑥ 명령(읽기만)**. 빈 출력을 PASS로 읽지 않는다 — 조회 실패는 `kq`가 멈추고, 개수와 로그 문구는 기대값과 **항목마다** OK/FAIL로
 대조한다. 기대 개수는 §1 표(렌더 13장)와 같다.
@@ -321,9 +352,13 @@ $wantCtrl = [string[]]@(foreach ($t in 'configmaps', 'secrets') { foreach ($n in
 - ④의 selfHeal 근거(Argo CD v3.5.2 소스): selfHeal은 OutOfSync 리소스만 `operation.sync.resources`에 담는 **부분 동기화**이고
   (`controller/appcontroller.go` 2412–2421행), `status.history`는 리소스를 지정하지 않은 동기화가 성공했을 때만 기록된다(`controller/sync.go`
   408행) — 그래서 history로는 selfHeal을 볼 수 없다. 모든 operation은 `status.operationState.startedAt`을 새로 쓰므로 이 값이 기준과 같으면
-  관찰 중 operation이 없었다. 값이 바뀌었으면 `status.operationState.operation.sync.autoHealAttemptsCount`가 기준보다 커졌는지로 가린다 —
-  커졌으면 **selfHeal**(= Argo가 Reloader의 어노테이션을 되돌렸다 → ④ FAIL), 그대로면 다른 동기화(새 커밋의 자동 동기화 ·
-  `initiatedBy.automated`가 빈 값이면 사람의 수동 동기화)가 끼어든 것이라 관찰 창이 무효다(재측정). 필드 이름은
+  관찰 중 operation이 없었다. 값이 바뀌었으면(= ④ FAIL 또는 재측정 — 어느 쪽도 PASS가 아니다) `status.operationState.operation.sync.autoHealAttemptsCount`로
+  종류를 가린다 — 기준보다 **크면 selfHeal**(= Argo가 Reloader의 어노테이션을 되돌렸다 → ④ FAIL), **아니면(같거나 작으면)** 다른 동기화(새 커밋의
+  자동 동기화 · `initiatedBy.automated`가 빈 값이면 사람의 수동 동기화)가 끼어든 것이라 관찰 창이 무효다(재측정). 작아지는 경우가 있다:
+  새 리비전의 자동 동기화는 새 Operation이라 count가 빈 값(= 0)으로 시작한다(`controller/appcontroller.go` 2367–2378행) — 기준이 1 이상이면
+  줄어든다. 그리고 관찰 창 안에 operation이 **두 번 이상** 있었으면(표본 줄의 `opStart`가 두 번 이상 바뀐다) 마지막 operationState만 남으므로
+  selfHeal 뒤에 새 커밋 동기화가 이어진 경우 count가 빈 값으로 읽혀 selfHeal이 가려진다 — 그때는 `opStart` 값마다 따로 본 것으로 치고
+  selfHeal을 배제하지 못한 것으로 기록한다(재측정). 필드 이름은
   `pkg/apis/application/v1alpha1/types.go` 1442행의 JSON 태그 `autoHealAttemptsCount`(Go 필드는 `SelfHealAttemptsCount`)다 —
   jsonpath에 `selfHealAttemptsCount`를 쓰면 없는 키라 **빈 출력 + exit 0**(가짜 `0`)이 된다.
 - ④의 health 허용 폭: 롤링 업데이트(replicas 1)는 `UpdatedReplicas < Replicas` 또는 `AvailableReplicas < UpdatedReplicas`인 동안
@@ -346,9 +381,9 @@ $wantCtrl = [string[]]@(foreach ($t in 'configmaps', 'secrets') { foreach ($n in
 - **실패 시**(설계 §3): ③에서 revision이 3 이상이면 Argo와 충돌한 것이다 → `reloadStrategy: env-vars`로 바꿔 재측정하거나
   `ignoreDifferences`를 검토한다(**결정은 사용자**). ⑥에서 감시가 안 되면 과제의 **옵션 B**(`watchGlobally: true` + `namespaceSelector` —
   ClusterRole이 남는 트레이드오프)로 전환하고 모노레포 `report.md`에 기록한다. 어느 쪽이든 계약·validate 10을 함께 고친다.
-- 라이브 자동 가드는 모노레포 하네스 `reloader-2`(Application `status.resources`의 ClusterRole·ClusterRoleBinding 0 · Deployment 인자 —
-  계약 §validate.yml 4 「(T046)」 첫째 줄과 같은 규칙)다. `reloader-2`는 **로그를 읽지 않는다** — 시작 로그(실제로 감시하는 ns)는 판정 ⑥
-  명령만 본다. 이 절의 명령은 판정 기록용이다.
+- 라이브 자동 가드는 모노레포 하네스 `reloader-2`(Application `status.resources`의 ClusterRole·ClusterRoleBinding 0과 Role `reloader-role` ns 집합 ·
+  Deployment 인자 — 계약 §validate.yml 4 「(T046)」 첫째 줄과 같은 규칙)다. `reloader-2`는 kind별 개수와 **로그를 보지 않는다** — 개수와
+  시작 로그(실제로 감시하는 ns)는 판정 ⑥ 명령만 본다. 이 절의 명령은 판정 기록용이다.
 
 ---
 
@@ -357,21 +392,40 @@ $wantCtrl = [string[]]@(foreach ($t in 'configmaps', 'secrets') { foreach ($n in
 1. **제거 PR(G2)** — 시험 대상을 언급하는 곳을 **전부** 한 PR에서 정리한다(2026-09-28 `grep -rn vd9` 전수 기준):
    - `platform/reloader/kustomization.yaml`: `- vd9-probe` 한 줄과 그 위 ⚠ 주석 두 줄 · 머리 주석의 변환기 문단(시험 대상 언급)
    - `platform/reloader/vd9-probe/` 디렉터리
-   - 이 README: 머리 표의 `vd9-probe/` 행과 변환기 문단 · §1(렌더 13 → 12 · kind 줄 기대값 `Deployment 1` · pause 이미지 grep 줄 ·
-     securityContext 기대 출력의 `jt-dev/vd9-probe` 줄 · 표의 Deployment 행) · §3 절차(판정 **기록 문단만** 남긴다) · 이 §4 · §5의 시험 대상 문장
+   - 이 README: 머리 표의 `vd9-probe/` 행과 변환기 문단(`REL-probe` 언급 포함) · §0 경로 표의 10.3 행(`REL-probe`·`probe-namespace` —
+     `REL-kinds`·`extra-kind`만 남긴다) · §1(렌더 13 → 12 · kind 줄 기대값 `Deployment 1` · pause 이미지 grep 줄 · securityContext 기대 출력의
+     `jt-dev/vd9-probe` 줄 · 표 제목의 합계와 Deployment 행) · §3 절차(판정 **기록 문단만** 남긴다) · 이 §4(단계 2·3은 아래처럼 §3으로 옮긴다) ·
+     §5의 시험 대상 문장
    - `clusters/oci-k3s/apps/platform-reloader.yaml` 머리 주석 · `platform/README.md`의 reloader 행
-   - `tests/validate.sh`: **`REL_KINDS`의 `Deployment:2` → `Deployment:1`(합계 13 → 12)** · `REL_PROBE`·`REL_PROBE_NS`를 빈 문자열로 · 그 주석
+   - `tests/validate.sh`: **`REL_KINDS`의 `Deployment:2` → `Deployment:1`(합계 13 → 12)** · 10.3 REL-probe 검사를 **지운다**(상수
+     `REL_PROBE`·`REL_PROBE_NS`와 그 위 ⚠ 주석 · `check_10_reloader`의 REL-probe 블록과 변수 · 10 REL PASS 줄의 `${REL_PROBE:+…}`) ·
+     머리 주석의 10.3 두 줄(`REL-kinds`의 `Deployment 2 … = 13` · `REL-probe` 줄). 빈 문자열로 끄지 않고 지우는 이유: 아래 완료 조건 grep이
+     `REL-probe` 0건을 요구한다(꺼 둔 코드도 걸린다)
    - 픽스처: `tests/fixtures/positive/platform/reloader/vd9-probe.yaml`과 그 사본 `tests/fixtures/rel-scoped/*/platform/reloader/vd9-probe.yaml`
-     삭제 + 각 `kustomization.yaml`의 `- vd9-probe.yaml` 줄 · `tests/fixtures/rel-scoped/probe-namespace/` 삭제
-   - `tests/validate.tests.sh`: 긍정 단언의 10 REL PASS 문구(kind 합계 · `vd9-probe ns jt-dev`) · 개수가 박힌 단언(`Deployment 3≠2` 등) ·
-     `rel-scoped-probe-namespace` 케이스 · `tests/README.md` 검사 10 절의 시험 대상·`REL-probe` 언급
+     삭제 + 각 `kustomization.yaml`의 `- vd9-probe.yaml` 줄 · 긍정 픽스처 `kustomization.yaml` 머리 주석(`Deployment 2 … = 13`) ·
+     `tests/fixtures/rel-scoped/probe-namespace/` 삭제
+   - `tests/validate.tests.sh`: 긍정 단언의 10 REL PASS 문구(kind 합계 · `vd9-probe ns jt-dev`)와 그 위 ⚠ 주석 · 개수가 박힌 단언(`Deployment 3≠2` 등) ·
+     `-[FAIL] 10.3 REL-probe` 음성 단언 전부 · `rel-scoped-probe-namespace` 케이스 · `REL_PURE`의 `probe-namespace` · 픽스처 설명 주석 ·
+     `tests/README.md` 검사 10 절의 시험 대상·`REL-probe`·`probe-namespace`·`Deployment 2` 언급
    - 모노레포(별도 저장소): 하네스 `reloader-2`·런북에 시험 대상 개수(Deployment 2 · 합계 13)가 있으면 같은 시점에 고친다
+   - **운영자 삭제 명령**(아래 단계 3의 블록)은 지우지 않고 §3 판정 기록 문단으로 **옮긴다** — 단계 3은 G2 머지 **뒤에** 실행하므로 그때 main에서
+     읽을 수 있어야 한다. 실행 결과(시각 · 출력)도 그 문단에 적는다.
 
-   **완료 조건**: `grep -rn vd9 --exclude-dir=charts --exclude-dir=.git .` 결과 **0건**(이 README §3의 판정 기록 문단 제외) ·
-   `bash tests/validate.sh` FAIL 0 · `bash tests/validate.tests.sh` 실패 0.
+   **완료 조건**: 첫째 grep **0건**(이 README §3의 판정 기록 문단 — 옮긴 운영자 삭제 명령 포함 — 만 예외) · 둘째 grep은 아래
+   **남는 것이 정상인 2건만** · `bash tests/validate.sh` FAIL 0 · `bash tests/validate.tests.sh` 실패 0(필터 없는 전체 실행).
+
+   ```bash
+   grep -rn vd9 --exclude-dir=charts --exclude-dir=.git .
+   grep -rn 'REL-probe\|probe-namespace\|Deployment:2\|Deployment 2\|Deployment = 2\|합계 13' --exclude-dir=charts --exclude-dir=.git .
+   ```
+
+   둘째 grep에 **남는 2건**(G2가 기대 개수를 Deployment 1 · 합계 12로 낮추면 음성 단언의 "실제" 쪽 숫자가 한 칸씩 내려와 같은 문자열이 된다 —
+   0건을 요구하면 G2를 정확히 마쳐도 통과할 수 없다): `tests/validate.tests.sh`의 `rel-scoped-second-deploy` 단언 `Deployment 2≠1`(지금은
+   `Deployment 3≠2`) · `rel-scoped-extra-kind` 단언 `… Deployment 1 · …(합계 13)`(지금은 `Deployment 2 …(합계 14)`). 그 밖의 줄이 남으면
+   시험 대상의 개수가 남은 것이다.
 2. 머지 뒤 `platform-reloader`는 `prune: false`라 **`vd9-probe`를 지우지 않는다** — Git에서 사라진 객체로 남아 Application이
    OutOfSync(prune 필요)로 보인다.
-3. **운영자가 지운다**(쓰기 2 — Deployment 먼저):
+3. **운영자가 지운다**(쓰기 2 — Deployment 먼저. G2는 이 블록을 §3 판정 기록 문단으로 옮긴다 — 위 1):
 
    ```powershell
    kubectl -n jt-dev delete deployment vd9-probe

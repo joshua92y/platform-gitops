@@ -1,0 +1,31 @@
+# 부정 픽스처 7.4 APP-source-hydrator(hydrator · 2026-09-28 재검증 RB-1) — Application `platform-reloader`의 `spec.source`는 키 3개 ·
+#   이 저장소 · main 그대로지만 `spec.sourceHydrator`를 더했다. Argo CD v3.5.2의 `ApplicationSpec.GetSource()`는 hydrator가 있으면
+#   `spec.source`보다 그 syncSource(리뷰되지 않은 브랜치 · 다른 경로)를 먼저 돌려준다 — validate가 본 트리와 다른 것을 적용한다.
+#   7.4 APP-source-hydrator 한 줄만 FAIL해야 한다(부분 트리 — 단언은 7.4 줄과 `-[PASS] 7.4 APP-source`다).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-reloader
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "60"
+spec:
+  project: platform
+  source:
+    repoURL: https://github.com/joshua92y/platform-gitops.git
+    targetRevision: main
+    path: platform/reloader
+  sourceHydrator:
+    drySource:
+      repoURL: https://github.com/joshua92y/platform-gitops.git
+      targetRevision: main
+      path: platform/reloader
+    syncSource:
+      targetBranch: some-unreviewed-branch
+      path: somewhere/else
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: reloader
+  syncPolicy:
+    automated: { prune: false, selfHeal: true }
+    syncOptions: [ServerSideApply=true, CreateNamespace=true, Prune=confirm, Delete=confirm, SkipDryRunOnMissingResource=true]

@@ -51,7 +51,10 @@
 #                           kustomization = 거기에 namespace 까지(그 밖의 키는 FAIL · YAML 맵으로 못 읽어도 FAIL)
 #   7.4  APP-source         (T046 · 계약 §validate.yml 4 「(T046)」 둘째 줄) Application은 source를 덮어쓰지 않는다: `spec.source` 키 =
 #                           {repoURL, targetRevision, path}뿐(kustomize·helm·directory·plugin 금지) · repoURL = 이 저장소 ·
-#                           targetRevision = main(7.4 APP-source-ref) · `spec.sources`(multi-source) 금지(7.4 APP-source-multi).
+#                           targetRevision = main(7.4 APP-source-ref) · `spec.sources`(multi-source) 금지(7.4 APP-source-multi)
+#                           · `spec.sourceHydrator` 금지(7.4 APP-source-hydrator) · 최상위 `operation` 금지(7.4 APP-source-operation)
+#                           · --root 트리(tests/·charts/ 제외)에
+#                           `.argocd-source.yaml`·`.argocd-source-*.yaml` 파일 금지(7.4 APP-source-file).
 #                           대상 = 7.1과 같은 파일 열거(clusters/**·bootstrap/root-app.yaml 등 모든 Application) + kustomize 렌더
 #   8    LEAK               gitleaks 파일 스캔 — 스캔 대상 0개(빈 트리)면 FAIL
 #   9.1  CSS-set            ClusterSecretStore 이름 집합 = 계약 5개 · 위치 platform/secret-stores/ · metadata.namespace 금지
@@ -302,8 +305,8 @@ REL_LOG_LEVEL='info'           # 차트 2.2.16 기본 `reloader.logLevel` — 10
 # 10.3 REL-kinds — 렌더 전체의 kind별 개수(차트 12 = ServiceAccount 1 · Deployment 1 · Role 5 · RoleBinding 5, 여기에 VD-9 시험 대상
 #   Deployment 1). 그 밖의 kind는 0이어야 한다. Role·RoleBinding 5 = 감시 ns 3 + 릴리스 ns 1의 `reloader-role(-binding)` + 릴리스 ns의
 #   `reloader-metadata-role(-binding)`이다 — 감시 ns를 하나 늘리면 둘 다 +1(platform/reloader/README.md §0).
-#   ⚠ VD-9 시험 대상 제거 PR(G2)에서 `Deployment:2` → `Deployment:1`(합계 13 → 12)로 바꾸고 REL_PROBE·REL_PROBE_NS를 빈 문자열로
-#   만든다(platform/reloader/README.md §4 — 픽스처의 vd9-probe.yaml과 단언 문자열도 같은 PR).
+#   ⚠ VD-9 시험 대상 제거 PR(G2)에서 `Deployment:2` → `Deployment:1`(합계 13 → 12)로 바꾸고 10.3 REL-probe 검사(REL_PROBE·REL_PROBE_NS와
+#   check_10_reloader의 그 블록)를 지운다(platform/reloader/README.md §4 — 픽스처의 vd9-probe.yaml과 단언 문자열도 같은 PR).
 REL_KINDS='ServiceAccount:1 Deployment:2 Role:5 RoleBinding:5'
 REL_PROBE='vd9-probe'          # 10.3 REL-probe: 시험 대상 Deployment 이름(빈 문자열이면 검사하지 않는다)
 REL_PROBE_NS='jt-dev'          # 시험 대상이 있어야 할 ns(Secret vd9-probe가 있는 곳)
@@ -330,7 +333,9 @@ SECRETS_SRC_DIR='secrets'
 # 검사 7.4 — 계약 §validate.yml 4 「(T046) Application은 source를 덮어쓰지 않는다」의 코드 사본.
 #   Application 수준 오버라이드(`spec.source.kustomize.patches` · `helm.values` 등)와 다른 리비전은 **Argo가 적용하는 렌더를
 #   validate가 빌드한 렌더와 다르게** 만든다 — 렌더를 보는 검사(3 · 5.6 · 9 · 10)가 한꺼번에 무력해진다(2026-09-28 검증 V-A2).
-#   새 차트 저장소를 source로 직접 쓰는 컴포넌트가 생기면 계약 그 줄을 먼저 고친다.
+#   `spec.source` 밖의 세 경로(`.argocd-source*.yaml` 파일 · `spec.sourceHydrator` · 최상위 `operation`)도 같은 검사가 막는다(재검증
+#   RB-1 · DV-1). **모든 우회 경로를 덮는다고 주장하지 않는다**(전수 열거는 T047). 사각은
+#   check_7_app_source 머리 주석 「보지 않는 것」. 새 차트 저장소를 source로 직접 쓰는 컴포넌트가 생기면 계약 그 줄을 먼저 고친다.
 APP_REPO_URL='https://github.com/joshua92y/platform-gitops.git'
 APP_TARGET_REV='main'
 APP_SOURCE_KEYS='path,repoURL,targetRevision'   # 허용 키 집합(사전순 — yq `keys | sort | join(",")`의 모양)
@@ -482,11 +487,12 @@ YQ_KUST_BASES='((.resources // []) + (.bases // []) + (.components // []))[] | s
 #   YQ_APP(검사 2·7.1 공용)은 `.spec.sources[0]`만 보므로 두 번째 source가 검사 밖으로 빠진다 — 그 구멍을 여기서 막는다.
 # shellcheck disable=SC2016  # $n 은 yq 변수다
 YQ_APP_PATHS='select(.kind == "Application" and ((.apiVersion // "") | test("^argoproj.io/"))) | (.metadata.name // "-") as $n | (([.spec.source.path] + [(.spec.sources // [])[].path]) | map(select(. != null)))[] | [ $n, . ] | join(strenv(YQ_SEP))'
-# 7.4 — Application 1개 = 1행: 이름 · `spec.source` 유무 · `spec.sources` 유무 · source 키 집합(정렬) · repoURL · targetRevision.
+# 7.4 — Application 1개 = 1행: 이름 · `spec.source` 유무 · `spec.sources` 유무 · `spec.sourceHydrator` 유무 · 최상위 `operation` 유무 ·
+#   source 키 집합(정렬) · repoURL · targetRevision.
 #   ⚠ yq v4가 없는 경로를 traverse하면 그 키를 만들어 버리므로 유무(`has`)와 `keys`는 source를 traverse하기 **전에** 바인딩한다.
 #   spec·source가 맵이 아니면 has/keys가 실패한다 → collect_rows가 "yq 추출 실패"로 FAIL(fail-closed).
-# shellcheck disable=SC2016  # $sp·$s·$hs·$hss·$sk 는 yq 변수다
-YQ_APP_SRC='select(.kind == "Application" and ((.apiVersion // "") | test("^argoproj.io/"))) | (.spec // {}) as $sp | (($sp | has("source")) | tostring) as $hs | (($sp | has("sources")) | tostring) as $hss | ($sp.source // {}) as $s | (($s | keys | sort) | join(",")) as $sk | [ (.metadata.name // "-"), $hs, $hss, $sk, (($s.repoURL // "-") | tostring), (($s.targetRevision // "-") | tostring) ] | join(strenv(YQ_SEP))'
+# shellcheck disable=SC2016  # $ho·$sp·$s·$hs·$hss·$hh·$sk 는 yq 변수다
+YQ_APP_SRC='select(.kind == "Application" and ((.apiVersion // "") | test("^argoproj.io/"))) | (has("operation") | tostring) as $ho | (.spec // {}) as $sp | (($sp | has("source")) | tostring) as $hs | (($sp | has("sources")) | tostring) as $hss | (($sp | has("sourceHydrator")) | tostring) as $hh | ($sp.source // {}) as $s | (($s | keys | sort) | join(",")) as $sk | [ (.metadata.name // "-"), $hs, $hss, $hh, $ho, $sk, (($s.repoURL // "-") | tostring), (($s.targetRevision // "-") | tostring) ] | join(strenv(YQ_SEP))'
 YQ_HELM_COUNT='(.helmCharts // []) | length'
 # shellcheck disable=SC2016
 YQ_HELM_LEAVES='(.helmCharts // [])[] | (.name // "-") as $c | (.valuesInline // {}) | [.. | select(tag == "!!int" or tag == "!!str") | {"p": (path | join(".")), "v": (. | tostring)}] | .[] | [ $c, .p, .v ] | join(strenv(YQ_SEP))'
@@ -1374,17 +1380,45 @@ check_7_sync_wave() {
 #   중 하나만 있어도 **적용되는 렌더 ≠ 검사한 렌더**가 된다(2026-09-28 검증 V-A2: Application에 args 패치를 넣은 미니 트리가
 #   검사 10을 포함한 전체 PASS). 대상은 7.1과 같은 파일 열거(모든 YAML의 Application — 실제 트리에서는 clusters/oci-k3s/apps/*.yaml
 #   과 bootstrap/root-app.yaml)에 **kustomize 렌더도 더한다**(렌더에서만 나타나는 Application도 Argo가 적용할 수 있다).
+# `spec.source`를 건드리지 않고 적용 렌더를 바꾸는 두 경로도 막는다(2026-09-28 재검증 RB-1 — Argo CD v3.5.2 소스 판독, 라이브 미실측):
+#   (a) 7.4 APP-source-file — source 경로 안의 `.argocd-source.yaml` · `.argocd-source-<앱 이름>.yaml`. repo-server가 매 렌더마다 이 파일을
+#       source에 JSON merge patch로 합친다(reposerver/repository/repository.go `mergeSourceParameters` — Chart·Path·RepoURL·TargetRevision만
+#       원래 값으로 되돌리고 kustomize·helm·directory·plugin은 남긴다). 파일 위치로는 어느 Application의 경로인지 가리지 않고
+#       --root 트리(tests/·charts/·.git/ 제외 — 7.1의 파일 열거와 같은 제외) 어디에 있든 FAIL한다.
+#   (b) 7.4 APP-source-hydrator — Application `spec.sourceHydrator`. 있으면 Argo는 `spec.source`보다 hydrator의 syncSource(다른 브랜치·
+#       경로)를 먼저 쓴다(pkg/apis/application/v1alpha1/types.go `GetSource`).
+#   (c) 7.4 APP-source-operation — Application **최상위** `operation`(spec 밖). `operation.sync.source`·`revision`·`manifests`로 한 번의
+#       동기화 source를 바꾼다(2026-09-28 범위 한정 검증 DV-1 — types.go 필드 판독, 컨트롤러 동작은 라이브 미실측). Git에 선언하는
+#       필드가 아니므로 키가 있으면(빈 맵 포함) FAIL한다.
+#   ⚠ 이 목록이 Argo의 모든 우회 경로를 덮는다고 주장하지 않는다 — 전 확장자·전 렌더 열거는 T047에서 다룬다.
+# 보지 않는 것(코드로 확인한 사각): kustomization이 없는 디렉터리(root가 읽는 clusters/oci-k3s/apps 등)의 `kind: List`로 감싼
+#   Application(파일 단위 추출은 최상위 문서의 kind만 본다 — Argo directory source와 kustomize 렌더는 List를 풀므로 kustomize 디렉터리는
+#   렌더 쪽에서 보인다), `.json`·`.jsonnet` 매니페스트의 Application(파일 열거가 *.yaml·*.yml뿐인데 Argo directory source는 둘도 읽는다),
+#   ApplicationSet의 template(kind가 Application인 문서만 본다).
 check_7_app_source() {
-  header 7.4 "Application source 덮어쓰기 금지 — spec.source 키 = {${APP_SOURCE_KEYS//,/, }} · multi-source 금지 · repoURL·targetRevision 고정"
+  header 7.4 "Application source 덮어쓰기 금지 — spec.source 키 = {${APP_SOURCE_KEYS//,/, }} · multi-source·sourceHydrator 금지 · repoURL·targetRevision 고정 · .argocd-source*.yaml 금지"
+  local f4=$N_FAIL n=0 nsf=0 i name hs hss hh ho sk repo rev x p
+  # (a) 파일 이름만 보므로 yq가 없어도 돈다(도구 없음 SKIP 모드에서도 이 갈래는 판정한다)
+  while IFS= read -r p; do
+    [[ -n $p ]] || continue
+    nsf=$((nsf + 1))
+    fail "7.4 APP-source-file" "$(rel "$p"): Argo CD가 이 경로를 source로 쓰는 Application의 source 파라미터(kustomize·helm·directory·plugin)에 이 파일을 합친다 — Argo가 적용하는 렌더가 validate가 빌드한 렌더와 갈린다(파일 이름 .argocd-source.yaml · .argocd-source-<앱 이름>.yaml 금지)"
+  done < <(find "$ROOT" \( -name '.argocd-source.yaml' -o -name '.argocd-source-*.yaml' \) -not -type d \
+             -not -path '*/.git/*' -not -path "$ROOT/tests/*" -not -path '*/charts/*' | LC_ALL=C sort)
   need_tool "7.4 APP-source" yq || return 0
-  local f4=$N_FAIL n=0 i name hs hss sk repo rev x
   collect_rows "$YQ_APP_SRC" "7.4 APP-source" all
-  while IFS="$YQ_SEP" read -r i name hs hss sk repo rev; do
+  while IFS="$YQ_SEP" read -r i name hs hss hh ho sk repo rev; do
     [[ -n $i ]] || continue
     n=$((n + 1))
     x="${SRC_LABEL[$i]} Application/$name"
+    if [[ $ho != false ]]; then
+      fail "7.4 APP-source-operation" "$x: 최상위 operation 금지 — operation.sync(source·revision·manifests)는 한 번의 동기화 source를 바꿔 Argo가 적용하는 렌더가 validate가 빌드한 렌더와 갈린다(Git에 선언하는 필드가 아니다)"
+    fi
     if [[ $hss != false ]]; then
       fail "7.4 APP-source-multi" "$x: spec.sources(multi-source) 금지 — 원소마다 저장소·리비전·오버라이드를 따로 둘 수 있어 Argo가 적용하는 렌더가 validate가 빌드한 렌더와 갈린다"
+    fi
+    if [[ $hh != false ]]; then
+      fail "7.4 APP-source-hydrator" "$x: spec.sourceHydrator 금지 — Argo는 spec.source보다 hydrator의 syncSource(다른 브랜치·경로)를 먼저 써서 적용하는 렌더가 validate가 빌드한 렌더와 갈린다"
     fi
     if [[ $hs != true ]]; then
       [[ $hss != false ]] || fail "7.4 APP-source" "$x: spec.source 없음 — 판정할 source가 없다(fail-closed)"
@@ -1397,7 +1431,7 @@ check_7_app_source() {
     [[ $rev == "$APP_TARGET_REV" ]] \
       || fail "7.4 APP-source-ref" "$x: spec.source.targetRevision '$rev' ≠ $APP_TARGET_REV(리뷰·검사를 거치지 않은 브랜치·태그·커밋을 적용하는 길)"
   done < <(printf '%s' "$ROWS")
-  finish_group "7.4 APP-source" "Application ${n}개(파일+렌더링) spec.source 키 = {${APP_SOURCE_KEYS//,/, }} · multi-source 없음 · repoURL = 이 저장소 · targetRevision = $APP_TARGET_REV" "$f4"
+  finish_group "7.4 APP-source" "Application ${n}개(파일+렌더링) spec.source 키 = {${APP_SOURCE_KEYS//,/, }} · multi-source 없음 · repoURL = 이 저장소 · targetRevision = $APP_TARGET_REV · sourceHydrator·operation 없음 · .argocd-source*.yaml ${nsf}개" "$f4"
 }
 
 # -----------------------------------------------------------------------------
@@ -1604,12 +1638,17 @@ check_9_clustersecretstores() {
 #   하네스로 실측): 값 없는 `--log-format` 뒤의 `--namespaces=…`는 그 플래그의 **값으로 삼켜져** 감시 목록이 비고(전역 모드),
 #   `$(VAR)`는 kubelet이 펼친 뒤 `--namespaces`를 하나 더 만들 수 있으며(목록 합침), `--auto-reload-all=true` 같은 여분 플래그는
 #   어노테이션 없는 워크로드까지 재시작한다. 인자를 하나씩 세던 예전 검사는 셋 다 PASS시켰다.
-# 한계: 라이브 — Application `status.resources`의 kind·ClusterRole 0과 Deployment 인자는 모노레포 하네스 `reloader-2`가, Reloader
-#   시작 로그(실제로 감시하는 ns)는 platform/reloader/README.md §3 판정 ⑥의 운영자 명령이 본다(`reloader-2`는 로그를 읽지 않는다).
+# 한계: 라이브 — Application `status.resources`의 ClusterRole·ClusterRoleBinding 0과 Role `reloader-role` ns 집합, Deployment 인자는
+#   모노레포 하네스 `reloader-2`가 본다(kind별 개수는 보지 않는다 — 그것은 README §3 판정 ⑥ 명령). Reloader 시작 로그(실제로 감시하는 ns)도
+#   platform/reloader/README.md §3 판정 ⑥의 운영자 명령이 본다(`reloader-2`는 로그를 읽지 않는다).
 #   정적으로 보지 않는 것: **다른 컴포넌트 렌더**가 ServiceAccount reloader/reloader에 주는 RoleBinding·ClusterRoleBinding과 그 안의
 #   Reloader(T047 후보 — 전 렌더 교차 검사), `reloader-metadata-role`의 규칙 내용(와일드카드만 본다), `stakater/reloader`가 아닌
-#   이름으로 다시 올린 이미지를 **같은 파드의 두 번째 컨테이너**로 넣는 경우(두 번째 Deployment로 올리면 10.3의 개수가 잡는다).
-#   Application 수준 오버라이드는 7.4가 막는다.
+#   이름으로 다시 올린 이미지를 **같은 파드의 두 번째 컨테이너**로 넣는 경우(두 번째 Deployment로 올리면 10.3의 개수가 잡는다),
+#   `reloader-role` 4장을 **똑같이** 넓힌 규칙(서로 같은지만 본다 — README §1의 20줄 대조가 잡는다), 이름이 `reloader-role`이 아닌
+#   Role의 규칙 내용(와일드카드만 본다 — 개수·ns를 유지한 채 바꿔 넣는 경우 포함).
+#   Argo가 적용하는 렌더를 validate가 빌드한 렌더와 갈라놓는 Application 쪽 경로 — `spec.source`의 오버라이드 키 · 다른 repoURL·
+#   targetRevision · multi-source · `spec.sourceHydrator` · 최상위 `operation` · `.argocd-source*.yaml` 파일 — 는 7.4가 막는다
+#   (그 밖의 경로는 7.4 「보지 않는 것」 — 전수 열거는 T047).
 # -----------------------------------------------------------------------------
 check_10_reloader() {
   header 10 "Reloader(platform/reloader 렌더): ClusterRole·ClusterRoleBinding 0 · args 정확 일치 · kind 개수 · Role·RoleBinding ns 집합·주체·규칙 · Reloader 이미지 컨테이너 1개"
