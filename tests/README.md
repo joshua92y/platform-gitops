@@ -10,9 +10,10 @@ required check `validate`가 부르는 검사 본체와 그 자기검사(무엇�
 |---|---|---|---|
 | 1 | checkout(`fetch-depth: 0` · `persist-credentials: false`) | PR · push | 액션(SHA 고정) |
 | 2 | 경로 lint — `bash tests/validate.base.sh --only-author`(검사 6만) | PR만 | **main 쪽 스크립트** — base 커밋(`pull_request.base.sha`)의 `tests/validate.sh`를 `git show`로 꺼낸 사본. PR 쪽 코드가 한 줄도 돌기 전에, 러너에 원래 있는 git · bash · coreutils만으로 돈다 |
+| 2b | 자기검사 대상 판정 | PR · push | 워크플로 파일 안의 인라인 스크립트(git · bash만 · PR 쪽 코드를 실행하기 전). main push는 항상 돌리고, PR은 merge-base ↔ head에서 `tests/` 또는 `.github/` 아래가 바뀐 경우에만 돌린다. 판정에 실패하면(merge-base를 못 구함 · 둘 이상) 돌리는 쪽으로 넘어진다 |
 | 3 | 도구 설치 — kustomize v5.8.1 · yq v4.53.6 · gitleaks 8.30.1 · kubeconform v0.8.0 · helm v4.3.0(linux arm64) | PR · push | 워크플로 파일 안의 인라인 스크립트(저장소의 스크립트를 부르지 않는다). 받은 파일마다 sha256 대조, 설치 뒤 버전 대조 — 어긋나면 실패 |
-| 4 | 전체 검사 — `bash tests/validate.sh`(검사 0–10) | PR · push | PR 쪽 스크립트. PR 이벤트에서는 `PR_AUTHOR`·`PR_AUTHOR_ID`·`VALIDATE_BASE_SHA`·`VALIDATE_HEAD_SHA`도 넘긴다(검사 6이 한 번 더 돈다 — 무해). push에서는 작성자가 비어 검사 6은 대상 없음이다 |
-| 5 | 자기검사 — `bash tests/validate.tests.sh` | PR · push | PR 쪽 스크립트. 러너가 넣는 `CI=true`로 부분 실행을 거부하고 도구 누락(helm 포함)을 실패로 본다. 4 **뒤에** 둔다 — 자기검사가 픽스처 아래 `charts/`에 풀어 둔 차트를 4의 검사 8(gitleaks 파일 스캔)이 훑지 않게 |
+| 4 | 전체 검사 — `bash tests/validate.sh`(검사 0–10) | PR · push | PR 쪽 스크립트. PR 이벤트에서는 `PR_AUTHOR`·`PR_AUTHOR_ID`·`PR_SENDER`·`PR_SENDER_ID`·`VALIDATE_BASE_SHA`·`VALIDATE_HEAD_SHA`도 넘긴다(검사 6이 한 번 더 돈다 — 무해). push에서는 작성자와 발신자가 모두 비어 검사 6은 대상 없음이다 — push 이벤트에도 `sender`는 있지만 넘기지 않는다(작성자 없이 발신자만 가면 검사 6이 입력이 어긋났다고 보고 FAIL한다) |
+| 5 | 자기검사 — `bash tests/validate.tests.sh` | **main push는 항상 · PR은 2b가 고른 경우만** | PR 쪽 스크립트. 러너가 넣는 `CI=true`로 부분 실행을 거부하고 도구 누락(helm 포함)을 실패로 본다. 4 **뒤에** 둔다 — 자기검사가 픽스처 아래 `charts/`에 풀어 둔 차트를 4의 검사 8(gitleaks 파일 스캔)이 훑지 않게 |
 | 6 | gitleaks 액션 — 커밋 히스토리 스캔 | PR · push | 액션(SHA 고정 — 액션이 자기 gitleaks를 받아 쓴다) |
 
 - **main 쪽 스크립트로 도는 것은 스텝 2 하나다.** 4·5는 PR 쪽 스크립트라 PR이 검사를 고치면 그 PR에서는 고친 검사가 돈다 — 사람 PR은 리뷰가, 봇 PR은 스텝 2가 막는다(봇이 `apps/*/overlays/dev/kustomization.yaml`의 digest 줄 밖을 건드리면 — `tests/`·`.github/` 포함 — main의 규칙으로 FAIL). 스텝 2가 첫 검사 스텝인 이유도 같다: PR 쪽 코드가 `.git`이나 작업 트리를 먼저 바꿀 수 없게.
@@ -20,7 +21,9 @@ required check `validate`가 부르는 검사 본체와 그 자기검사(무엇�
 - 설치한 도구는 `$RUNNER_TEMP/bin`에 두고 PATH 맨 앞에 붙인다. 4는 시작할 때 다섯 도구가 그 경로로 풀리는지 확인한다(러너 이미지의 다른 `yq` 등이 먼저 잡히면 실패). kubeconform 스키마 캐시는 `$RUNNER_TEMP/kubeconform-cache`다(4·5가 공유 — 실행 사이에는 보존하지 않는다).
 - **아직 CI가 하지 않는 것**
   - 렌더링 diff PR 코멘트(main ↔ PR `kustomize build` 비교) — 다음 PR(T047 G3).
-  - 자기검사의 실행 시점 확정 — 지금은 시간 실측을 위해 모든 이벤트에서 돈다. 각 run 스텝이 스텝 이름 · 시작·종료 시각(UTC) · 초 · exit를 job 요약에 한 줄씩 남긴다. 실측 뒤 자기검사를 어느 이벤트에서 돌릴지와 `timeout-minutes`(초기값 45) · 스키마 캐시 보존(`actions/cache`) 여부를 정한다.
+  - 스키마 캐시 보존(`actions/cache`) — 넣지 않았다. 캐시 없이도 전체 검사가 35초라 얻을 것이 적다.
+- **러너 실측(2026-09-29 · ubuntu-24.04-arm · 캐시 없음)**: 경로 lint 1초 · 도구 설치 2초 · 전체 검사 **35초** · 자기검사 122 케이스 **184초** · gitleaks 히스토리 3초 · job 전체 약 3분 48초. 같은 검사가 Windows · Git Bash에서는 전체 검사 약 10분 · 자기검사 약 1시간이다(프로세스 생성 비용) — **로컬은 영향 받는 케이스만 돌리고(`VALIDATE_TESTS_ONLY`) 전체 판정은 CI가 맡는다.** 각 run 스텝은 스텝 이름 · 시작·종료 시각(UTC) · 초 · exit를 job 요약에 한 줄씩 남긴다.
+- **자기검사를 PR마다 돌리지 않는 이유**: 봇의 dev bump PR은 required check가 끝나야 자동 머지되므로 검사 시간이 그대로 배포 지연이다(dev bump → sync 5분 이내가 목표다). 봇은 `tests/`를 고칠 수 없으므로(스텝 2) 봇 PR의 검사 스크립트는 main의 것과 같고, 그것은 main push에서 이미 검증됐다. 검사를 고치는 PR(`tests/` · `.github/`)은 항상 자기검사를 거친다.
 - 로컬 실행(아래 「실행」)은 여전히 PR 전 1차 확인 수단이다 — CI는 같은 스크립트를 부를 뿐이다.
 - 이 사실은 **여기 한 곳에만** 적는다. 다른 README·주석은 이 절을 가리킨다. 그중 배선 전 상태("CI가 아직 보지 않는다 · 실행 수단은 PR 전 로컬 실행뿐")를 적은 문장(예: `bootstrap/argocd/argocd-cm.yaml` 머리 주석의 「통제 현황(실측 2026-09-09)」)은 G2 이전의 기록이다 — 이 절이 우선한다.
 
