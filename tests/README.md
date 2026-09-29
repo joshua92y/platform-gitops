@@ -4,21 +4,25 @@ required check `validate`가 부르는 검사 본체와 그 자기검사(무엇�
 
 ## CI 배선 상태 — `validate.yml`이 이 검사들을 부른다(T047 G2)
 
-`.github/workflows/validate.yml`의 job `validate`(= ruleset `main`의 required check 이름)가 PR 이벤트와 main push에서 아래 순서로 돈다. 스텝 하나라도 실패하면 check가 실패하고 머지가 막힌다. 순서의 이유와 입력 규칙(`${{ }}` 값은 `env:`로만 넘긴다 · `VALIDATE_SKIP_TOOLS` 등 스위치 변수는 어디에도 두지 않는다)의 정본은 워크플로 머리 주석이다.
+`.github/workflows/validate.yml`의 job `validate`(= ruleset `main`의 required check 이름)가 **main을 향한 PR**과 main push에서 아래 순서로 돈다(다른 브랜치를 base로 한 PR에서는 돌지 않는다 — 아래 「base는 봇이 고른다」). 스텝 하나라도 실패하면 check가 실패하고 머지가 막힌다. 순서의 이유와 입력 규칙(`${{ }}` 값은 `env:`로만 넘긴다 · `VALIDATE_SKIP_TOOLS` 등 스위치 변수는 어디에도 두지 않는다)의 정본은 워크플로 머리 주석이다.
 
 | 순서 | 스텝 | 이벤트 | 실행되는 코드 |
 |---|---|---|---|
 | 1 | checkout(`fetch-depth: 0` · `persist-credentials: false`) | PR · push | 액션(SHA 고정) |
-| 2 | 경로 lint — `bash tests/validate.base.sh --only-author`(검사 6만) | PR만 | **main 쪽 스크립트** — base 커밋(`pull_request.base.sha`)의 `tests/validate.sh`를 `git show`로 꺼낸 사본. PR 쪽 코드가 한 줄도 돌기 전에, 러너에 원래 있는 git · bash · coreutils만으로 돈다 |
-| 2b | 자기검사 대상 판정 | PR · push | 워크플로 파일 안의 인라인 스크립트(git · bash만 · PR 쪽 코드를 실행하기 전). main push는 항상 돌리고, PR은 merge-base ↔ head에서 `tests/` 또는 `.github/` 아래가 바뀐 경우에만 돌린다. 판정에 실패하면(merge-base를 못 구함 · 둘 이상) 돌리는 쪽으로 넘어진다 |
+| 2 | 경로 lint — `bash tests/validate.base.sh --only-author`(검사 6만) | PR만 | **main의 스크립트** — 러너가 가져온 `origin/main`의 끝에 있는 `tests/validate.sh`를 `git show`로 꺼낸 사본(`pull_request.base.sha`가 아니다 — PR이 말하는 base는 확인에만 쓴다: base ref가 `main`이 아니거나 base 커밋이 main의 이력 위에 없으면 실패). diff 기준도 `origin/main`의 끝이다. PR 쪽 코드가 한 줄도 돌기 전에, 러너에 원래 있는 git · bash · coreutils만으로 돈다 |
+| 2b | 자기검사 대상 판정 | PR · push | 워크플로 파일 안의 인라인 스크립트(git · bash만 · PR 쪽 코드를 실행하기 전). main push는 항상 돌리고, PR은 `origin/main`의 끝과 head의 merge-base ↔ head에서 `tests/` 또는 `.github/` 아래가 바뀐 경우에만 돌린다(출력 `selftest=run|skip` — 숫자로 읽히지 않는 낱말이다. 식에서 없는 출력은 0으로 읽히므로 `0`·`1`을 쓰면 출력이 없을 때 자기검사가 조용히 꺼진다). 판정에 실패하면(merge-base를 못 구함 · 둘 이상) 돌리는 쪽으로 넘어진다 |
 | 3 | 도구 설치 — kustomize v5.8.1 · yq v4.53.6 · gitleaks 8.30.1 · kubeconform v0.8.0 · helm v4.3.0(linux arm64) | PR · push | 워크플로 파일 안의 인라인 스크립트(저장소의 스크립트를 부르지 않는다). 받은 파일마다 sha256 대조, 설치 뒤 버전 대조 — 어긋나면 실패 |
-| 4 | 전체 검사 — `bash tests/validate.sh`(검사 0–10) | PR · push | PR 쪽 스크립트. PR 이벤트에서는 `PR_AUTHOR`·`PR_AUTHOR_ID`·`PR_SENDER`·`PR_SENDER_ID`·`VALIDATE_BASE_SHA`·`VALIDATE_HEAD_SHA`도 넘긴다(검사 6이 한 번 더 돈다 — 무해). push에서는 작성자와 발신자가 모두 비어 검사 6은 대상 없음이다 — push 이벤트에도 `sender`는 있지만 넘기지 않는다(작성자 없이 발신자만 가면 검사 6이 입력이 어긋났다고 보고 FAIL한다) |
+| 4 | 전체 검사 — `bash tests/validate.sh`(검사 0–10) | PR · push | PR 쪽 스크립트. PR 이벤트에서는 `PR_AUTHOR`·`PR_AUTHOR_ID`·`PR_SENDER`·`PR_SENDER_ID`·`VALIDATE_HEAD_SHA`를 넘기고, 기준 커밋 `VALIDATE_BASE_SHA`는 본문이 `origin/main`의 끝에서 정한다(스텝 2와 같은 기준 — 검사 6이 한 번 더 돈다 · 무해). push에서는 작성자와 발신자가 모두 비어 검사 6은 대상 없음이다 — push 이벤트에도 `sender`는 있지만 넘기지 않는다(작성자 없이 발신자만 가면 검사 6이 입력이 어긋났다고 보고 FAIL한다) |
 | 5 | 자기검사 — `bash tests/validate.tests.sh` | **main push는 항상 · PR은 2b가 고른 경우만** | PR 쪽 스크립트. 러너가 넣는 `CI=true`로 부분 실행을 거부하고 도구 누락(helm 포함)을 실패로 본다. 4 **뒤에** 둔다 — 자기검사가 픽스처 아래 `charts/`에 풀어 둔 차트를 4의 검사 8(gitleaks 파일 스캔)이 훑지 않게 |
 | 6 | gitleaks 액션 — 커밋 히스토리 스캔 | PR · push | 액션(SHA 고정 — 액션이 자기 gitleaks를 받아 쓴다) |
 
 - **main 쪽 스크립트로 도는 것은 스텝 2 하나다.** 4·5는 PR 쪽 스크립트라 PR이 검사를 고치면 그 PR에서는 고친 검사가 돈다 — 사람 PR은 리뷰가, 봇 PR은 스텝 2가 막는다(봇이 `apps/*/overlays/dev/kustomization.yaml`의 digest 줄 밖을 건드리면 — `tests/`·`.github/` 포함 — main의 규칙으로 FAIL). 스텝 2가 첫 검사 스텝인 이유도 같다: PR 쪽 코드가 `.git`이나 작업 트리를 먼저 바꿀 수 없게.
 - 스텝 2의 사본(`tests/validate.base.sh`)은 저장소 루트 판정 때문에 `tests/` 안에 둔다(아래 「T047 필수 조건」). 자리에 이미 있는 파일·심볼릭 링크를 먼저 지우고(`tests/` 자체가 링크면 실패 — PR이 그 이름으로 `/dev/null` 링크를 넣어 두면 사본이 거기로 쓰이고 빈 스크립트가 exit 0으로 끝난다), 끝나면 성공·실패와 무관하게 지운다(남으면 4의 검사 8이 훑는다 — 못 지우면 실패). base SHA가 전체 커밋 ID가 아니거나, base 커밋에 스크립트가 없거나(`git show` 실패), 사본이 비었으면 실패다 — 조용히 건너뛰지 않는다. base 커밋의 스크립트가 `--only-author`를 모르면(T047 G1 이전의 main) 인자 오류(exit 2)로 실패한다.
 - 설치한 도구는 `$RUNNER_TEMP/bin`에 두고 PATH 맨 앞에 붙인다. 4는 시작할 때 다섯 도구가 그 경로로 풀리는지 확인한다(러너 이미지의 다른 `yq` 등이 먼저 잡히면 실패). kubeconform 스키마 캐시는 `$RUNNER_TEMP/kubeconform-cache`다(4·5가 공유 — 실행 사이에는 보존하지 않는다).
+- **base는 봇이 고른다**(T047 G2 리뷰 — 실험으로 재현): 봇은 `bump/**`에 임의 내용을 쓸 수 있으므로, 검사 스크립트를 무력화한 브랜치를 **base로** 잡은 PR을 열 수 있다. 워크플로가 `pull_request.base.sha`의 스크립트를 쓰던 때에는 그 PR에서 봇의 스크립트가 "base 스크립트"로 돌아 통과했고, 성공한 check는 head 커밋에 붙으므로 같은 head를 main으로 향하게 하면 required check가 채워졌다. 지금은 ①워크플로가 main을 향한 PR에서만 돌고 ②스텝 2가 base ref를 한 번 더 확인하며 ③스크립트와 diff 기준을 `origin/main`의 끝에서 가져온다. ruleset의 required check는 출처를 GitHub Actions로 고정한다(`integration_id`).
+- **동시 실행**: PR은 같은 PR의 옛 실행을 취소한다(취소된 실행은 check를 채우지 못한다). **main push 실행은 서로 취소하지 않는다** — "봇 PR의 검사 스크립트는 main push에서 검증한다"가 성립하려면 main의 실행이 끝까지 돌아야 한다. main 실행의 실패는 머지를 막지 못한다(이미 머지된 뒤다) — 커밋의 상태 표시로 드러나므로 머지한 사람이 확인한다(알림은 관측 태스크에서 다룬다).
+- **사람 PR의 check가 봇 때문에 실패했을 때**: 봇이 사람의 PR을 닫았다 다시 열면 이벤트 발신자가 봇이라 스텝 2가 FAIL하고 그 커밋의 check가 실패로 남는다(의도한 동작이다 — 봇이 건드린 PR을 통과시키지 않는다). 복구는 **사람이** 그 PR을 다시 열거나 새 커밋을 push하는 것이다(재실행은 같은 이벤트로 돌므로 결과가 같다).
+- **봇은 값만 바꾼다 — 첫 `images` 항목은 사람 PR이 만든다**: 스텝 2는 제자리 교체만 허용하므로, dev overlay에 `images` 항목이 아직 없을 때 봇이 그 블록을 **추가**하는 PR은 FAIL한다. pod의 overlay를 처음 만드는 PR(사람)이 첫 digest까지 넣는다.
 - **아직 CI가 하지 않는 것**
   - 렌더링 diff PR 코멘트(main ↔ PR `kustomize build` 비교) — 다음 PR(T047 G3).
   - 스키마 캐시 보존(`actions/cache`) — 넣지 않았다. 캐시 없이도 전체 검사가 35초라 얻을 것이 적다.
