@@ -26,7 +26,7 @@ VALIDATE_SKIP_TOOLS=1 bash tests/validate.sh   # 로컬 부분 검증: 없는 �
 bash tests/validate.tests.sh           # 픽스처 자기검사(도구가 없으면 자동으로 SKIP 모드; yq는 필수)
 VALIDATE_TESTS_REQUIRE_TOOLS=1 bash tests/validate.tests.sh   # CI(CI=true도 동일): 도구 누락 시 SKIP 모드로 내려가지 않고 exit 1
 VALIDATE_TESTS_ONLY='^(positive|app-source-)' bash tests/validate.tests.sh   # 부분 실행: 케이스 이름이 bash 확장 정규식에 맞는 것만
-PR_AUTHOR='<login>' PR_AUTHOR_ID=<id> VALIDATE_BASE_SHA=<base> VALIDATE_HEAD_SHA=<head> bash tests/validate.sh --only-author   # 작성자 검사(검사 6)만: 도구 불필요, diff는 merge-base ↔ head, 요약 「결과(작성자 검사만 실행): …」
+PR_AUTHOR='<login>' PR_AUTHOR_ID=<id> PR_SENDER='<login>' PR_SENDER_ID=<id> VALIDATE_BASE_SHA=<base> VALIDATE_HEAD_SHA=<head> bash tests/validate.sh --only-author   # 작성자 검사(검사 6)만: 봇 판정은 작성자와 이벤트 발신자 둘 다, 도구 불필요, diff는 merge-base ↔ head, 요약 「결과(작성자 검사만 실행): …」
 ```
 
 **부분 실행(`VALIDATE_TESTS_ONLY`)은 반복 작업용이다 — PR·과제 마무리 판정은 필터 없는 전체 실행으로 한다.** 필터를 주면 이름이 맞지 않는
@@ -37,7 +37,7 @@ PR_AUTHOR='<login>' PR_AUTHOR_ID=<id> VALIDATE_BASE_SHA=<base> VALIDATE_HEAD_SHA
 `validate.tests.sh`의 `run_case` 첫 인자다(검사 코드가 아니다 — 예: `app-source-`·`rel-scoped-`·`pol-webhook-src-`·`author-`). 바꾼 검사에
 걸리는 케이스와 `positive`를 함께 고르면 된다.
 
-필요 도구: `yq`(mikefarah v4) · `kustomize` · `kubeconform` · `gitleaks` (+ `helm`은 helmCharts가 있는 kustomization에만 — 자기검사의 `fixtures/pol-port`·`fixtures/rel-scoped/{typo-key,typo-parent,cloudflared,env-vars}`는 helm과 **네트워크**(차트 pull)가 필요하다. 풀린 차트는 픽스처 아래 `charts/`에 남고 `.gitignore` 대상이다). CI(validate.yml, T047)는 helm을 포함한 다섯 도구를 sha256 핀으로 설치하고 `PR_AUTHOR`·`VALIDATE_BASE_SHA`·`VALIDATE_HEAD_SHA`를 넘긴다. 자기검사를 `CI=true`(또는 `VALIDATE_TESTS_REQUIRE_TOOLS=1`)로 돌리면 helm도 도구 게이트에 들어간다 — 없으면 케이스를 돌리기 전에 exit 1이다(로컬에서 두 스위치 없이 돌리면 helm 케이스만 "도구 없음" 단언으로 바뀐다). kubeconform 스키마 캐시는 `${TMPDIR:-/tmp}/kubeconform-cache`(`VALIDATE_KUBECONFORM_CACHE`로 변경) — 저장소 밖 임시 경로이며 저장소에 파일을 남기지 않는다.
+필요 도구: `yq`(mikefarah v4) · `kustomize` · `kubeconform` · `gitleaks` (+ `helm`은 helmCharts가 있는 kustomization에만 — 자기검사의 `fixtures/pol-port`·`fixtures/rel-scoped/{typo-key,typo-parent,cloudflared,env-vars}`는 helm과 **네트워크**(차트 pull)가 필요하다. 풀린 차트는 픽스처 아래 `charts/`에 남고 `.gitignore` 대상이다). CI(validate.yml, T047)는 helm을 포함한 다섯 도구를 sha256 핀으로 설치하고 `PR_AUTHOR`·`PR_AUTHOR_ID`·`PR_SENDER`·`PR_SENDER_ID`·`VALIDATE_BASE_SHA`·`VALIDATE_HEAD_SHA`를 넘긴다. 자기검사를 `CI=true`(또는 `VALIDATE_TESTS_REQUIRE_TOOLS=1`)로 돌리면 helm도 도구 게이트에 들어간다 — 없으면 케이스를 돌리기 전에 exit 1이다(로컬에서 두 스위치 없이 돌리면 helm 케이스만 "도구 없음" 단언으로 바뀐다). kubeconform 스키마 캐시는 `${TMPDIR:-/tmp}/kubeconform-cache`(`VALIDATE_KUBECONFORM_CACHE`로 변경) — 저장소 밖 임시 경로이며 저장소에 파일을 남기지 않는다.
 
 ## 규칙
 
@@ -53,10 +53,11 @@ PR_AUTHOR='<login>' PR_AUTHOR_ID=<id> VALIDATE_BASE_SHA=<base> VALIDATE_HEAD_SHA
 - **T047 필수 조건**: 작성자 lint(검사 6)는 PR head가 아니라 **base ref의 `tests/validate.sh`**를 **`--only-author`**로 실행한다 — `git show "<base>:tests/validate.sh" > tests/validate.base.sh && bash tests/validate.base.sh --only-author`(`<base>`는 base ref(main) 쪽 커밋 — 예: `$VALIDATE_BASE_SHA`. 같은 `tests/` 안에 두어야 저장소 루트 판정이 유지된다).
   - base 스크립트로 돌리므로 App이 같은 PR에서 스크립트를 고쳐 검사를 무력화할 수 없다(main의 규칙으로 판정한다).
   - `--only-author`라서 base 쪽 표(sync-wave 표 등)가 head 트리 전체를 판정하지 않는다 — 표와 트리를 함께 바꾸는 정상 PR이 base 표에서 FAIL하지 않는다. 이 모드는 도구를 확인하지 않고(쓰는 외부 명령은 git · bash · coreutils의 `dirname`·`tr` — `--changed-files` 인자를 쓰면 `cat`) 머리에 `모드: --only-author`, 끝에 `결과(작성자 검사만 실행): …`를 찍는다. **그 exit 0은 전체 통과가 아니다** — 전체 검사(head의 `bash tests/validate.sh`)를 따로 돌린다. `VALIDATE_ONLY_AUTHOR`는 `0`·`1`만 받고(그 밖의 값은 exit 2) 빈 문자열은 `0`(꺼짐)으로 읽는다.
-  - 변경 파일 목록과 diff는 `VALIDATE_BASE_SHA`·`VALIDATE_HEAD_SHA`의 **merge-base ↔ head**로 계산한다(두 점 diff가 아니다 — PR 브랜치가 main 끝보다 뒤처져 있어도 main 쪽 변경이 섞이지 않는다). 두 값이 커밋으로 풀리지 않거나(객체 없음 · 얕은 체크아웃 · `-`로 시작) `--root`가 git 작업 트리가 아니거나 공통 조상이 없거나 **merge-base가 둘 이상이거나**(`git merge-base --all` — 교차 이력) `git diff`가 실패하면 요약 없이 끝나지 않고 `6 AUTHOR-input` FAIL(exit 1)이다 — 체크아웃은 두 커밋과 merge-base를 모두 가져와야 한다. 이 FAIL은 **작성자가 봇일 때만** 난다 — 사람 작성자는 SHA를 읽지 않고 PASS다(잘못된 SHA여도).
+  - 변경 파일 목록과 diff는 `VALIDATE_BASE_SHA`·`VALIDATE_HEAD_SHA`의 **merge-base ↔ head**로 계산한다(두 점 diff가 아니다 — PR 브랜치가 main 끝보다 뒤처져 있어도 main 쪽 변경이 섞이지 않는다). 두 값이 커밋으로 풀리지 않거나(객체 없음 · 얕은 체크아웃 · `-`로 시작) `--root`가 git 작업 트리가 아니거나 공통 조상이 없거나 **merge-base가 둘 이상이거나**(`git merge-base --all` — 교차 이력) `git diff`가 실패하면 요약 없이 끝나지 않고 `6 AUTHOR-input` FAIL(exit 1)이다 — 체크아웃은 두 커밋과 merge-base를 모두 가져와야 한다. 이 FAIL은 **봇 PR(작성자 또는 이벤트 발신자가 봇)일 때만** 난다 — 사람 작성자 + 사람 발신자는 SHA를 읽지 않고 PASS다(잘못된 SHA여도).
   - 입력 우선순위: `CHANGED_DIFF`가 있으면 SHA는 쓰이지 않는다(diff = 그 파일, 파일 목록 = `CHANGED_FILES`). `CHANGED_DIFF` 없이 `CHANGED_FILES`만 있으면 파일 목록은 그 값을 쓰고 diff만 SHA로 계산한다. **CI는 `CHANGED_FILES`·`CHANGED_DIFF`를 설정하지 않는다(빈 값으로 명시한다)** — 러너 환경에 남은 값이 SHA 계산을 대신하지 못하게.
   - 작성자는 `PR_AUTHOR`(= `pull_request.user.login`)와 `PR_AUTHOR_ID`(= `pull_request.user.id`, 인자 `--author-id`)를 함께 넘긴다. 봇 판정 = 로그인이 `VALIDATE_BOT_AUTHORS`에 있음(**대소문자 무시**) **또는** ID가 `VALIDATE_BOT_IDS`에 있음 — App 이름을 바꾸면 로그인은 바뀌지만 ID(`joshuatech-gitapp-1[bot]` = `323873425`)는 그대로다. 봇 로그인 목록의 정본은 `VALIDATE_BOT_AUTHORS` 기본값, ID 목록은 `VALIDATE_BOT_IDS` 기본값이다(둘 다 빈 값이면 기본값). `PR_AUTHOR_ID`가 숫자가 아니거나 `PR_AUTHOR` 없이 ID만 오면 `6 AUTHOR-input` FAIL, `VALIDATE_BOT_IDS`에 숫자가 아닌 원소가 있으면 인자 오류(exit 2)다.
-  - PR 이벤트(`GITHUB_EVENT_NAME=pull_request`·`pull_request_target`)에서 `PR_AUTHOR`가 비면 검사 6이 FAIL이므로 반드시 넘긴다.
+  - **봇 판정의 대상은 작성자와 이벤트 발신자 둘 다다**(계약 gitops-repo.md): 워크플로는 `PR_SENDER`(= `sender.login`, 인자 `--sender`)와 `PR_SENDER_ID`(= `sender.id`, 인자 `--sender-id`)도 넘긴다. App은 저장소 쓰기 권한으로 **사람이 연 PR의 브랜치에 push하고 머지할 수 있다**(승인 수 0) — 작성자만 보면 그 PR은 사람 PR이라 제한 없이 통과한다. 그래서 작성자가 사람이어도 그 이벤트를 일으킨 계정(push한 쪽 · 다시 연 쪽)이 봇이면(정의는 작성자와 같다 — 로그인 대소문자 무시 또는 ID) 봇 PR로 보고, `봇 판정: 작성자 '…'는 봇 아님 · 이벤트 발신자 '…'는 봇(…)` 줄을 찍은 뒤 **봇 작성자 PR과 똑같이** PR 전체(merge-base ↔ head)가 dev digest 제자리 교체뿐이어야 한다. 사람 작성자 + 사람 발신자의 PASS 줄은 `이벤트 발신자 '…'도 봇 아님`을 적는다. `PR_SENDER_ID`가 숫자가 아니거나 `PR_SENDER` 없이 ID만 오거나, `PR_AUTHOR` 없이 발신자만 오면 `6 AUTHOR-input` FAIL이다.
+  - PR 이벤트(`GITHUB_EVENT_NAME=pull_request`·`pull_request_target`, 또는 `VALIDATE_REQUIRE_AUTHOR=1`)에서 `PR_AUTHOR`가 비거나 **`PR_SENDER`가 비면** 검사 6이 FAIL이므로(메시지는 서로 다르고, 둘 다 비면 둘 다 찍는다) 반드시 넘긴다. PR 이벤트가 아니면(push 등) 발신자가 없어도 되고, PASS 줄이 `이벤트 발신자 미지정(PR 이벤트 아님) — 작성자로만 판정`으로 드러낸다.
   - **전체 검사 전에 `tests/validate.base.sh`를 지운다** — 검사 8(gitleaks 파일 스캔)은 `--root` 트리 전체(`tests/` 포함)를 훑으므로 남겨 두면 스캔 대상에 섞인다.
 
 ## 한계(명시)
@@ -100,13 +101,17 @@ PR_AUTHOR='<login>' PR_AUTHOR_ID=<id> VALIDATE_BASE_SHA=<base> VALIDATE_HEAD_SHA
   같은 제외 규칙(helm 캐시 `charts/`)을 쓰는데, 제외가 경로 어디에든 걸리므로 이름이 `charts`인 pod(`apps/charts/overlays/<env>`)의 source
   경로가 통째로 빠진다. 실제 트리에 그런 pod는 없다 — **T047 후보**: 제외를 kustomization 디렉터리 바로 아래 `charts/`로 좁히거나 7.1에서
   pod 이름 `charts`를 금지한다.
-- 검사 6(봇 작성자)이 **막는 것**(계약 판정 규칙 ①–④):
+- 검사 6(봇 PR — 작성자 또는 이벤트 발신자가 봇)이 **막는 것**(계약 판정 규칙 ①–④):
+  - 사람이 연 PR의 브랜치에 봇이 push한 경우(그 `pull_request` 이벤트의 발신자가 봇) — 작성자가 사람이어도 아래 규칙을 PR 전체(merge-base ↔ head)에 적용한다
   - 허용 파일(`apps/*/overlays/dev/kustomization.yaml`) 밖의 변경 · 파일 추가·삭제·이름/모드 변경(이름 변경 감지를 끄므로 옛 경로도 파일 목록에 나온다)
   - digest 줄 형식(`digest: sha256:<64hex>`, 목록 항목 `- digest:` 포함) 밖의 줄 변경 — `@@` 뒤 hunk 구간에서는 `+++ `·`--- `로 시작하는 줄도 내용으로 본다(내용이 `++ `·`-- `로 시작하는 줄)
   - 제자리 교체가 아닌 변경: `-` 줄 하나 바로 뒤에 `+` 줄 하나가 오는 쌍만 허용한다 — digest 줄 삭제만 · 다른 images 항목으로 옮김 · 끼워 넣기(`- digest:` 목록 항목 삽입 · 중복 키)는 줄 형식이 맞아도 FAIL. 쌍의 두 줄이 모두 digest 줄이면 64hex 밖(들여쓰기·`- `·공백)이 같아야 한다(`    digest:`를 `  - digest:`로 바꾸면 새 images 항목이 되어 원래 항목의 고정이 풀린다). `\ No newline at end of file`은 쌍 판정에서 건너뛴다
   - 교차 이력(merge-base 둘 이상 — 하나를 골라 본 diff가 실제 머지 결과와 다를 수 있다)
   - 저장소 내용·설정으로 diff 모양 바꾸기: `--no-ext-diff`(외부 diff) · `--no-textconv`(`.gitattributes` + textconv) · `--no-renames` · `--ignore-submodules=none`(`.gitmodules`의 `ignore = all`이 gitlink 변경을 숨김) · `--no-color`
 - 검사 6이 **여전히 보지 않는 것**: digest 값의 진위·서명(attestation) · 교체된 digest가 어떤 이미지인지(형식이 맞는 다른 이미지의 digest로 바꿔도 PASS) · images 항목에 digest가 아예 없는 경우 — 이것은 검사 4a의 몫인데 **4a는 아직 digest를 요구하지 않는다**(있으면 형식만 보고, `name` 없는 항목은 건너뛴다). 보증은 이 줄 검사와 **트리 검사(4a 형식·kustomize build·②)의 결합**이며(CI에서는 base 스크립트의 `--only-author` 실행과 head 스크립트의 전체 실행 — 봇 PR이 `tests/validate.sh`를 고치면 base 실행이 FAIL하므로, 통과한 봇 PR에서는 두 실행의 규칙이 같다), 위 base ref 실행 조건이 함께 있어야 성립한다.
+- 발신자 판정이 **여전히 막지 못하는 것**(검사 6은 이벤트 하나의 발신자만 본다 — 브랜치에 쌓인 커밋을 누가 넣었는지는 모른다):
+  - **PR이 열리기 전에** 봇이 그 브랜치에 넣은 커밋 — 사람이 나중에 PR을 열면 그 이벤트(`opened`)의 발신자는 사람이라 제한 없이 통과한다. 이것은 저장소의 **브랜치 쓰기 제한 ruleset**(선언 `.github/ruleset-branches.json` — main과 `bump/**` 밖의 브랜치는 관리자만 만들고 고칠 수 있다. main은 ruleset(main)이 따로 맡는다)이 막는다. 계약이 이 빈틈을 그 ruleset에 맡긴다. App 토큰의 push가 실제로 거부되는지는 계약 「실측 범위」대로 T074·T115에서 실측한다(그때까지 "설정으로 확인 · 거부는 미실측").
+  - 봇이 push한 **뒤에** 사람이 그 위에 다시 push하면 새 이벤트(`synchronize`)의 발신자는 사람이다 — 사람이 봇의 커밋을 받아서 자기 이름으로 올린 것으로 본다(그 커밋을 검토하는 책임은 사람에게 있다). 사람의 작업 브랜치(`bump/**` 밖)에서는 같은 브랜치 쓰기 제한이 봇의 첫 push부터 막는다.
 - 검사 9(ClusterSecretStore)가 **보는 것**: 원본 YAML과 `kustomize build` 렌더 결과 양쪽의 **선언된 값**.
   - 9.1 위치(`platform/secret-stores/`) · `metadata.namespace` 금지 · 이름/provider 집합 = 계약 표 5개
   - 9.2 vault 4장의 `auth` 키 · `serviceAccountRef.namespace`(referent auth 차단) · `audiences` · `mountPath` · `server`/`path`/`version` · store↔SA·role 매핑

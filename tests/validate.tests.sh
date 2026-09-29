@@ -18,7 +18,7 @@
 # 도구 누락 시 SKIP 모드로 내려가지 않고 exit 1 (CI에서 조용히 불완전한 결과가 통과하지 않도록). 이 두 스위치에서는
 # helm도 필수다(T047) — 없으면 helm이 필요한 케이스(rel-scoped 4개 등)가 "도구 없음" 단언으로 바뀌어 통과하기 때문이다.
 # 스위치가 없는 로컬 실행에서 helm이 없을 때의 동작은 그대로다(그 케이스만 "도구 없음" 단언).
-# 각 케이스는 env -u 로 작성자·모드 관련 환경변수를 지우고 시작한다(CI의 GITHUB_EVENT_NAME, VALIDATE_ONLY_AUTHOR 등이 새지 않도록 —
+# 각 케이스는 env -u 로 작성자·발신자·모드 관련 환경변수를 지우고 시작한다(CI의 GITHUB_EVENT_NAME, PR_SENDER, VALIDATE_ONLY_AUTHOR 등이 새지 않도록 —
 # VALIDATE_ONLY_AUTHOR가 새면 모든 케이스가 검사 6만 돌게 된다).
 #
 # 부분 실행: VALIDATE_TESTS_ONLY='<bash 확장 정규식>'이면 이름이 맞는 케이스만 돌리고 나머지는 건너뛴다(건너뛴 수를 센다 —
@@ -123,8 +123,10 @@ run_case() {
     esac
   done
   local out rc=0 ok=1 a
-  # 봇 목록(VALIDATE_BOT_AUTHORS·VALIDATE_BOT_IDS)도 지운다 — 작성자 단언은 스크립트 기본값을 전제로 한다
-  out=$(env -u GITHUB_EVENT_NAME -u VALIDATE_REQUIRE_AUTHOR -u PR_AUTHOR -u PR_AUTHOR_ID -u CHANGED_FILES -u CHANGED_DIFF \
+  # 봇 목록(VALIDATE_BOT_AUTHORS·VALIDATE_BOT_IDS)도 지운다 — 작성자 단언은 스크립트 기본값을 전제로 한다.
+  # 이벤트 발신자(PR_SENDER·PR_SENDER_ID)도 지운다 — CI 러너의 값이 새면 발신자 판정 케이스가 흔들린다
+  out=$(env -u GITHUB_EVENT_NAME -u VALIDATE_REQUIRE_AUTHOR -u PR_AUTHOR -u PR_AUTHOR_ID -u PR_SENDER -u PR_SENDER_ID \
+        -u CHANGED_FILES -u CHANGED_DIFF \
         -u VALIDATE_BASE_SHA -u VALIDATE_HEAD_SHA -u VALIDATE_ONLY_AUTHOR -u VALIDATE_BOT_AUTHORS -u VALIDATE_BOT_IDS \
         "${envs[@]}" bash "$VALIDATE" --root "$root" "${args[@]}" 2>&1) || rc=$?
   N=$((N + 1))
@@ -605,13 +607,17 @@ run_case author-bot-no-input "$FIX/positive" 1 \
 run_case author-human-unrestricted "$FIX/positive" 0 \
   --env "PR_AUTHOR=joshua92y" --env "CHANGED_FILES=$DIGEST_FILE" --env "CHANGED_DIFF=$FIX/author/bad-line.diff" \
   "+[PASS] 6 AUTHOR — 작성자 'joshua92y'는 봇 아님"
-# PR 이벤트인데 PR_AUTHOR가 비면 조용히 꺼지지 않고 FAIL
+# PR 이벤트인데 PR_AUTHOR가 비면 조용히 꺼지지 않고 FAIL.
+# PR 이벤트에서는 이벤트 발신자(PR_SENDER)도 필수다 — 작성자 누락 케이스는 발신자를 넣어 FAIL 사유를 작성자 하나로 좁힌다(음성 단언)
+SND_MISS='PR_SENDER(이벤트 발신자 sender.login)가 비어 있음'
 run_case author-required-pr-event "$FIX/positive" 1 \
-  --env "GITHUB_EVENT_NAME=pull_request" \
-  "+[FAIL] 6 AUTHOR-input — PR 이벤트(GITHUB_EVENT_NAME='pull_request', VALIDATE_REQUIRE_AUTHOR=0)인데 PR_AUTHOR가 비어 있음"
+  --env "GITHUB_EVENT_NAME=pull_request" --env 'PR_SENDER=joshua92y' \
+  "+[FAIL] 6 AUTHOR-input — PR 이벤트(GITHUB_EVENT_NAME='pull_request', VALIDATE_REQUIRE_AUTHOR=0)인데 PR_AUTHOR가 비어 있음" \
+  "-$SND_MISS"
 run_case author-required-flag "$FIX/positive" 1 \
-  --env "VALIDATE_REQUIRE_AUTHOR=1" \
-  "+[FAIL] 6 AUTHOR-input — PR 이벤트(GITHUB_EVENT_NAME='', VALIDATE_REQUIRE_AUTHOR=1)인데 PR_AUTHOR가 비어 있음"
+  --env "VALIDATE_REQUIRE_AUTHOR=1" --env 'PR_SENDER=joshua92y' \
+  "+[FAIL] 6 AUTHOR-input — PR 이벤트(GITHUB_EVENT_NAME='', VALIDATE_REQUIRE_AUTHOR=1)인데 PR_AUTHOR가 비어 있음" \
+  "-$SND_MISS"
 run_case author-push-event-ok "$FIX/positive" 0 \
   --env "GITHUB_EVENT_NAME=push" \
   "+[PASS] 6 AUTHOR — PR 작성자 미지정(push 이벤트 등)"
@@ -632,13 +638,15 @@ run_case author-only-bot-bad-file "$FIX/positive" 1 --env "$OA" \
   --env "PR_AUTHOR=jt-ci[bot]" --env "CHANGED_FILES=$DIGEST_FILE"$'\n'"platform/vault/kustomization.yaml" --env "CHANGED_DIFF=$FIX/author/bad-file.diff" \
   "+[FAIL] 6 AUTHOR-file — 봇 'jt-ci[bot]'의 변경 파일 'platform/vault/kustomization.yaml' 불허" \
   "$OA_MODE" '+결과(작성자 검사만 실행): FAIL' "${OA_NOFULL[@]}" '-[PASS] 6 AUTHOR'
+# PR 이벤트가 아니면(발신자 입력 없음) 작성자로만 판정한다 — PASS 줄이 그 사실을 드러낸다
 run_case author-only-human "$FIX/positive" 0 --env "$OA" \
   --env "PR_AUTHOR=joshua92y" --env "CHANGED_FILES=$DIGEST_FILE" --env "CHANGED_DIFF=$FIX/author/bad-line.diff" \
-  "+[PASS] 6 AUTHOR — 작성자 'joshua92y'는 봇 아님" "$OA_MODE" '+결과(작성자 검사만 실행): PASS' "${OA_NOFULL[@]}"
+  "+[PASS] 6 AUTHOR — 작성자 'joshua92y'는 봇 아님" '+이벤트 발신자 미지정(PR 이벤트 아님) — 작성자로만 판정' \
+  "$OA_MODE" '+결과(작성자 검사만 실행): PASS' "${OA_NOFULL[@]}"
 run_case author-only-required-pr-event "$FIX/positive" 1 --env "$OA" \
-  --env "GITHUB_EVENT_NAME=pull_request" \
+  --env "GITHUB_EVENT_NAME=pull_request" --env 'PR_SENDER=joshua92y' \
   "+[FAIL] 6 AUTHOR-input — PR 이벤트(GITHUB_EVENT_NAME='pull_request', VALIDATE_REQUIRE_AUTHOR=0)인데 PR_AUTHOR가 비어 있음" \
-  "$OA_MODE" '+결과(작성자 검사만 실행): FAIL' "${OA_NOFULL[@]}"
+  "-$SND_MISS" "$OA_MODE" '+결과(작성자 검사만 실행): FAIL' "${OA_NOFULL[@]}"
 # 다른 검사가 돌지 않는다: img-newtag는 일반 모드에서 4a IMG-newTag FAIL(위 img-newtag 케이스 — 부분 트리라 5.x 등도 FAIL)이다.
 # 이 모드에서는 exit 0이고 검사 6 밖의 머리·PASS·FAIL 줄이 하나도 없어야 한다.
 run_case author-only-skips-other-checks "$FIX/img-newtag" 0 --env "$OA" \
@@ -650,9 +658,9 @@ run_case author-only-bad-switch "$FIX/gitleaks-empty" 2 --env 'VALIDATE_ONLY_AUT
   '+error: VALIDATE_ONLY_AUTHOR는 0 또는 1이어야 한다: true' '-== 검사' '-결과'
 # pull_request_target도 PR 이벤트다 — PR_AUTHOR가 비면 조용히 꺼지지 않고 FAIL
 run_case author-only-required-pr-target-event "$FIX/positive" 1 --env "$OA" \
-  --env "GITHUB_EVENT_NAME=pull_request_target" \
+  --env "GITHUB_EVENT_NAME=pull_request_target" --env 'PR_SENDER=joshua92y' \
   "+[FAIL] 6 AUTHOR-input — PR 이벤트(GITHUB_EVENT_NAME='pull_request_target', VALIDATE_REQUIRE_AUTHOR=0)인데 PR_AUTHOR가 비어 있음" \
-  '+결과(작성자 검사만 실행): FAIL' '-[PASS] 6 AUTHOR'
+  "-$SND_MISS" '+결과(작성자 검사만 실행): FAIL' '-[PASS] 6 AUTHOR'
 
 # --- 봇 판정: 로그인(대소문자 무시) 또는 계정 ID(계약 「봇 판정은 로그인과 계정 ID 둘 다로 한다」) ------------------------------
 # App 이름을 바꾸면 로그인은 바뀌지만 ID는 그대로다. 금지된 diff(bad-line — namespace 변경)를 넘기므로 봇으로 판정되면 FAIL, 사람이면 PASS다.
@@ -682,6 +690,82 @@ run_case author-only-id-without-login "$FIX/positive" 1 --env "$OA" --env "PR_AU
 # 봇 ID 목록에 숫자가 아닌 원소가 있으면 인자 오류(exit 2) — 틀린 목록이 조용히 "봇 없음"으로 읽히지 않게
 run_case author-only-bad-bot-ids "$FIX/gitleaks-empty" 2 --env "$OA" --env 'VALIDATE_BOT_IDS=323873425,abc' \
   "+error: VALIDATE_BOT_IDS의 원소는 숫자여야 한다: 'abc'" '-== 검사' '-결과'
+
+# --- 봇 판정 · 이벤트 발신자(계약 「봇 판정의 대상은 PR 작성자와 이벤트 발신자 둘 다다」) --------------------------------------
+# App은 저장소 쓰기 권한으로 **사람이 연 PR의 브랜치에 push하고 머지할 수 있다**. 작성자(pull_request.user)가 사람이어도 이벤트
+# 발신자(sender — push한 쪽 · 다시 연 쪽)가 봇이면 봇 규칙(PR 전체 = merge-base ↔ head 가 dev digest 제자리 교체뿐)을 적용한다.
+# 발신자의 "봇" 정의는 작성자와 같다(로그인 대소문자 무시 · 계정 ID). PR 이벤트에서 발신자가 비면 FAIL(조용한 비활성 금지).
+# 워크플로 입력: PR_SENDER = sender.login · PR_SENDER_ID = sender.id (인자 --sender · --sender-id)
+SND_HUMAN='joshua92y'
+SND_PR_EV='GITHUB_EVENT_NAME=pull_request'
+SND_BOT_LOGIN="+봇 판정: 작성자 '$SND_HUMAN'는 봇 아님 · 이벤트 발신자 'jt-ci[bot]'는 봇(로그인이 봇 로그인 목록 안) → 발신자 기준으로 봇 PR로 본다"
+SND_LBL="봇 발신자 'jt-ci[bot]'(작성자 '$SND_HUMAN')"
+SND_PASS_PREFIX="+[PASS] 6 AUTHOR — 작성자 '$SND_HUMAN'는 봇 아님 — 경로 제한 없음"
+BAD_FILE_ENV=(--env "CHANGED_FILES=$DIGEST_FILE"$'\n'"platform/vault/kustomization.yaml" --env "CHANGED_DIFF=$FIX/author/bad-file.diff")
+# 사람 작성자 + 봇 발신자(로그인) + 금지 파일 → 봇 규칙으로 FAIL. 봇 판정 줄이 작성자·발신자를 함께 드러낸다
+run_case author-only-sender-bot-login "$FIX/positive" 1 --env "$OA" --env "$SND_PR_EV" --env "PR_AUTHOR=$SND_HUMAN" \
+  --env 'PR_SENDER=jt-ci[bot]' "${BAD_FILE_ENV[@]}" "$SND_BOT_LOGIN" \
+  "+[FAIL] 6 AUTHOR-file — ${SND_LBL}의 변경 파일 'platform/vault/kustomization.yaml' 불허" \
+  "+[FAIL] 6 AUTHOR-line — 봇 diff: images[].digest 외 줄 변경 불허 → 'resources: [evil.yaml]'" \
+  '+결과(작성자 검사만 실행): FAIL' "-${SND_PASS_PREFIX:1}" '-[PASS] 6 AUTHOR' "-$SND_MISS"
+# 봇 발신자(ID만 — 로그인은 사람처럼 보인다): App 이름을 바꿔도 ID는 그대로다
+run_case author-only-sender-bot-id "$FIX/positive" 1 --env "$OA" --env "$SND_PR_EV" --env "PR_AUTHOR=$SND_HUMAN" \
+  --env 'PR_SENDER=helpful-human' --env "PR_SENDER_ID=$BOT_ID" "${BAD_LINE_ENV[@]}" \
+  "+봇 판정: 작성자 '$SND_HUMAN'는 봇 아님 · 이벤트 발신자 'helpful-human'는 봇(계정 ID $BOT_ID — VALIDATE_BOT_IDS 안) → 발신자 기준으로 봇 PR로 본다" \
+  "$BAD_LINE_FAIL" '+결과(작성자 검사만 실행): FAIL' "-${SND_PASS_PREFIX:1}" '-[PASS] 6 AUTHOR'
+# 봇 발신자 + 허용된 diff(dev digest 제자리 교체) → 봇 규칙을 **통과**한 PASS(사람 PASS가 아니다)
+run_case author-only-sender-bot-ok "$FIX/positive" 0 --env "$OA" --env "$SND_PR_EV" --env "PR_AUTHOR=$SND_HUMAN" \
+  --env 'PR_SENDER=jt-ci[bot]' --env "CHANGED_FILES=$DIGEST_FILE" --env "CHANGED_DIFF=$FIX/author/ok.diff" "$SND_BOT_LOGIN" \
+  "+[PASS] 6 AUTHOR — ${SND_LBL} PR: 변경 파일 1개 모두 overlays/dev kustomization, 변경 줄 모두 images[].digest 값의 제자리 교체" \
+  '+결과(작성자 검사만 실행): PASS' '-[FAIL]' "-${SND_PASS_PREFIX:1}"
+# 사람 작성자 + 사람 발신자 + 금지된 diff → 제한 없음(PASS). PASS 줄이 발신자도 봇이 아님을 드러낸다
+run_case author-only-sender-human "$FIX/positive" 0 --env "$OA" --env "$SND_PR_EV" --env "PR_AUTHOR=$SND_HUMAN" \
+  --env 'PR_AUTHOR_ID=12345678' --env "PR_SENDER=$SND_HUMAN" --env 'PR_SENDER_ID=12345678' "${BAD_LINE_ENV[@]}" \
+  "${SND_PASS_PREFIX}(ruleset·리뷰가 게이트) · 계정 ID 12345678도 VALIDATE_BOT_IDS 밖 · 이벤트 발신자 '$SND_HUMAN'도 봇 아님(계정 ID 12345678도 VALIDATE_BOT_IDS 밖)" \
+  '+결과(작성자 검사만 실행): PASS' '-[FAIL]' '-봇 판정:'
+# 봇 작성자 + 사람 발신자 → 작성자가 봇이면 발신자와 무관하게 봇 규칙(발신자 판정 줄 없음)
+run_case author-only-sender-author-bot "$FIX/positive" 1 --env "$OA" --env "$SND_PR_EV" --env 'PR_AUTHOR=jt-ci[bot]' \
+  --env "PR_SENDER=$SND_HUMAN" --env 'PR_SENDER_ID=12345678' "${BAD_LINE_ENV[@]}" \
+  "$BAD_LINE_FAIL" '+결과(작성자 검사만 실행): FAIL' '-봇 아님' '-봇 판정:' '-[PASS] 6 AUTHOR'
+# PR 이벤트(pull_request · pull_request_target · VALIDATE_REQUIRE_AUTHOR=1)인데 발신자가 비면 FAIL — 작성자 누락과 다른 메시지
+run_case author-only-sender-missing "$FIX/positive" 1 --env "$OA" --env "$SND_PR_EV" --env "PR_AUTHOR=$SND_HUMAN" "${BAD_LINE_ENV[@]}" \
+  "+[FAIL] 6 AUTHOR-input — PR 이벤트(GITHUB_EVENT_NAME='pull_request', VALIDATE_REQUIRE_AUTHOR=0)인데 $SND_MISS" \
+  '-PR_AUTHOR가 비어 있음' '+결과(작성자 검사만 실행): FAIL' '-[PASS] 6 AUTHOR'
+run_case author-only-sender-missing-pr-target "$FIX/positive" 1 --env "$OA" --env 'GITHUB_EVENT_NAME=pull_request_target' \
+  --env "PR_AUTHOR=$SND_HUMAN" "${BAD_LINE_ENV[@]}" \
+  "+[FAIL] 6 AUTHOR-input — PR 이벤트(GITHUB_EVENT_NAME='pull_request_target', VALIDATE_REQUIRE_AUTHOR=0)인데 $SND_MISS" \
+  '-PR_AUTHOR가 비어 있음' '+결과(작성자 검사만 실행): FAIL' '-[PASS] 6 AUTHOR'
+run_case author-only-sender-missing-flag "$FIX/positive" 1 --env "$OA" --env 'VALIDATE_REQUIRE_AUTHOR=1' \
+  --env "PR_AUTHOR=$SND_HUMAN" "${BAD_LINE_ENV[@]}" \
+  "+[FAIL] 6 AUTHOR-input — PR 이벤트(GITHUB_EVENT_NAME='', VALIDATE_REQUIRE_AUTHOR=1)인데 $SND_MISS" \
+  '-PR_AUTHOR가 비어 있음' '+결과(작성자 검사만 실행): FAIL' '-[PASS] 6 AUTHOR'
+# 작성자와 발신자가 모두 비면 두 누락을 모두 찍는다(하나만 고치고 다시 돌려야 다른 하나가 보이는 일이 없게)
+run_case author-only-sender-both-missing "$FIX/positive" 1 --env "$OA" --env "$SND_PR_EV" \
+  "+[FAIL] 6 AUTHOR-input — PR 이벤트(GITHUB_EVENT_NAME='pull_request', VALIDATE_REQUIRE_AUTHOR=0)인데 PR_AUTHOR가 비어 있음" \
+  "+[FAIL] 6 AUTHOR-input — PR 이벤트(GITHUB_EVENT_NAME='pull_request', VALIDATE_REQUIRE_AUTHOR=0)인데 $SND_MISS" \
+  '+PASS 0 · FAIL 2' '+결과(작성자 검사만 실행): FAIL'
+# PR_SENDER_ID는 선택 입력 — 주어졌는데 숫자가 아니거나, 발신자 로그인 없이 ID만 있으면 입력이 어긋난 것이다(fail-closed)
+run_case author-only-sender-bad-id "$FIX/positive" 1 --env "$OA" --env "$SND_PR_EV" --env "PR_AUTHOR=$SND_HUMAN" \
+  --env "PR_SENDER=$SND_HUMAN" --env 'PR_SENDER_ID=12a' "${BAD_LINE_ENV[@]}" \
+  "+[FAIL] 6 AUTHOR-input — PR_SENDER_ID '12a'가 숫자가 아님(sender.id) — fail-closed" '+결과(작성자 검사만 실행): FAIL' '-[PASS] 6 AUTHOR'
+run_case author-only-sender-id-without-login "$FIX/positive" 1 --env "$OA" --env "PR_AUTHOR=$SND_HUMAN" \
+  --env "PR_SENDER_ID=$BOT_ID" "${BAD_LINE_ENV[@]}" \
+  "+[FAIL] 6 AUTHOR-input — PR_SENDER_ID '$BOT_ID'만 있고 PR_SENDER가 비어 있음 — 발신자 입력이 어긋남(fail-closed)" \
+  '+결과(작성자 검사만 실행): FAIL' '-[PASS] 6 AUTHOR'
+# 발신자만 있고 작성자가 없으면(PR 이벤트 아님) PR_AUTHOR_ID만 있는 경우와 같이 fail-closed — "대상 없음" PASS로 읽지 않는다
+run_case author-only-sender-without-author "$FIX/positive" 1 --env "$OA" --env 'PR_SENDER=jt-ci[bot]' \
+  "+[FAIL] 6 AUTHOR-input — 이벤트 발신자(PR_SENDER 'jt-ci[bot]' · PR_SENDER_ID '')만 있고 PR_AUTHOR가 비어 있음 — 작성자 입력이 어긋남(fail-closed)" \
+  '+결과(작성자 검사만 실행): FAIL' '-[PASS] 6 AUTHOR'
+# 발신자 로그인 비교도 대소문자를 가리지 않는다
+run_case author-only-sender-login-case "$FIX/positive" 1 --env "$OA" --env "$SND_PR_EV" --env "PR_AUTHOR=$SND_HUMAN" \
+  --env 'PR_SENDER=Joshuatech-GitApp-1[BOT]' "${BAD_LINE_ENV[@]}" \
+  "+봇 판정: 작성자 '$SND_HUMAN'는 봇 아님 · 이벤트 발신자 'Joshuatech-GitApp-1[BOT]'는 봇(로그인이 봇 로그인 목록 안)" \
+  "$BAD_LINE_FAIL" "-${SND_PASS_PREFIX:1}" '-[PASS] 6 AUTHOR'
+# 인자 --sender · --sender-id 는 PR_SENDER · PR_SENDER_ID와 같은 입력이다(로그인은 사람처럼 보이고 ID로만 봇 — 두 인자가 모두 읽혀야 FAIL)
+run_case author-only-sender-arg "$FIX/positive" 1 --env "$OA" --env "$SND_PR_EV" --env "PR_AUTHOR=$SND_HUMAN" \
+  --arg --sender --arg helpful-human --arg --sender-id --arg "$BOT_ID" "${BAD_LINE_ENV[@]}" \
+  "+봇 판정: 작성자 '$SND_HUMAN'는 봇 아님 · 이벤트 발신자 'helpful-human'는 봇(계정 ID $BOT_ID — VALIDATE_BOT_IDS 안)" \
+  "$BAD_LINE_FAIL" "-$SND_MISS" "-${SND_PASS_PREFIX:1}" '-[PASS] 6 AUTHOR'
 
 # --- 제자리 교체(계약 판정 규칙 ②) · CHANGED_DIFF 입력 -------------------------------------------------------------------
 # git은 붙은 두 줄의 교체를 '-X -Y +Z +W'로 묶어 보여 준다. 쌍은 바로 붙은 -Y/+Z 하나뿐이다 — X는 짝 없는 삭제, W는 짝 없는 추가.
@@ -834,7 +918,7 @@ mb_break() { # 사본에서 c1의 dev kustomization blob을 지운다 → 커밋
 }
 MB_CASES=(author-mergebase-main-ahead author-mergebase-head-forbidden author-mergebase-unrelated author-mergebase-bad-sha
   author-mergebase-dash-sha author-mergebase-criss-cross author-mergebase-files-fail author-mergebase-no-renames
-  author-mergebase-given-files author-mergebase-diff-fails)
+  author-mergebase-given-files author-mergebase-diff-fails author-only-sender-sha-head-forbidden)
 MB_ENV=(--env "$OA" --env "PR_AUTHOR=jt-ci[bot]")
 if any_selected "${MB_CASES[@]}"; then
   mkdir -p "$TMP"
@@ -882,6 +966,13 @@ if any_selected "${MB_CASES[@]}"; then
       "+[FAIL] 6 AUTHOR-file — 봇 diff: 파일 'platform/vault/kustomization.yaml' 불허" \
       "+[FAIL] 6 AUTHOR-line — 봇 diff: images[].digest 외 줄 변경 불허 → 'resources: [pr-evil.yaml]'" \
       "-의 변경 파일 'platform/vault/kustomization.yaml' 불허" '-입력이 없음' '-[PASS] 6 AUTHOR'
+    # 발신자 판정은 SHA 경로에서도 같다: 사람이 연 PR(작성자 사람)에 봇이 push(발신자 봇) — head 이력의 금지 파일 변경(c1b)이
+    # merge-base ↔ head 전체 diff에서 FAIL한다(main 쪽 줄은 섞이지 않는다)
+    run_case author-only-sender-sha-head-forbidden "$MB_REPO" 1 --env "$OA" --env "$SND_PR_EV" --env "PR_AUTHOR=$SND_HUMAN" \
+      --env 'PR_SENDER=jt-ci[bot]' --env "VALIDATE_BASE_SHA=$MB_C2" --env "VALIDATE_HEAD_SHA=$MB_C1B" "$SND_BOT_LOGIN" \
+      "+[FAIL] 6 AUTHOR-file — ${SND_LBL}의 변경 파일 'platform/vault/kustomization.yaml' 불허" \
+      "+[FAIL] 6 AUTHOR-line — 봇 diff: images[].digest 외 줄 변경 불허 → 'resources: [pr-evil.yaml]'" \
+      "-→ 'resources: [evil.yaml]'" '+결과(작성자 검사만 실행): FAIL' '-[PASS] 6 AUTHOR'
     if any_selected author-mergebase-diff-fails; then
       if mb_break 2>>"$TMP/mergebase.log"; then
         run_case author-mergebase-diff-fails "$MB_BROKEN" 1 "${MB_ENV[@]}" --env "VALIDATE_BASE_SHA=$MB_C2" --env "VALIDATE_HEAD_SHA=$MB_C1" \

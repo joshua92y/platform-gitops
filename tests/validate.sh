@@ -35,9 +35,14 @@
 #   5.5  POL-limitrange     LimitRange에 default.cpu·max.cpu 없음
 #   5.6  POL-webhook-src    allow-apiserver-webhook(원본 + kustomize 렌더): 출발 ipBlock 집합·단일 TCP 포트 정확 일치
 #                           (cert-manager·external-secrets·cnpg-system = 노드 A private+flannel /32, vault 8200 = private /32)
-#   6    AUTHOR             봇 작성자 PR: 변경 파일 = apps/*/overlays/dev/kustomization.yaml, 변경 줄 = images[].digest 값의 제자리 교체뿐
+#   6    AUTHOR             봇 PR: 변경 파일 = apps/*/overlays/dev/kustomization.yaml, 변경 줄 = images[].digest 값의 제자리 교체뿐
 #                           봇 판정: 로그인이 VALIDATE_BOT_AUTHORS에 있음(대소문자 무시) 또는 계정 ID(PR_AUTHOR_ID)가 VALIDATE_BOT_IDS에
 #                           있음 — ID가 목록에 있으면 로그인이 무엇이든 봇이다(App 이름을 바꿔도 ID는 그대로)
+#                           봇 PR = 작성자(PR_AUTHOR · pull_request.user)가 봇 **또는** 이벤트 발신자(PR_SENDER · PR_SENDER_ID = sender —
+#                           push한 쪽 · 다시 연 쪽)가 봇(정의는 작성자와 같다). App은 사람이 연 PR의 브랜치에 push하고 머지할 수 있으므로
+#                           작성자만 보면 그 PR이 제한 없이 통과한다(계약 「봇 판정의 대상은 PR 작성자와 이벤트 발신자 둘 다다」). 발신자
+#                           때문에 봇이면 `봇 판정:` 줄(작성자·발신자)을 찍고, 그 뒤 판정은 봇 작성자 PR과 같다(PR 전체 = merge-base ↔ head).
+#                           사람 작성자 + 사람 발신자의 PASS 줄은 발신자도 봇이 아님(또는 발신자 미지정 — PR 이벤트 아님)을 적는다
 #                           판정 규칙(계약 gitops-repo.md): ① SHA 입력의 merge-base는 정확히 하나(`git merge-base --all`이 둘 이상이면
 #                           6 AUTHOR-input FAIL) ② hunk 안의 변경은 제자리 교체뿐 — '-' 줄 하나 바로 뒤에 '+' 줄 하나가 오는 쌍만 허용하고
 #                           (짝 없는 삭제·추가는 줄 형식이 맞아도 FAIL), 두 줄이 모두 digest 줄이면 64hex 밖이 같아야 한다
@@ -47,7 +52,10 @@
 #                           트리 검사(4a·kustomize build)의 결합이며, PR head의 스크립트로 돌리면 같은 PR에서 무력화될 수 있으므로
 #                           CI는 base ref의 tests/validate.sh 를 --only-author 로 실행해야 한다(tests/README.md 「T047 필수 조건」 —
 #                           트리 검사는 head 스크립트의 전체 실행이 맡는다). SHA 입력의 diff는 merge-base ↔ HEAD(아래 「입력」).
-#                           PR 이벤트에서 PR_AUTHOR가 비면 FAIL(조용한 비활성 금지)
+#                           PR 이벤트에서 PR_AUTHOR 또는 PR_SENDER가 비면 FAIL(조용한 비활성 금지 — 둘의 메시지는 다르다. 둘 다 비면 둘 다 찍는다)
+#                           한계: PR이 열리기 **전에** 봇이 그 브랜치에 넣은 커밋은 발신자 판정으로 보이지 않는다(브랜치 쓰기 제한
+#                           ruleset — .github/ruleset-branches.json — 이 막는다). 봇이 push한 뒤 사람이 그 위에 다시 push하면 새 이벤트의
+#                           발신자는 사람이다(사람이 봇의 커밋을 받아서 올린 것으로 본다)
 #   7.1  WAVE               Application sync-wave = §sync-wave 단일 표(이름·경로 규약 포함)
 #   7.2  WAVE-dir           표에 없는 platform/<component>/ 디렉터리 금지
 #   7.3  WAVE-secrets-base  secrets/<ns>의 단일 소유·배달: (a) `secrets/` 아래와 배달자 자신(platform/secrets)을 base로
@@ -98,6 +106,11 @@
 #   --author <login>        | PR_AUTHOR            PR 작성자 로그인(비어 있으면 검사 6은 대상 없음 — 단, PR 이벤트면 FAIL)
 #   --author-id <숫자>      | PR_AUTHOR_ID         PR 작성자 계정 ID(pull_request.user.id, 선택). 주어졌는데 숫자가 아니거나, PR_AUTHOR 없이
 #                           ID만 있으면 6 AUTHOR-input FAIL
+#   --sender <login>        | PR_SENDER            이벤트 발신자 로그인(sender.login — push한 쪽 · 다시 연 쪽). PR 이벤트면 필수(비면
+#                           6 AUTHOR-input FAIL). PR 이벤트가 아니면 비어도 된다(작성자로만 판정 — PASS 줄에 드러난다). PR_AUTHOR 없이
+#                           발신자만 있으면 6 AUTHOR-input FAIL
+#   --sender-id <숫자>      | PR_SENDER_ID         이벤트 발신자 계정 ID(sender.id, 선택). 주어졌는데 숫자가 아니거나, PR_SENDER 없이 ID만
+#                           있으면 6 AUTHOR-input FAIL
 #   --changed-files <file>  | CHANGED_FILES        변경 파일 목록(줄 구분; 환경변수는 내용, 인자는 파일)
 #   --diff <file>           | CHANGED_DIFF         unified diff 파일 경로
 #   VALIDATE_BASE_SHA · VALIDATE_HEAD_SHA           위 둘 대신 git으로 계산(CI 권장): **merge-base(BASE, HEAD) ↔ HEAD**의 파일 목록과
@@ -106,7 +119,8 @@
 #                           없고 CHANGED_FILES만 있으면 파일 목록은 그 값을 쓰고 diff만 계산한다 — CI는 두 변수를 설정하지 않는다.
 #                           두 값이 커밋으로 풀리지 않거나('-'로 시작 · 객체 없음 · 얕은 체크아웃) --root가 git 작업 트리가 아니거나
 #                           공통 조상이 없거나 merge-base가 둘 이상이거나 git diff가 실패하면 6 AUTHOR-input FAIL(요약까지 찍고 exit 1).
-#                           이 입력은 **작성자가 봇일 때만** 읽는다 — 사람 작성자는 SHA를 보지 않고 PASS다(잘못된 SHA여도)
+#                           이 입력은 **봇 PR(작성자 또는 발신자가 봇)일 때만** 읽는다 — 사람 작성자 + 사람 발신자는 SHA를 보지 않고
+#                           PASS다(잘못된 SHA여도)
 #   --skip-tools            | VALIDATE_SKIP_TOOLS=1  없는 도구가 필요한 검사를 SKIP(로컬 부분 검증용; CI 기본은 fail-closed)
 #   --only-author           | VALIDATE_ONLY_AUTHOR=1 (T047) 검사 6(작성자 검사)만 실행 — 도구 확인·파일 수집·다른 검사를 하지 않는다
 #                           (쓰는 외부 명령: git · bash · coreutils의 dirname·tr — --changed-files 인자를 쓰면 cat, -h는 sed).
@@ -121,7 +135,7 @@
 #   VALIDATE_K8S_VERSION    kubeconform -kubernetes-version (기본 master)
 #   VALIDATE_KUSTOMIZE_FLAGS kustomize build 추가 플래그(예: --load-restrictor LoadRestrictionsNone)
 #   VALIDATE_KUBECONFORM_CACHE kubeconform 스키마 캐시 디렉터리(기본 ${TMPDIR:-/tmp}/kubeconform-cache — 저장소 밖 임시 경로)
-#   GITHUB_EVENT_NAME=pull_request|pull_request_target | VALIDATE_REQUIRE_AUTHOR=1   PR_AUTHOR가 비어 있으면 검사 6 FAIL
+#   GITHUB_EVENT_NAME=pull_request|pull_request_target | VALIDATE_REQUIRE_AUTHOR=1   PR_AUTHOR 또는 PR_SENDER가 비어 있으면 검사 6 FAIL
 #
 # 원칙: --root 트리(와 명시적으로 넘긴 입력 파일) 밖을 읽거나 쓰지 않는다(예외: kubeconform 스키마 캐시만 저장소 밖
 #       임시 경로에 둔다). 스크립트가 직접 임시 파일을 만들지 않는다(파이프·변수만) — 단, 검사 1의 kustomize --enable-helm
@@ -137,6 +151,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 ROOT="${VALIDATE_ROOT:-$REPO_ROOT}"
 PR_AUTHOR="${PR_AUTHOR:-}"
 PR_AUTHOR_ID="${PR_AUTHOR_ID:-}"
+PR_SENDER="${PR_SENDER:-}"
+PR_SENDER_ID="${PR_SENDER_ID:-}"
 CHANGED_FILES="${CHANGED_FILES:-}"
 CHANGED_DIFF="${CHANGED_DIFF:-}"
 SKIP_TOOLS="${VALIDATE_SKIP_TOOLS:-0}"
@@ -161,6 +177,8 @@ while [[ $# -gt 0 ]]; do
     --root) ROOT="$2"; shift 2 ;;
     --author) PR_AUTHOR="$2"; shift 2 ;;
     --author-id) PR_AUTHOR_ID="$2"; shift 2 ;;
+    --sender) PR_SENDER="$2"; shift 2 ;;
+    --sender-id) PR_SENDER_ID="$2"; shift 2 ;;
     --changed-files) CHANGED_FILES="$(cat "$2")"; shift 2 ;;
     --diff) CHANGED_DIFF="$2"; shift 2 ;;
     --skip-tools) SKIP_TOOLS=1; shift ;;
@@ -1154,16 +1172,27 @@ check_5_policies() {
 check_6_author() {
   header 6 "작성자 검사(봇 PR은 apps/*/overlays/dev/kustomization.yaml의 images[].digest 줄만)"
   local fails_before=$N_FAIL is_bot=0 by_id=0 b f n=0 diff_text='' line content a_path b_path
+  local pr_event=0 s_login=0 s_by_id=0 s_why='' msg snd_miss lbl_actor lbl_bot
   local -a arr_bots
+  # PR 이벤트(또는 명시 요구)에서는 작성자와 이벤트 발신자가 모두 필수다(계약 — 조용한 비활성 금지)
+  if [[ $GH_EVENT == pull_request || $GH_EVENT == pull_request_target || $REQUIRE_AUTHOR == 1 ]]; then pr_event=1; fi
+  snd_miss="PR 이벤트(GITHUB_EVENT_NAME='$GH_EVENT', VALIDATE_REQUIRE_AUTHOR=$REQUIRE_AUTHOR)인데 PR_SENDER(이벤트 발신자 sender.login)가 비어 있음 — 발신자 판정의 조용한 비활성 금지(사람이 연 PR에 봇이 push한 경우를 가리지 못한다)"
   if [[ -z $PR_AUTHOR ]]; then
     # PR 이벤트(또는 명시 요구)인데 작성자가 비어 있으면 검사 6이 조용히 꺼진 것이므로 fail-closed
-    if [[ $GH_EVENT == pull_request || $GH_EVENT == pull_request_target || $REQUIRE_AUTHOR == 1 ]]; then
+    if [[ $pr_event == 1 ]]; then
       fail "6 AUTHOR-input" "PR 이벤트(GITHUB_EVENT_NAME='$GH_EVENT', VALIDATE_REQUIRE_AUTHOR=$REQUIRE_AUTHOR)인데 PR_AUTHOR가 비어 있음 — 작성자 lint의 조용한 비활성 금지"
+      # 발신자도 비었으면 함께 찍는다 — 하나를 고친 뒤에야 다른 하나가 보이는 일이 없게
+      if [[ -z $PR_SENDER ]]; then fail "6 AUTHOR-input" "$snd_miss"; fi
       return 0
     fi
     # 계정 ID만 오고 로그인이 없으면 입력이 어긋난 것이다(워크플로는 둘을 함께 넘긴다) — 대상 없음으로 읽지 않는다
     if [[ -n $PR_AUTHOR_ID ]]; then
       fail "6 AUTHOR-input" "PR_AUTHOR_ID '$PR_AUTHOR_ID'만 있고 PR_AUTHOR가 비어 있음 — 작성자 입력이 어긋남(fail-closed)"
+      return 0
+    fi
+    # 발신자만 오고 작성자가 없어도 같다(워크플로는 작성자·발신자를 함께 넘긴다)
+    if [[ -n $PR_SENDER || -n $PR_SENDER_ID ]]; then
+      fail "6 AUTHOR-input" "이벤트 발신자(PR_SENDER '$PR_SENDER' · PR_SENDER_ID '$PR_SENDER_ID')만 있고 PR_AUTHOR가 비어 있음 — 작성자 입력이 어긋남(fail-closed)"
       return 0
     fi
     pass "6 AUTHOR" "PR 작성자 미지정(push 이벤트 등) — 봇 경로 lint 대상 없음"
@@ -1174,27 +1203,61 @@ check_6_author() {
     fail "6 AUTHOR-input" "PR_AUTHOR_ID '$PR_AUTHOR_ID'가 숫자가 아님(pull_request.user.id) — fail-closed"
     return 0
   fi
+  # 이벤트 발신자(sender.login)는 PR 이벤트에서 필수다. PR 이벤트가 아니면(push 등) 비어도 된다 — 작성자로만 판정한다
+  if [[ $pr_event == 1 && -z $PR_SENDER ]]; then
+    fail "6 AUTHOR-input" "$snd_miss"
+    return 0
+  fi
+  # PR_SENDER_ID(sender.id)는 선택 입력이다. 주어졌는데 숫자가 아니거나, 발신자 로그인 없이 ID만 있으면 fail-closed
+  if [[ -n $PR_SENDER_ID && ! $PR_SENDER_ID =~ ^[0-9]+$ ]]; then
+    fail "6 AUTHOR-input" "PR_SENDER_ID '$PR_SENDER_ID'가 숫자가 아님(sender.id) — fail-closed"
+    return 0
+  fi
+  if [[ -n $PR_SENDER_ID && -z $PR_SENDER ]]; then
+    fail "6 AUTHOR-input" "PR_SENDER_ID '$PR_SENDER_ID'만 있고 PR_SENDER가 비어 있음 — 발신자 입력이 어긋남(fail-closed)"
+    return 0
+  fi
   # 봇 판정(계약): 로그인이 봇 로그인 목록에 있음(대소문자 무시) 또는 계정 ID가 VALIDATE_BOT_IDS에 있음.
-  # App 이름을 바꾸면 로그인은 바뀌지만 ID는 그대로다 — ID가 목록에 있으면 로그인이 무엇이든 봇이다
+  # App 이름을 바꾸면 로그인은 바뀌지만 ID는 그대로다 — ID가 목록에 있으면 로그인이 무엇이든 봇이다.
+  # 대상은 작성자(pull_request.user)와 이벤트 발신자(sender) 둘 다다 — App은 사람이 연 PR의 브랜치에 push하고 머지할 수 있다
   IFS=',' read -r -a arr_bots <<< "$BOT_AUTHORS"
   for b in "${arr_bots[@]}"; do
     if [[ ${PR_AUTHOR,,} == "${b,,}" ]]; then is_bot=1; fi
+    if [[ -n $PR_SENDER && ${PR_SENDER,,} == "${b,,}" ]]; then s_login=1; fi
   done
   if [[ -n $PR_AUTHOR_ID ]]; then
     for b in "${BOT_ID_LIST[@]}"; do
       if [[ $PR_AUTHOR_ID == "$b" ]]; then by_id=1; fi
     done
   fi
+  if [[ -n $PR_SENDER_ID ]]; then
+    for b in "${BOT_ID_LIST[@]}"; do
+      if [[ $PR_SENDER_ID == "$b" ]]; then s_by_id=1; fi
+    done
+  fi
   if [[ $is_bot == 0 && $by_id == 1 ]]; then
     printf "  봇 판정: 로그인 '%s' — 봇 로그인 목록 밖 · 계정 ID %s — VALIDATE_BOT_IDS 안 → 봇으로 본다\n" "$PR_AUTHOR" "$PR_AUTHOR_ID"
     is_bot=1
   fi
+  # 봇 규칙 메시지의 주어: 작성자가 봇이면 기존 문구 그대로, 발신자 때문에 봇이면 발신자와 작성자를 함께 적는다
+  lbl_actor="봇 작성자 '$PR_AUTHOR'"; lbl_bot="봇 '$PR_AUTHOR'"
+  if [[ $is_bot == 0 && ( $s_login == 1 || $s_by_id == 1 ) ]]; then
+    if [[ $s_login == 1 ]]; then s_why='로그인이 봇 로그인 목록 안'; fi
+    if [[ $s_by_id == 1 ]]; then s_why+="${s_why:+ · }계정 ID ${PR_SENDER_ID} — VALIDATE_BOT_IDS 안"; fi
+    printf "  봇 판정: 작성자 '%s'는 봇 아님 · 이벤트 발신자 '%s'는 봇(%s) → 발신자 기준으로 봇 PR로 본다 — PR 전체(merge-base ↔ head)에 봇 규칙을 적용한다\n" "$PR_AUTHOR" "$PR_SENDER" "$s_why"
+    lbl_actor="봇 발신자 '$PR_SENDER'(작성자 '$PR_AUTHOR')"; lbl_bot=$lbl_actor
+    is_bot=1
+  fi
   if [[ $is_bot == 0 ]]; then
-    if [[ -n $PR_AUTHOR_ID ]]; then
-      pass "6 AUTHOR" "작성자 '$PR_AUTHOR'는 봇 아님 — 경로 제한 없음(ruleset·리뷰가 게이트) · 계정 ID ${PR_AUTHOR_ID}도 VALIDATE_BOT_IDS 밖"
+    msg="작성자 '$PR_AUTHOR'는 봇 아님 — 경로 제한 없음(ruleset·리뷰가 게이트)"
+    if [[ -n $PR_AUTHOR_ID ]]; then msg+=" · 계정 ID ${PR_AUTHOR_ID}도 VALIDATE_BOT_IDS 밖"; fi
+    if [[ -n $PR_SENDER ]]; then
+      msg+=" · 이벤트 발신자 '$PR_SENDER'도 봇 아님"
+      if [[ -n $PR_SENDER_ID ]]; then msg+="(계정 ID ${PR_SENDER_ID}도 VALIDATE_BOT_IDS 밖)"; fi
     else
-      pass "6 AUTHOR" "작성자 '$PR_AUTHOR'는 봇 아님 — 경로 제한 없음(ruleset·리뷰가 게이트)"
+      msg+=" · 이벤트 발신자 미지정(PR 이벤트 아님) — 작성자로만 판정"
     fi
+    pass "6 AUTHOR" "$msg"
     return 0
   fi
   # 입력: CHANGED_DIFF(+CHANGED_FILES) 또는 git(VALIDATE_BASE_SHA·VALIDATE_HEAD_SHA). 없으면 fail-closed
@@ -1203,7 +1266,7 @@ check_6_author() {
     diff_text=$(tr -d '\r' < "$CHANGED_DIFF")
   elif [[ -n $BASE_SHA && -n $HEAD_SHA ]]; then
     if ! git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-      fail "6 AUTHOR-input" "봇 작성자 '$PR_AUTHOR'인데 git 저장소가 아니라 diff를 계산할 수 없음"
+      fail "6 AUTHOR-input" "${lbl_actor}인데 git 저장소가 아니라 diff를 계산할 수 없음"
       return 0
     fi
     # merge-base ↔ HEAD(계약 §이미지·승격 전제 ③). 두 점 diff(BASE HEAD)는 PR 브랜치가 main 끝보다 뒤처져 있으면 main 쪽 변경의
@@ -1223,11 +1286,11 @@ check_6_author() {
     local k c mb mbs mb_rc=0
     for ((k = 0; k < ${#sha_in[@]}; k += 2)); do
       if [[ ${sha_in[k+1]} == -* ]]; then
-        fail "6 AUTHOR-input" "봇 작성자 '$PR_AUTHOR' — ${sha_in[k]} '${sha_in[k+1]}'가 '-'로 시작한다(git 옵션으로 읽힌다) — fail-closed"
+        fail "6 AUTHOR-input" "${lbl_actor} — ${sha_in[k]} '${sha_in[k+1]}'가 '-'로 시작한다(git 옵션으로 읽힌다) — fail-closed"
         return 0
       fi
       if ! c=$(git -C "$ROOT" rev-parse --verify --quiet "${sha_in[k+1]}^{commit}"); then
-        fail "6 AUTHOR-input" "봇 작성자 '$PR_AUTHOR' — ${sha_in[k]} '${sha_in[k+1]}'가 이 저장소의 커밋으로 풀리지 않음(객체 없음 · 잘못된 값 · 얕은 체크아웃) — fail-closed"
+        fail "6 AUTHOR-input" "${lbl_actor} — ${sha_in[k]} '${sha_in[k+1]}'가 이 저장소의 커밋으로 풀리지 않음(객체 없음 · 잘못된 값 · 얕은 체크아웃) — fail-closed"
         return 0
       fi
       sha_c+=("${c%$'\r'}")
@@ -1239,35 +1302,35 @@ check_6_author() {
     done <<< "$mbs"
     if [[ $mb_rc != 0 || ${#mb_list[@]} -eq 0 ]]; then
       if [[ $mb_rc == 1 ]]; then c='공통 조상 없음(얕은 체크아웃이면 이력이 모자라도 이렇게 나온다)'; else c="git merge-base exit $mb_rc"; fi
-      fail "6 AUTHOR-input" "봇 작성자 '$PR_AUTHOR' — merge-base 계산 실패: $c — VALIDATE_BASE_SHA '$BASE_SHA' · VALIDATE_HEAD_SHA '$HEAD_SHA' — fail-closed"
+      fail "6 AUTHOR-input" "${lbl_actor} — merge-base 계산 실패: $c — VALIDATE_BASE_SHA '$BASE_SHA' · VALIDATE_HEAD_SHA '$HEAD_SHA' — fail-closed"
       return 0
     fi
     if [[ ${#mb_list[@]} -ne 1 ]]; then
-      fail "6 AUTHOR-input" "봇 작성자 '$PR_AUTHOR' — merge-base가 ${#mb_list[@]}개(git merge-base --all — 교차 이력): 정확히 하나여야 한다(하나를 골라 본 diff는 실제 머지 결과와 다를 수 있다) — VALIDATE_BASE_SHA '$BASE_SHA' · VALIDATE_HEAD_SHA '$HEAD_SHA' — fail-closed"
+      fail "6 AUTHOR-input" "${lbl_actor} — merge-base가 ${#mb_list[@]}개(git merge-base --all — 교차 이력): 정확히 하나여야 한다(하나를 골라 본 diff는 실제 머지 결과와 다를 수 있다) — VALIDATE_BASE_SHA '$BASE_SHA' · VALIDATE_HEAD_SHA '$HEAD_SHA' — fail-closed"
       return 0
     fi
     mb=${mb_list[0]}
     if [[ -z $CHANGED_FILES ]]; then
       if ! CHANGED_FILES=$(git -C "$ROOT" diff "${diff_opts[@]}" --name-only "$mb" "${sha_c[1]}" | tr -d '\r'); then
-        fail "6 AUTHOR-input" "봇 작성자 '$PR_AUTHOR' — 변경 파일 목록 계산 실패(git diff --name-only merge-base ${mb:0:12} ↔ HEAD ${sha_c[1]:0:12}) — fail-closed"
+        fail "6 AUTHOR-input" "${lbl_actor} — 변경 파일 목록 계산 실패(git diff --name-only merge-base ${mb:0:12} ↔ HEAD ${sha_c[1]:0:12}) — fail-closed"
         return 0
       fi
     fi
     if ! diff_text=$(git -C "$ROOT" diff "${diff_opts[@]}" "$mb" "${sha_c[1]}" | tr -d '\r'); then
-      fail "6 AUTHOR-input" "봇 작성자 '$PR_AUTHOR' — diff 계산 실패(git diff merge-base ${mb:0:12} ↔ HEAD ${sha_c[1]:0:12}) — fail-closed"
+      fail "6 AUTHOR-input" "${lbl_actor} — diff 계산 실패(git diff merge-base ${mb:0:12} ↔ HEAD ${sha_c[1]:0:12}) — fail-closed"
       return 0
     fi
   fi
   if [[ -z $CHANGED_FILES || -z $diff_text ]]; then
-    fail "6 AUTHOR-input" "봇 작성자 '$PR_AUTHOR'인데 변경 파일 목록/diff 입력이 없음(CHANGED_FILES+CHANGED_DIFF 또는 VALIDATE_BASE_SHA+VALIDATE_HEAD_SHA) — fail-closed"
+    fail "6 AUTHOR-input" "${lbl_actor}인데 변경 파일 목록/diff 입력이 없음(CHANGED_FILES+CHANGED_DIFF 또는 VALIDATE_BASE_SHA+VALIDATE_HEAD_SHA) — fail-closed"
     return 0
   fi
   while IFS= read -r f; do
     [[ -n $f ]] || continue
     n=$((n + 1))
-    [[ $f =~ $RE_BOT_FILE ]] || fail "6 AUTHOR-file" "봇 '$PR_AUTHOR'의 변경 파일 '$f' 불허(apps/*/overlays/dev/kustomization.yaml만)"
+    [[ $f =~ $RE_BOT_FILE ]] || fail "6 AUTHOR-file" "${lbl_bot}의 변경 파일 '$f' 불허(apps/*/overlays/dev/kustomization.yaml만)"
   done < <(printf '%s\n' "$CHANGED_FILES")
-  [[ $n -gt 0 ]] || fail "6 AUTHOR-file" "봇 '$PR_AUTHOR' PR에 변경 파일이 없음"
+  [[ $n -gt 0 ]] || fail "6 AUTHOR-file" "${lbl_bot} PR에 변경 파일이 없음"
   # diff 파서(계약 판정 규칙 ②·③):
   #   - 상태: 'diff --git' 줄에서 머리 구간(in_hunk=0)으로 돌아가고, '@@' 줄 뒤는 hunk 구간(in_hunk=1)이다. hunk 구간에서는 '+'·'-'로
   #     시작하는 모든 줄이 내용이다('+++ '·'--- ' 포함 — 내용이 '++ '·'-- '로 시작하는 줄은 diff에서 파일 머리줄과 같은 모양이 된다).
@@ -1333,7 +1396,7 @@ check_6_author() {
   if [[ $pend_on == 1 ]]; then
     fail "6 AUTHOR-line" "봇 diff: 제자리 교체만 허용 — 짝 없는 삭제 줄(바로 뒤에 추가 줄이 없다) → '${pend}'"
   fi
-  finish_group "6 AUTHOR" "봇 '$PR_AUTHOR' PR: 변경 파일 ${n}개 모두 overlays/dev kustomization, 변경 줄 모두 images[].digest 값의 제자리 교체" "$fails_before"
+  finish_group "6 AUTHOR" "${lbl_bot} PR: 변경 파일 ${n}개 모두 overlays/dev kustomization, 변경 줄 모두 images[].digest 값의 제자리 교체" "$fails_before"
 }
 
 # -----------------------------------------------------------------------------
