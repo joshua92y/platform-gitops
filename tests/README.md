@@ -1,14 +1,28 @@
 # tests/ — validate 검사 스크립트와 자기검사 (T033)
 
-required check `validate`가 **T047에서 배선할** 검사 본체와 그 자기검사. 정본은 모노레포 `specs/003-platform-foundation/contracts/gitops-repo.md`(§validate.yml · §validate.yml ExternalSecret 검사 · §sync-wave 단일 표 · §ClusterSecretStore 5개 · §이름·인증 규약 · §이미지·승격)와 `contracts/network-policy.md`(네임스페이스 표 14개 · 정책 세트 · 외부 egress 규칙 형식 · 포트 출처 각주)다. 계약과 스크립트가 어긋나면 계약을 먼저 고친다.
+required check `validate`가 부르는 검사 본체와 그 자기검사(무엇이 어떤 순서로 도는지는 아래 「CI 배선 상태」). 정본은 모노레포 `specs/003-platform-foundation/contracts/gitops-repo.md`(§validate.yml · §validate.yml ExternalSecret 검사 · §sync-wave 단일 표 · §ClusterSecretStore 5개 · §이름·인증 규약 · §이미지·승격)와 `contracts/network-policy.md`(네임스페이스 표 14개 · 정책 세트 · 외부 egress 규칙 형식 · 포트 출처 각주)다. 계약과 스크립트가 어긋나면 계약을 먼저 고친다.
 
-## CI 배선 상태 — **이 검사들은 아직 CI에서 강제되지 않는다**(2026-09-21 실측)
+## CI 배선 상태 — `validate.yml`이 이 검사들을 부른다(T047 G2)
 
-`.github/workflows/validate.yml`은 T003 골격 그대로다: 검사 1–7 스텝이 전부 `run: echo "자리 — T033에서 작성"`이고 **실제로 도는 스텝은 `actions/checkout`과 `gitleaks/gitleaks-action` 둘뿐**이다(`grep -rn "validate.sh" .github/` → 0건). 즉 required check `validate`는 오늘 **gitleaks만** 본다 — 이 디렉터리의 검사(0–10)는 한 줄도 돌지 않는다.
+`.github/workflows/validate.yml`의 job `validate`(= ruleset `main`의 required check 이름)가 PR 이벤트와 main push에서 아래 순서로 돈다. 스텝 하나라도 실패하면 check가 실패하고 머지가 막힌다. 순서의 이유와 입력 규칙(`${{ }}` 값은 `env:`로만 넘긴다 · `VALIDATE_SKIP_TOOLS` 등 스위치 변수는 어디에도 두지 않는다)의 정본은 워크플로 머리 주석이다.
 
-- **검사는 `tests/validate.sh`에 있고, CI가 이를 실제로 부르는 것은 T047(validate 워크플로 완성) 뒤다.** 그때까지 강제 수단은 **PR 전 로컬 실행**(`bash tests/validate.sh` · `bash tests/validate.tests.sh`)과 **사람 리뷰**뿐이다.
-- 그러므로 다른 문서에서 "required check `validate`가 막는다/CI가 강제한다"로 읽히는 문장은 **T047 이후의 상태**를 말한다. 오늘의 통제 현황을 더 자세히 적은 곳은 `bootstrap/argocd/argocd-cm.yaml` 머리 주석의 「통제 현황(실측)」이다.
-- 이 사실은 **여기 한 곳에만** 적는다. 다른 README는 이 절을 가리킨다.
+| 순서 | 스텝 | 이벤트 | 실행되는 코드 |
+|---|---|---|---|
+| 1 | checkout(`fetch-depth: 0` · `persist-credentials: false`) | PR · push | 액션(SHA 고정) |
+| 2 | 경로 lint — `bash tests/validate.base.sh --only-author`(검사 6만) | PR만 | **main 쪽 스크립트** — base 커밋(`pull_request.base.sha`)의 `tests/validate.sh`를 `git show`로 꺼낸 사본. PR 쪽 코드가 한 줄도 돌기 전에, 러너에 원래 있는 git · bash · coreutils만으로 돈다 |
+| 3 | 도구 설치 — kustomize v5.8.1 · yq v4.53.6 · gitleaks 8.30.1 · kubeconform v0.8.0 · helm v4.3.0(linux arm64) | PR · push | 워크플로 파일 안의 인라인 스크립트(저장소의 스크립트를 부르지 않는다). 받은 파일마다 sha256 대조, 설치 뒤 버전 대조 — 어긋나면 실패 |
+| 4 | 전체 검사 — `bash tests/validate.sh`(검사 0–10) | PR · push | PR 쪽 스크립트. PR 이벤트에서는 `PR_AUTHOR`·`PR_AUTHOR_ID`·`VALIDATE_BASE_SHA`·`VALIDATE_HEAD_SHA`도 넘긴다(검사 6이 한 번 더 돈다 — 무해). push에서는 작성자가 비어 검사 6은 대상 없음이다 |
+| 5 | 자기검사 — `bash tests/validate.tests.sh` | PR · push | PR 쪽 스크립트. 러너가 넣는 `CI=true`로 부분 실행을 거부하고 도구 누락(helm 포함)을 실패로 본다. 4 **뒤에** 둔다 — 자기검사가 픽스처 아래 `charts/`에 풀어 둔 차트를 4의 검사 8(gitleaks 파일 스캔)이 훑지 않게 |
+| 6 | gitleaks 액션 — 커밋 히스토리 스캔 | PR · push | 액션(SHA 고정 — 액션이 자기 gitleaks를 받아 쓴다) |
+
+- **main 쪽 스크립트로 도는 것은 스텝 2 하나다.** 4·5는 PR 쪽 스크립트라 PR이 검사를 고치면 그 PR에서는 고친 검사가 돈다 — 사람 PR은 리뷰가, 봇 PR은 스텝 2가 막는다(봇이 `apps/*/overlays/dev/kustomization.yaml`의 digest 줄 밖을 건드리면 — `tests/`·`.github/` 포함 — main의 규칙으로 FAIL). 스텝 2가 첫 검사 스텝인 이유도 같다: PR 쪽 코드가 `.git`이나 작업 트리를 먼저 바꿀 수 없게.
+- 스텝 2의 사본(`tests/validate.base.sh`)은 저장소 루트 판정 때문에 `tests/` 안에 둔다(아래 「T047 필수 조건」). 자리에 이미 있는 파일·심볼릭 링크를 먼저 지우고(`tests/` 자체가 링크면 실패 — PR이 그 이름으로 `/dev/null` 링크를 넣어 두면 사본이 거기로 쓰이고 빈 스크립트가 exit 0으로 끝난다), 끝나면 성공·실패와 무관하게 지운다(남으면 4의 검사 8이 훑는다 — 못 지우면 실패). base SHA가 전체 커밋 ID가 아니거나, base 커밋에 스크립트가 없거나(`git show` 실패), 사본이 비었으면 실패다 — 조용히 건너뛰지 않는다. base 커밋의 스크립트가 `--only-author`를 모르면(T047 G1 이전의 main) 인자 오류(exit 2)로 실패한다.
+- 설치한 도구는 `$RUNNER_TEMP/bin`에 두고 PATH 맨 앞에 붙인다. 4는 시작할 때 다섯 도구가 그 경로로 풀리는지 확인한다(러너 이미지의 다른 `yq` 등이 먼저 잡히면 실패). kubeconform 스키마 캐시는 `$RUNNER_TEMP/kubeconform-cache`다(4·5가 공유 — 실행 사이에는 보존하지 않는다).
+- **아직 CI가 하지 않는 것**
+  - 렌더링 diff PR 코멘트(main ↔ PR `kustomize build` 비교) — 다음 PR(T047 G3).
+  - 자기검사의 실행 시점 확정 — 지금은 시간 실측을 위해 모든 이벤트에서 돈다. 각 run 스텝이 스텝 이름 · 시작·종료 시각(UTC) · 초 · exit를 job 요약에 한 줄씩 남긴다. 실측 뒤 자기검사를 어느 이벤트에서 돌릴지와 `timeout-minutes`(초기값 45) · 스키마 캐시 보존(`actions/cache`) 여부를 정한다.
+- 로컬 실행(아래 「실행」)은 여전히 PR 전 1차 확인 수단이다 — CI는 같은 스크립트를 부를 뿐이다.
+- 이 사실은 **여기 한 곳에만** 적는다. 다른 README·주석은 이 절을 가리킨다. 그중 배선 전 상태("CI가 아직 보지 않는다 · 실행 수단은 PR 전 로컬 실행뿐")를 적은 문장(예: `bootstrap/argocd/argocd-cm.yaml` 머리 주석의 「통제 현황(실측 2026-09-09)」)은 G2 이전의 기록이다 — 이 절이 우선한다.
 
 | 파일 | 역할 |
 |---|---|
@@ -37,7 +51,7 @@ PR_AUTHOR='<login>' PR_AUTHOR_ID=<id> PR_SENDER='<login>' PR_SENDER_ID=<id> VALI
 `validate.tests.sh`의 `run_case` 첫 인자다(검사 코드가 아니다 — 예: `app-source-`·`rel-scoped-`·`pol-webhook-src-`·`author-`). 바꾼 검사에
 걸리는 케이스와 `positive`를 함께 고르면 된다.
 
-필요 도구: `yq`(mikefarah v4) · `kustomize` · `kubeconform` · `gitleaks` (+ `helm`은 helmCharts가 있는 kustomization에만 — 자기검사의 `fixtures/pol-port`·`fixtures/rel-scoped/{typo-key,typo-parent,cloudflared,env-vars}`는 helm과 **네트워크**(차트 pull)가 필요하다. 풀린 차트는 픽스처 아래 `charts/`에 남고 `.gitignore` 대상이다). CI(validate.yml, T047)는 helm을 포함한 다섯 도구를 sha256 핀으로 설치하고 `PR_AUTHOR`·`PR_AUTHOR_ID`·`PR_SENDER`·`PR_SENDER_ID`·`VALIDATE_BASE_SHA`·`VALIDATE_HEAD_SHA`를 넘긴다. 자기검사를 `CI=true`(또는 `VALIDATE_TESTS_REQUIRE_TOOLS=1`)로 돌리면 helm도 도구 게이트에 들어간다 — 없으면 케이스를 돌리기 전에 exit 1이다(로컬에서 두 스위치 없이 돌리면 helm 케이스만 "도구 없음" 단언으로 바뀐다). kubeconform 스키마 캐시는 `${TMPDIR:-/tmp}/kubeconform-cache`(`VALIDATE_KUBECONFORM_CACHE`로 변경) — 저장소 밖 임시 경로이며 저장소에 파일을 남기지 않는다.
+필요 도구: `yq`(mikefarah v4) · `kustomize` · `kubeconform` · `gitleaks` (+ `helm`은 helmCharts가 있는 kustomization에만 — 자기검사의 `fixtures/pol-port`·`fixtures/rel-scoped/{typo-key,typo-parent,cloudflared,env-vars}`는 helm과 **네트워크**(차트 pull)가 필요하다. 풀린 차트는 픽스처 아래 `charts/`에 남고 `.gitignore` 대상이다). CI(`validate.yml` — 「CI 배선 상태」)는 helm을 포함한 다섯 도구를 sha256 핀으로 설치하고, PR 이벤트에서 `PR_AUTHOR`·`PR_AUTHOR_ID`·`PR_SENDER`·`PR_SENDER_ID`·`VALIDATE_BASE_SHA`·`VALIDATE_HEAD_SHA`를 넘긴다. 자기검사를 `CI=true`(또는 `VALIDATE_TESTS_REQUIRE_TOOLS=1`)로 돌리면 helm도 도구 게이트에 들어간다 — 없으면 케이스를 돌리기 전에 exit 1이다(로컬에서 두 스위치 없이 돌리면 helm 케이스만 "도구 없음" 단언으로 바뀐다). kubeconform 스키마 캐시는 `${TMPDIR:-/tmp}/kubeconform-cache`(`VALIDATE_KUBECONFORM_CACHE`로 변경 — CI는 `$RUNNER_TEMP/kubeconform-cache`) — 저장소 밖 임시 경로이며 저장소에 파일을 남기지 않는다.
 
 ## 규칙
 
@@ -50,7 +64,7 @@ PR_AUTHOR='<login>' PR_AUTHOR_ID=<id> PR_SENDER='<login>' PR_SENDER_ID=<id> VALI
 - 검사 9가 쓰는 상수(`CSS_TABLE`·`CSS_SA_NS`·`CSS_VAULT_*`·`CSS_K8S_REMOTE_NS`·`CSS_COND_TABLE`·`CSS_COND_PLATFORM_EXCLUDE`)는 5.6의 노드 주소와 **성격이 다르다.** 노드 주소는 재이미지·재조인으로 바뀌는 런타임 값이라 다섯 곳을 함께 고쳐야 하지만, 검사 9의 값은 **계약 문면**(§ClusterSecretStore 5개 표 · §이름·인증 규약)이라 계약을 고칠 때만 함께 바꾼다. 복제본은 `validate.sh`의 그 블록 하나뿐이다(store 매니페스트 자체는 검사 대상이지 사본이 아니다).
 - 검사 5.6이 쓰는 노드 A 주소 2개(private `/32` · flannel 터널 장치 `/32`)는 여러 곳에 복제돼 있다. 노드 재이미지·재조인으로 값이 바뀌면 **아래 다섯 곳을 한 PR에서 함께** 바꾼다 — 아무것도 고치지 않으면 검사는 통과하면서 정책만 조용히 무력해지고, 일부만 고치면 5.6·자기검사가 FAIL한다. 이 목록은 **검사 5.6 관련 복제본**이다(private IP는 그 밖에 `allow-kube-api` 10장과 `policies-external.yaml`의 노드 IP 규칙에도 있다 — 전체는 `platform/policies/README.md` 상수 표의 "쓰이는 곳" 열을 따른다): ① `platform/policies/policies-common.yaml`의 `allow-apiserver-webhook` 4장 ② `tests/validate.sh`의 상수 `NODE_A_PRIVATE_CIDR`·`NODE_A_FLANNEL_CIDR` ③ `tests/fixtures/positive/platform/policies/policies-common.yaml`의 webhook 4장 ④ `tests/fixtures/pol-webhook-src/**`의 정책 픽스처 ⑤ `tests/validate.tests.sh`의 5.6 단언 문자열(빠짐·여분 목록).
 - 계약 `network-policy.md`에는 값이 없다(자리표시자뿐) — 값이 바뀌어도 계약은 고칠 것이 없고, **메커니즘이 바뀔 때만** 모노레포에서 별도 커밋으로 고친다. 모노레포 쪽 리터럴은 private IP가 `infra/oci/instances.tf`·`infra/oci/network.tf`·`infra/bootstrap/k3s-*.sh`·`infra/cloudflare/variables.tf` 등에 있고(별도 저장소·별도 커밋 — **전수는 모노레포에서 grep**한다), flannel 값은 런북·빌드 노트의 실측 기록뿐이다(`np-set-5`는 노드 객체에서 유도하므로 바꿀 상수가 없다).
-- **T047 필수 조건**: 작성자 lint(검사 6)는 PR head가 아니라 **base ref의 `tests/validate.sh`**를 **`--only-author`**로 실행한다 — `git show "<base>:tests/validate.sh" > tests/validate.base.sh && bash tests/validate.base.sh --only-author`(`<base>`는 base ref(main) 쪽 커밋 — 예: `$VALIDATE_BASE_SHA`. 같은 `tests/` 안에 두어야 저장소 루트 판정이 유지된다).
+- **T047 필수 조건**(구현: `validate.yml` 스텝 2·4 — 「CI 배선 상태」): 작성자 lint(검사 6)는 PR head가 아니라 **base ref의 `tests/validate.sh`**를 **`--only-author`**로 실행한다 — `git show "<base>:tests/validate.sh" > tests/validate.base.sh && bash tests/validate.base.sh --only-author`(`<base>`는 base ref(main) 쪽 커밋 — 예: `$VALIDATE_BASE_SHA`. 같은 `tests/` 안에 두어야 저장소 루트 판정이 유지된다).
   - base 스크립트로 돌리므로 App이 같은 PR에서 스크립트를 고쳐 검사를 무력화할 수 없다(main의 규칙으로 판정한다).
   - `--only-author`라서 base 쪽 표(sync-wave 표 등)가 head 트리 전체를 판정하지 않는다 — 표와 트리를 함께 바꾸는 정상 PR이 base 표에서 FAIL하지 않는다. 이 모드는 도구를 확인하지 않고(쓰는 외부 명령은 git · bash · coreutils의 `dirname`·`tr` — `--changed-files` 인자를 쓰면 `cat`) 머리에 `모드: --only-author`, 끝에 `결과(작성자 검사만 실행): …`를 찍는다. **그 exit 0은 전체 통과가 아니다** — 전체 검사(head의 `bash tests/validate.sh`)를 따로 돌린다. `VALIDATE_ONLY_AUTHOR`는 `0`·`1`만 받고(그 밖의 값은 exit 2) 빈 문자열은 `0`(꺼짐)으로 읽는다.
   - 변경 파일 목록과 diff는 `VALIDATE_BASE_SHA`·`VALIDATE_HEAD_SHA`의 **merge-base ↔ head**로 계산한다(두 점 diff가 아니다 — PR 브랜치가 main 끝보다 뒤처져 있어도 main 쪽 변경이 섞이지 않는다). 두 값이 커밋으로 풀리지 않거나(객체 없음 · 얕은 체크아웃 · `-`로 시작) `--root`가 git 작업 트리가 아니거나 공통 조상이 없거나 **merge-base가 둘 이상이거나**(`git merge-base --all` — 교차 이력) `git diff`가 실패하면 요약 없이 끝나지 않고 `6 AUTHOR-input` FAIL(exit 1)이다 — 체크아웃은 두 커밋과 merge-base를 모두 가져와야 한다. 이 FAIL은 **봇 PR(작성자 또는 이벤트 발신자가 봇)일 때만** 난다 — 사람 작성자 + 사람 발신자는 SHA를 읽지 않고 PASS다(잘못된 SHA여도).
@@ -90,7 +104,7 @@ PR_AUTHOR='<login>' PR_AUTHOR_ID=<id> PR_SENDER='<login>' PR_SENDER_ID=<id> VALI
   `operation`은 Git에 선언하는 필드가 아니므로(동기화를 요청하는 쪽이 쓰고 컨트롤러가 처리한 뒤 지운다) 키가 **있기만 하면** FAIL한다.
   픽스처 `fixtures/app-source/{kustomize-patches,multi-source,ref,source-file,hydrator,operation}`.
 - 검사 7.4는 **우회 경로를 전부 덮는다고 주장하지 않는다** — 아는 경로를 하나씩 막은 목록이고(검증을 돌릴 때마다 새 경로가 나왔다:
-  `.argocd-source*.yaml` → `sourceHydrator` → `operation`), 전수 열거와 CI 배선은 T047이 맡는다.
+  `.argocd-source*.yaml` → `sourceHydrator` → `operation`), 전수 열거는 T047이 맡는다(CI 배선은 T047 G2 — 「CI 배선 상태」).
 - 검사 7.4가 **보지 않는 것**: `spec.source.path`의 값(7.1이 이름 규약으로 본다), `project`·`destination`·`syncPolicy`(2가 SSA만 본다), 그리고 클러스터에
   이미 있는 Application이 Git과 같은지(root가 selfHeal로 되돌리지만, root 밖에서 `kubectl`로 만든 Application은 Git에 없으므로 이 검사 밖이다).
   코드로 확인한 사각: kustomization이 없는 디렉터리(root가 읽는 `clusters/oci-k3s/apps` 등)에서 **`kind: List`로 감싼 Application**(파일 단위 추출은
