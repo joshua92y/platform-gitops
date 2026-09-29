@@ -1,0 +1,79 @@
+# 임시 워크플로 — VD-5 승인 관문 실측(T047 G5 · V1). **main에 머지하지 않는다.**
+# 재는 것: Environment `production`의 필수 검토자가 pull_request 실행의 job을 멈춰 세우는가,
+#          그동안 뒤 job(prod-approval)의 check가 보고되지 않는가, 승인·거절 뒤 결과가 어떻게 되는가.
+# 구조: detect(바뀐 경로 판정) → gate(Environment를 요구하는 빈 job) → prod-approval(판정을 모으는 job — required check 후보)
+name: vd5-gate
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vd5-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  detect:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 5
+    outputs:
+      gate: ${{ steps.d.outputs.gate }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: d
+        name: "바뀐 경로 판정 — prod overlay를 건드리면 need"
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          # 판정에 실패하면 need(fail-closed) — 출력이 비어도 gate job의 조건식은 참이 된다
+          gate=need
+          main_tip=$(git rev-parse --verify --quiet 'refs/remotes/origin/main^{commit}')
+          mapfile -t bases < <(git merge-base --all "$main_tip" "$HEAD_SHA")
+          if [[ ${#bases[@]} -eq 1 ]]; then
+            gate=skip
+            while IFS= read -r f; do
+              [[ -n $f ]] || continue
+              case "$f" in
+                apps/*/overlays/prod/*) gate=need ;;
+              esac
+            done < <(git diff --name-only --no-renames --no-ext-diff "${bases[0]}" "$HEAD_SHA")
+          fi
+          printf 'gate=%s\n' "$gate" | tee -a "$GITHUB_OUTPUT"
+
+  gate:
+    needs: detect
+    if: needs.detect.outputs.gate != 'skip'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 5
+    environment: production
+    steps:
+      - name: "승인 확인"
+        run: echo "운영자가 승인했다"
+
+  prod-approval:
+    needs: [detect, gate]
+    if: always()
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 5
+    steps:
+      - name: "판정 모으기(fail-closed)"
+        env:
+          DETECT: ${{ needs.detect.result }}
+          NEED: ${{ needs.detect.outputs.gate }}
+          GATE: ${{ needs.gate.result }}
+        run: |
+          set -euo pipefail
+          printf 'detect=%s need=%s gate=%s\n' "$DETECT" "$NEED" "$GATE"
+          [[ $DETECT == success ]] || { echo "::error::판정 job이 성공하지 않았다"; exit 1; }
+          case "$NEED" in
+            skip) [[ $GATE == skipped ]] || { echo "::error::관문이 필요 없는데 gate 결과가 skipped가 아니다"; exit 1; } ;;
+            need) [[ $GATE == success ]] || { echo "::error::승인되지 않았다(gate=$GATE)"; exit 1; } ;;
+            *)    echo "::error::판정 값이 비었거나 알 수 없다"; exit 1 ;;
+          esac
