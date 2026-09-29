@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # =============================================================================
-# tests/validate.sh — platform-gitops required check `validate`가 **T047에서 배선할** 검사 본체 (T033)
-#   ⚠ 오늘 `.github/workflows/validate.yml`은 이 스크립트를 부르지 않는다(T003 골격 — 실제로 도는 스텝은 checkout + gitleaks뿐).
-#     그때까지 강제 수단은 PR 전 로컬 실행과 사람 리뷰다. 상세는 tests/README.md 「CI 배선 상태」.
+# tests/validate.sh — platform-gitops required check `validate`의 검사 본체 (T033)
+#   `.github/workflows/validate.yml`(T047 G2)이 부른다 — 무엇이 어떤 순서로 도는지(PR에서 먼저 base 커밋의 이 스크립트를
+#     --only-author로 돌리는 것 포함)는 tests/README.md 「CI 배선 상태」 한 곳에 적는다.
 #
 # 정본(계약) — 이 스크립트는 아래 두 계약을 코드로 옮긴 것이며, 충돌 시 계약이 우선한다.
 #   - 모노레포 specs/003-platform-foundation/contracts/gitops-repo.md

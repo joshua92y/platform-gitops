@@ -1,14 +1,63 @@
-# validate 골격(T003) — 모노레포 ci.yml(T002)과 같은 규약
+# validate — required check `validate`를 내는 워크플로(T003 골격 → T047 G2 배선)
+#
+# 규약
+# - job 이름 `validate`는 ruleset(main)의 required check 이름과 일치해야 한다 — 바꾸면 머지가 막힌다
+#   (job에 `name:`을 붙여도 check 이름이 바뀐다).
 # - runs-on: ubuntu-24.04-arm — 운영 노드(OCI Ampere A1)와 이미지/도구가 모두 arm64이므로
 #   퍼블릭 arm64 러너에서 같은 아키텍처로 검사한다.
 # - 모든 액션은 전체 커밋 SHA로 핀한다(주석의 vX.Y.Z는 사람용 표기).
 #   SHA 갱신은 Renovate(온보딩 필요 — T116에서 확인), 그 전까지 수동.
-# - job 이름 `validate`는 ruleset(main)의 required check 이름과 일치해야 한다 — 바꾸면 머지가 막힌다.
-# - 검사 7항목의 정본: 계약 gitops-repo.md §validate.yml — 실제 검사는 T033에서 채운다.
+# - 검사 항목의 정본: 모노레포 계약 gitops-repo.md §validate.yml. 검사 본체는 tests/validate.sh(전체 검사)와
+#   tests/validate.tests.sh(자기검사)이고, 이 파일은 그것을 부르는 배선만 둔다. 무엇이 어떤 순서로 도는지와
+#   아직 CI가 하지 않는 것(렌더링 diff PR 코멘트 — 다음 PR)은 tests/README.md 「CI 배선 상태」 한 곳에 적는다.
+#
+# 스텝 순서와 이유(보안 설계 — 순서를 바꾸지 않는다)
+#   1 checkout       fetch-depth 0(검사 6의 merge-base · gitleaks 히스토리 스캔). 저장소 쪽 코드는 실행되지 않는다.
+#                    persist-credentials: false — 뒤 스텝이 PR 쪽 코드를 실행하므로 .git/config에 토큰을 남기지 않는다
+#                    (push·fetch를 하는 스텝이 없다. gitleaks 액션은 토큰을 env로 따로 받는다).
+#   2 경로 lint      PR 이벤트에서만. **main의** tests/validate.sh를 --only-author로 돌린다 — PR 쪽 코드를
+#                    한 줄도 실행하기 전에, 러너에 원래 있는 git · bash · coreutils만으로.
+#                    "main"은 가져온 origin/main의 끝이다 — PR이 말하는 base(pull_request.base.sha)가 아니다.
+#                    PR의 base는 봇이 고를 수 있으므로 확인에만 쓴다(base ref가 main이 아니거나 base 커밋이 main의
+#                    이력 위에 없으면 실패). 스크립트와 diff 기준은 origin/main의 끝에서 가져온다.
+#                    lint의 출력에는 PR이 고른 글자가 찍히므로 그 구간은 워크플로 명령 해석을 막는다(stop-commands).
+#                    이유: 봇(GitHub App) PR은 승인 0으로 자동 머지된다. App에는 workflows 권한이 없어 이 파일은 못
+#                    바꾸지만 tests/ 등 그 밖의 파일은 바꿀 수 있다 — PR 쪽 스크립트로 검사 6을 돌리면 같은 PR이 검사를
+#                    끌 수 있다. 사본은 tests/ 안에 둬야 저장소 루트 판정이 유지되고(tests/README.md 「T047 필수 조건」),
+#                    성공·실패와 무관하게 지운 뒤 끝난다(남으면 4의 검사 8 파일 스캔에 섞인다).
+#   2b 자기검사 판정 5를 돌릴지 정한다 — main push는 항상, PR은 tests/ 또는 .github/ 아래가 바뀐 경우에만
+#                    (origin/main의 끝과 head의 merge-base ↔ head의 변경 경로). 2와 같이 PR 쪽 코드를 실행하기 전에,
+#                    git · bash만으로. 판정에 실패하면 돌리는 쪽으로 넘어진다. 이유: 봇의 dev bump PR은 required
+#                    check가 끝나야 자동 머지되므로 검사 시간이 그대로 배포 지연이다. 봇은 tests/를 못 고치므로
+#                    (2의 lint) 봇 PR의 검사 스크립트는 main의 것과 같고, 그것은 main push 실행이 검증한다
+#                    (러너 실측: 전체 검사 35초 · 자기검사 184초). main push 실행은 서로 취소하지 않는다(concurrency).
+#                    main 실행의 실패는 머지를 막지 못한다(이미 머지된 뒤다) — 커밋의 상태 표시로 드러난다.
+#   3 도구 설치      이 파일 안의 인라인 스크립트 — 저장소의 설치 스크립트를 부르지 않는다(PR이 바꿀 수 있다).
+#                    버전 고정 + sha256 대조, $RUNNER_TEMP/bin을 PATH 앞쪽에 둔다(러너 이미지의 다른 yq보다 먼저).
+#   4 전체 검사      PR 쪽 tests/validate.sh. PR 이벤트에서는 작성자·발신자·head와 기준 커밋(origin/main의 끝)도
+#                    넘긴다(검사 6이 한 번 더 돈다 — 무해).
+#   5 자기검사       PR 쪽 tests/validate.tests.sh. 4 **뒤에** 둔다 — 자기검사가 픽스처 아래 charts/에 차트를 풀어
+#                    두므로, 앞에 두면 4의 검사 8(gitleaks 파일 스캔)이 그것을 훑는다.
+#   6 gitleaks 액션  커밋 히스토리 스캔(액션이 자기 gitleaks를 받아 쓴다 — 3의 도구와 별개이고 버전만 같게 맞춘다).
+#
+# 입력 규칙
+# - `${{ }}` 값은 run: 본문에 끼워 넣지 않고 env:로만 넘긴다(PR 제목·브랜치 이름 등을 통한 스크립트 주입 방지).
+# - CHANGED_FILES·CHANGED_DIFF는 2·4에서 빈 값으로 명시한다(값이 있으면 SHA 입력보다 먼저 쓰인다).
+# - VALIDATE_SKIP_TOOLS · VALIDATE_BOT_AUTHORS · VALIDATE_BOT_IDS · VALIDATE_TESTS_ONLY · VALIDATE_ONLY_AUTHOR는
+#   어디에도 두지 않는다(job·워크플로 수준 env: 포함 — job env는 자기검사로 새어 든다). 봇 목록의 정본은
+#   tests/validate.sh의 기본값이다.
+# - 러너가 CI=true를 넣는다 — 자기검사는 부분 실행을 거부하고 도구 누락(helm 포함)을 실패로 본다.
+# - HELM_*_HOME은 helm을 직접 부를 때만 쓰인다 — kustomize --enable-helm은 helm을 부를 때 이 셋을 자기 임시
+#   디렉터리(os.MkdirTemp — $TMPDIR 아래)로 덮어쓴다(kustomize v5.8.1 HelmChartInflationGenerator 소스 확인).
+# - 각 run 스텝은 스텝 이름 · 시작·종료 시각(UTC) · 초 · exit를 job 요약($GITHUB_STEP_SUMMARY)에 한 줄 남긴다.
 name: validate
 
 on:
+  # main을 향한 PR에서만 돈다. 봇은 bump/**에 임의 내용을 쓸 수 있으므로 검사를 무력화한 브랜치를 base로 잡은 PR을
+  # 열 수 있다 — 그런 PR에서 이 워크플로가 돌면 성공한 check가 head 커밋에 붙고, 같은 head를 main으로 향하게 하면
+  # required check가 채워진다(T047 G2 리뷰 — 실험으로 재현). 스텝 2도 base ref를 한 번 더 확인한다(이중 방어).
   pull_request:
+    branches: [main]
   push:
     branches: [main]
 
@@ -16,35 +65,340 @@ permissions:
   contents: read
 
 concurrency:
-  group: validate-${{ github.ref }}
-  cancel-in-progress: true
+  # PR: 같은 PR의 옛 실행을 취소한다. main push: 커밋마다 따로 묶어 서로 취소하지 않는다 —
+  # "봇 PR의 검사 스크립트는 main push에서 이미 검증됐다"가 성립하려면 main의 실행이 끝까지 돌아야 한다.
+  group: validate-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   validate:
     runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15 # 러너 실측 약 4분(2026-09-29) — 멈춘 내려받기·렌더가 오래 붙잡지 않게
+    defaults:
+      run:
+        shell: bash # = bash --noprofile --norc -eo pipefail {0}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: "1 checkout"
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0 # gitleaks는 전체 커밋 히스토리를 스캔한다
-      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+          fetch-depth: 0 # 검사 6의 merge-base 계산과 gitleaks 히스토리 스캔은 전체 커밋 히스토리가 필요하다
+          persist-credentials: false
+
+      - name: "2 경로 lint — main의 tests/validate.sh --only-author(PR 코드 실행 전)"
+        if: github.event_name == 'pull_request'
+        env:
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_AUTHOR_ID: ${{ github.event.pull_request.user.id }}
+          # 이벤트 발신자(push한 쪽 · 다시 연 쪽) — 사람이 연 PR의 브랜치에 봇이 push하면 발신자가 봇이다
+          PR_SENDER: ${{ github.event.sender.login }}
+          PR_SENDER_ID: ${{ github.event.sender.id }}
+          # PR이 말하는 base — 확인에만 쓴다. 스크립트와 diff 기준은 가져온 origin/main의 끝에서 가져온다
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          VALIDATE_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          CHANGED_FILES: ""
+          CHANGED_DIFF: ""
+        run: |
+          set -euo pipefail
+          step='2 경로 lint(main의 validate.sh --only-author)'
+          base_copy=tests/validate.base.sh
+          t0=$(date -u +%s)
+          # EXIT: 사본을 지우고(성공·실패와 무관) 시간을 요약에 남긴 뒤 원래 종료 코드로 끝낸다. 지우지 못하면 실패로 끝낸다
+          on_exit() {
+            local rc=$? t1
+            if ! rm -f -- "$base_copy" || [[ -e $base_copy || -L $base_copy ]]; then
+              printf '::error::%s 을(를) 지우지 못했다 — 남으면 검사 8의 파일 스캔에 섞인다\n' "$base_copy"
+              [[ $rc -ne 0 ]] || rc=1
+            fi
+            t1=$(date -u +%s)
+            printf -- '- **%s** · 시작 %s · 종료 %s · %d초 · exit %d\n' "$step" \
+              "$(date -u -d "@$t0" +%FT%TZ)" "$(date -u -d "@$t1" +%FT%TZ)" "$((t1 - t0))" "$rc" >> "$GITHUB_STEP_SUMMARY" || true
+            exit "$rc"
+          }
+          trap on_exit EXIT
+
+          # --- base 확인: 이 lint의 "main"은 PR이 말하는 base가 아니라 가져온 origin/main의 끝이다 ---
+          # 봇은 PR의 base를 고를 수 있다(자기 bump/** 브랜치를 base로). PR이 말하는 값은 확인에만 쓴다
+          if [[ $PR_BASE_REF != main ]]; then
+            printf '::error::PR의 base ref가 main이 아니다: %q\n' "$PR_BASE_REF"
+            exit 1
+          fi
+          if ! main_tip=$(git rev-parse --verify --quiet 'refs/remotes/origin/main^{commit}'); then
+            printf '::error::refs/remotes/origin/main 이 체크아웃에 없다(fetch-depth: 0 필요)\n'
+            exit 1
+          fi
+          if [[ ! $main_tip =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]]; then
+            printf '::error::origin/main이 커밋 ID로 풀리지 않았다: %q\n' "$main_tip"
+            exit 1
+          fi
+          # PR이 말하는 base 커밋은 전체 커밋 ID이고 main의 이력 위에 있어야 한다(main의 끝이거나 그 조상)
+          if [[ ! $PR_BASE_SHA =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]]; then
+            printf '::error::PR의 base 커밋이 전체 커밋 ID가 아니다: %q\n' "$PR_BASE_SHA"
+            exit 1
+          fi
+          if ! git rev-parse --verify --quiet "${PR_BASE_SHA}^{commit}" > /dev/null; then
+            printf '::error::PR의 base 커밋 %s 이(가) 체크아웃에 없다(fetch-depth: 0 필요)\n' "$PR_BASE_SHA"
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$PR_BASE_SHA" "$main_tip"; then
+            printf '::error::PR의 base 커밋 %s 이(가) main(끝 %s)의 이력 위에 없다\n' "$PR_BASE_SHA" "$main_tip"
+            exit 1
+          fi
+          # 스크립트가 읽는 기준 커밋 = origin/main의 끝
+          export VALIDATE_BASE_SHA=$main_tip
+          # head 커밋도 같은 조건으로 확인한다 — 사람 PR에서는 lint가 SHA를 읽지 않으므로, 확인하지 않으면
+          # 체크아웃 설정이 틀어진 것을 첫 봇 PR에서야 알게 된다
+          if [[ ! $VALIDATE_HEAD_SHA =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]]; then
+            printf '::error::VALIDATE_HEAD_SHA가 전체 커밋 ID가 아니다: %q\n' "$VALIDATE_HEAD_SHA"
+            exit 1
+          fi
+          if ! git rev-parse --verify --quiet "${VALIDATE_HEAD_SHA}^{commit}" > /dev/null; then
+            printf '::error::head 커밋 %s 이(가) 체크아웃에 없다(fetch-depth: 0 필요)\n' "$VALIDATE_HEAD_SHA"
+            exit 1
+          fi
+          # 사본 자리 준비: tests/는 실제 디렉터리여야 하고, 같은 이름의 파일·심볼릭 링크는 먼저 지운다
+          # (PR이 tests/validate.base.sh를 /dev/null로 가는 링크로 넣어 두면 사본이 거기로 쓰이고 빈 스크립트가 exit 0으로 끝난다)
+          if [[ ! -d tests || -L tests ]]; then
+            printf '::error::tests 가 실제 디렉터리가 아니다(심볼릭 링크 포함)\n'
+            exit 1
+          fi
+          rm -f -- "$base_copy"
+          if [[ -e $base_copy || -L $base_copy ]]; then
+            printf '::error::%s 자리를 비우지 못했다\n' "$base_copy"
+            exit 1
+          fi
+          # main의 스크립트를 꺼낸다 — 파일이 없거나 git show가 실패하면 실패(조용히 건너뛰지 않는다)
+          printf 'main 스크립트: %s:tests/validate.sh (blob %s) · PR이 말한 base %s\n' "$main_tip" \
+            "$(git rev-parse --verify --quiet "${main_tip}:tests/validate.sh" || printf '없음')" "$PR_BASE_SHA"
+          set -o noclobber
+          git show "${main_tip}:tests/validate.sh" > "$base_copy"
+          set +o noclobber
+          if [[ ! -f $base_copy || -L $base_copy || ! -s $base_copy ]]; then
+            printf '::error::%s 이(가) 비었거나 일반 파일이 아니다\n' "$base_copy"
+            exit 1
+          fi
+          # lint의 출력에는 PR이 고른 글자가 그대로 찍힌다(FAIL 줄의 diff 내용) — 러너가 그 안의 워크플로 명령을
+          # 해석하지 않게 출력 구간을 막는다(토큰은 실행마다 새로 만든다 — PR 내용으로는 맞힐 수 없다)
+          token=$(cat /proc/sys/kernel/random/uuid 2> /dev/null || printf 'stop-%s-%s%s%s' "$(date -u +%s%N)" "$RANDOM" "$RANDOM" "$RANDOM")
+          printf '::stop-commands::%s\n' "$token"
+          lint_rc=0
+          bash "$base_copy" --only-author || lint_rc=$?
+          printf '::%s::\n' "$token"
+          # lint의 종료 코드가 그대로 이 스텝의 종료 코드다(EXIT의 on_exit가 사본을 지우고 그 코드를 돌려준다)
+          exit "$lint_rc"
+
+      - name: "2b 자기검사 대상 판정 — main push는 항상 · PR은 tests/ 또는 .github/ 변경 시"
+        id: selftest
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          step='2b 자기검사 대상 판정'
+          t0=$(date -u +%s)
+          on_exit() {
+            local rc=$? t1
+            t1=$(date -u +%s)
+            printf -- '- **%s** · 시작 %s · 종료 %s · %d초 · exit %d\n' "$step" \
+              "$(date -u -d "@$t0" +%FT%TZ)" "$(date -u -d "@$t1" +%FT%TZ)" "$((t1 - t0))" "$rc" >> "$GITHUB_STEP_SUMMARY" || true
+            exit "$rc"
+          }
+          trap on_exit EXIT
+
+          # 판정은 PR 쪽 코드를 실행하기 전에 한다(git · bash만). 판정에 실패하면 돌리는 쪽으로 넘어진다.
+          # 출력 값은 숫자로 읽히지 않는 낱말이다(run · skip) — 식에서 없는 출력(null)은 0으로 읽히므로, '0'·'1'을
+          # 쓰면 출력이 없을 때 `!= '0'`이 거짓이 되어 자기검사가 조용히 꺼진다(5의 조건 참조).
+          # 기준은 가져온 origin/main의 끝이다(PR이 말하는 base가 아니다 — 2의 주석)
+          decision=run
+          why='PR 이벤트가 아님 — 항상 실행'
+          if [[ $EVENT_NAME == pull_request ]]; then
+            why='판정 실패 — 실행(fail-closed)'
+            main_tip=$(git rev-parse --verify --quiet 'refs/remotes/origin/main^{commit}' || true)
+            if [[ $main_tip =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ && $HEAD_SHA =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]]; then
+              mapfile -t mbs < <(git merge-base --all "$main_tip" "$HEAD_SHA" || true)
+              if [[ ${#mbs[@]} -eq 1 && -n ${mbs[0]} ]]; then
+                if changed=$(git diff --no-ext-diff --no-textconv --no-renames --ignore-submodules=none --no-color \
+                  --name-only "${mbs[0]}" "$HEAD_SHA" -- tests .github); then
+                  if [[ -z $changed ]]; then
+                    decision=skip
+                    why='tests/ · .github/ 변경 없음 — 건너뜀(검사 스크립트가 main과 같다 · main push에서 검증한다)'
+                  else
+                    n=$(printf '%s\n' "$changed" | grep -c . || true)
+                    why="tests/ · .github/ 아래 변경 ${n}개 — 실행"
+                  fi
+                fi
+              else
+                why="merge-base가 ${#mbs[@]}개 — 실행(fail-closed)"
+              fi
+            fi
+          fi
+          printf 'selftest=%s\n' "$decision" >> "$GITHUB_OUTPUT"
+          printf '자기검사: %s — %s\n' "$decision" "$why"
+          printf -- '- **2b 판정** · %s · %s\n' "$decision" "$why" >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: "3 도구 설치 — kustomize · yq · gitleaks · kubeconform · helm(버전 고정 + sha256 대조)"
+        env:
+          # linux arm64 공식 릴리스 자산의 sha256(각 릴리스의 체크섬 파일 값).
+          # 버전을 바꾸면 sha256도 함께 바꾼다 — 둘 중 하나만 바꾸면 이 스텝이 실패한다.
+          KUSTOMIZE_VERSION: v5.8.1
+          KUSTOMIZE_SHA256: 0953ea3e476f66d6ddfcd911d750f5167b9365aa9491b2326398e289fef2c142
+          YQ_VERSION: v4.53.6
+          YQ_SHA256: 88a1016bc1d657375a35864e4f44b6f333df8ff97b559f51bba0adcb2169df09
+          GITLEAKS_VERSION: 8.30.1
+          GITLEAKS_SHA256: e4a487ee7ccd7d3a7f7ec08657610aa3606637dab924210b3aee62570fb4b080
+          KUBECONFORM_VERSION: v0.8.0
+          KUBECONFORM_SHA256: 1f53fc8e81258197a35e8603054162a5af1de8c5af13746c71ab680d9534ed87
+          HELM_VERSION: v4.3.0
+          HELM_SHA256: 31c5794dd55c66a51e6b7d2e2ac7a114ae8b1de41ff1d9ba51748ac973b06a08
+        run: |
+          set -euo pipefail
+          step='3 도구 설치'
+          t0=$(date -u +%s)
+          on_exit() {
+            local rc=$? t1
+            t1=$(date -u +%s)
+            printf -- '- **%s** · 시작 %s · 종료 %s · %d초 · exit %d\n' "$step" \
+              "$(date -u -d "@$t0" +%FT%TZ)" "$(date -u -d "@$t1" +%FT%TZ)" "$((t1 - t0))" "$rc" >> "$GITHUB_STEP_SUMMARY" || true
+            exit "$rc"
+          }
+          trap on_exit EXIT
+
+          bin="$RUNNER_TEMP/bin"
+          dl="$RUNNER_TEMP/dl"
+          mkdir -p "$bin" "$dl"
+          # fetch <url> <파일 이름> <sha256> — 받은 파일을 sha256으로 대조한다. 맞지 않으면 실패(풀지도 설치하지도 않는다)
+          fetch() {
+            if [[ ! $3 =~ ^[0-9a-f]{64}$ ]]; then
+              printf '::error::%s: sha256 값의 형식이 틀렸다: %q\n' "$2" "$3"
+              return 1
+            fi
+            # 멈춘 내려받기가 job 제한 시간까지 붙잡지 않게 시간 한도를 둔다(가장 큰 자산은 20 MB 남짓이다)
+            curl -fsSL --retry 3 --connect-timeout 10 --max-time 120 -o "$dl/$2" "$1"
+            printf '%s  %s\n' "$3" "$dl/$2" | sha256sum -c -
+          }
+
+          fetch "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2F${KUSTOMIZE_VERSION}/kustomize_${KUSTOMIZE_VERSION}_linux_arm64.tar.gz" kustomize.tar.gz "$KUSTOMIZE_SHA256"
+          tar -xzf "$dl/kustomize.tar.gz" -C "$bin" kustomize
+
+          fetch "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_arm64" yq "$YQ_SHA256"
+          cp "$dl/yq" "$bin/yq"
+
+          fetch "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_arm64.tar.gz" gitleaks.tar.gz "$GITLEAKS_SHA256"
+          tar -xzf "$dl/gitleaks.tar.gz" -C "$bin" gitleaks
+
+          fetch "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-arm64.tar.gz" kubeconform.tar.gz "$KUBECONFORM_SHA256"
+          tar -xzf "$dl/kubeconform.tar.gz" -C "$bin" kubeconform
+
+          fetch "https://get.helm.sh/helm-${HELM_VERSION}-linux-arm64.tar.gz" helm.tar.gz "$HELM_SHA256"
+          tar -xzf "$dl/helm.tar.gz" -C "$bin" --strip-components=1 linux-arm64/helm
+
+          chmod 0755 "$bin/kustomize" "$bin/yq" "$bin/gitleaks" "$bin/kubeconform" "$bin/helm"
+
+          # --- 버전 확인: 설치한 바이너리가 기대 버전이 아니면 실패 ---
+          # want_got <도구> <기대> <실제>
+          want_got() {
+            if [[ $3 != "$2" ]]; then
+              printf '::error::%s 버전 불일치: 실제 %q ≠ 기대 %s\n' "$1" "$3" "$2"
+              return 1
+            fi
+            printf '  %-12s %s\n' "$1" "$3"
+          }
+          yq_out=$("$bin/yq" --version || true)
+          if [[ $yq_out != *mikefarah* ]]; then
+            printf '::error::yq가 mikefarah yq가 아니다: %q\n' "$yq_out"
+            exit 1
+          fi
+          want_got kustomize "$KUSTOMIZE_VERSION" "$("$bin/kustomize" version || true)"
+          want_got yq "$YQ_VERSION" "${yq_out##* }"
+          want_got gitleaks "$GITLEAKS_VERSION" "$("$bin/gitleaks" version || true)"
+          want_got kubeconform "$KUBECONFORM_VERSION" "$("$bin/kubeconform" -v || true)"
+          want_got helm "$HELM_VERSION" "$("$bin/helm" version --template '{{.Version}}' || true)"
+
+          # 다음 스텝부터 PATH 맨 앞에 온다(GITHUB_PATH는 앞에 붙인다)
+          printf '%s\n' "$bin" >> "$GITHUB_PATH"
+
+      - name: "4 전체 검사 — tests/validate.sh"
+        env:
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_AUTHOR_ID: ${{ github.event.pull_request.user.id }}
+          # 발신자는 PR 이벤트에서만 넘긴다 — push 이벤트에도 sender는 있는데(push한 사람), 작성자 없이 발신자만 넘기면
+          # 검사 6이 입력이 어긋났다고 보고 FAIL한다(fail-closed). push 이벤트에서는 둘 다 빈 값이어야 "대상 없음"이다
+          PR_SENDER: ${{ github.event_name == 'pull_request' && github.event.sender.login || '' }}
+          PR_SENDER_ID: ${{ github.event_name == 'pull_request' && github.event.sender.id || '' }}
+          EVENT_NAME: ${{ github.event_name }}
+          # 기준 커밋(VALIDATE_BASE_SHA)은 env로 넘기지 않는다 — 본문이 가져온 origin/main의 끝에서 정한다(2와 같은 기준)
+          VALIDATE_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          CHANGED_FILES: ""
+          CHANGED_DIFF: ""
+          VALIDATE_KUBECONFORM_CACHE: ${{ runner.temp }}/kubeconform-cache
+          HELM_CACHE_HOME: ${{ runner.temp }}/helm/cache
+          HELM_CONFIG_HOME: ${{ runner.temp }}/helm/config
+          HELM_DATA_HOME: ${{ runner.temp }}/helm/data
+        run: |
+          set -euo pipefail
+          step='4 전체 검사(tests/validate.sh)'
+          t0=$(date -u +%s)
+          on_exit() {
+            local rc=$? t1
+            t1=$(date -u +%s)
+            printf -- '- **%s** · 시작 %s · 종료 %s · %d초 · exit %d\n' "$step" \
+              "$(date -u -d "@$t0" +%FT%TZ)" "$(date -u -d "@$t1" +%FT%TZ)" "$((t1 - t0))" "$rc" >> "$GITHUB_STEP_SUMMARY" || true
+            exit "$rc"
+          }
+          trap on_exit EXIT
+
+          # 도구가 3에서 설치한 것으로 풀리는지 확인한다(PATH 앞쪽) — 러너 이미지의 다른 바이너리가 먼저 잡히면 실패
+          for t in kustomize yq gitleaks kubeconform helm; do
+            p=$(command -v "$t" || true)
+            if [[ $p != "$RUNNER_TEMP/bin/$t" ]]; then
+              printf '::error::%s → %s (기대 %s)\n' "$t" "${p:-없음}" "$RUNNER_TEMP/bin/$t"
+              exit 1
+            fi
+          done
+          # 검사 6의 기준 커밋: PR 이벤트에서는 2와 같이 origin/main의 끝이다(PR이 말하는 base.sha는 main의 끝보다
+          # 뒤처져 있을 수 있다 — 그러면 2는 통과한 봇 PR이 여기서 main 쪽 변경 때문에 FAIL한다). push 이벤트에서는
+          # 기준을 주지 않는다(작성자가 비어 검사 6은 대상 없음이다). PR 쪽 코드는 아직 실행되지 않았다
+          if [[ $EVENT_NAME == pull_request ]]; then
+            if ! VALIDATE_BASE_SHA=$(git rev-parse --verify --quiet 'refs/remotes/origin/main^{commit}'); then
+              printf '::error::refs/remotes/origin/main 이 체크아웃에 없다(fetch-depth: 0 필요)\n'
+              exit 1
+            fi
+            export VALIDATE_BASE_SHA
+          fi
+          bash tests/validate.sh
+
+      - name: "5 자기검사 — tests/validate.tests.sh"
+        # 2b의 판정이 'skip'일 때만 건너뛴다. 출력이 없으면(null) 식에서 0으로 읽히고 'skip'은 숫자가 아니라(NaN)
+        # 같지 않다 → 돌린다(fail-closed). '0'·'1'로 쓰면 null == '0'이 참이 되어 거꾸로 건너뛴다
+        if: steps.selftest.outputs.selftest != 'skip'
+        env:
+          VALIDATE_KUBECONFORM_CACHE: ${{ runner.temp }}/kubeconform-cache
+          HELM_CACHE_HOME: ${{ runner.temp }}/helm/cache
+          HELM_CONFIG_HOME: ${{ runner.temp }}/helm/config
+          HELM_DATA_HOME: ${{ runner.temp }}/helm/data
+        run: |
+          set -euo pipefail
+          step='5 자기검사(tests/validate.tests.sh)'
+          t0=$(date -u +%s)
+          on_exit() {
+            local rc=$? t1
+            t1=$(date -u +%s)
+            printf -- '- **%s** · 시작 %s · 종료 %s · %d초 · exit %d\n' "$step" \
+              "$(date -u -d "@$t0" +%FT%TZ)" "$(date -u -d "@$t1" +%FT%TZ)" "$((t1 - t0))" "$rc" >> "$GITHUB_STEP_SUMMARY" || true
+            exit "$rc"
+          }
+          trap on_exit EXIT
+
+          bash tests/validate.tests.sh
+
+      - name: "6 gitleaks — 커밋 히스토리 스캔"
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 액션이 받아 쓰는 gitleaks 버전 — 3에서 설치한 것(파일 스캔 · 검사 8)과 같은 버전으로 맞춘다.
+          # 지정하지 않으면 액션의 기본 버전을 받아 히스토리 스캔과 파일 스캔의 규칙 집합이 달라진다
+          GITLEAKS_VERSION: 8.30.1
           # GITLEAKS_LICENSE는 조직(org) 저장소에만 필요 — 개인 저장소이므로 불필요
           # PR 코멘트는 pull-requests: write 권한이 필요 — permissions를 contents: read로
           # 유지하기 위해 코멘트 기능을 끈다(결과는 job 로그·실패 상태로 확인).
           GITLEAKS_ENABLE_COMMENTS: "false"
-      - name: "검사 1 — kustomize build(전 overlay·platform) + kubeconform"
-        run: echo "자리 — T033에서 작성"
-      - name: "검사 2 — helm template(helmCharts 사용 컴포넌트)"
-        run: echo "자리 — T033에서 작성"
-      - name: "검사 3 — ExternalSecret 규약 7항목·images newTag 금지·platform image digest 경고"
-        run: echo "자리 — T033에서 작성"
-      - name: "검사 4 — 정책 lint(Namespace 14개·공통 정책 세트·egress ipBlock·LimitRange · helm values 포트 ↔ 정책 포트 일치)"
-        run: echo "자리 — T033에서 작성"
-      - name: "검사 5 — joshuatech-gitapp-1[bot] 경로 lint(dev digest bump 외 변경 거부)"
-        run: echo "자리 — T033에서 작성"
-      - name: "검사 6 — sync-wave 값 = 계약 §sync-wave 단일 표"
-        run: echo "자리 — T033에서 작성"
-      # T033은 이 스텝에 `pull-requests: write` 권한을 추가해야 한다(현재 contents: read 유지 — 최소 권한).
-      - name: "검사 7 — 렌더링 diff PR 코멘트(main ↔ PR kustomize build 비교)"
-        run: echo "자리 — T033에서 작성"
