@@ -35,11 +35,19 @@
 #   5.5  POL-limitrange     LimitRange에 default.cpu·max.cpu 없음
 #   5.6  POL-webhook-src    allow-apiserver-webhook(원본 + kustomize 렌더): 출발 ipBlock 집합·단일 TCP 포트 정확 일치
 #                           (cert-manager·external-secrets·cnpg-system = 노드 A private+flannel /32, vault 8200 = private /32)
-#   6    AUTHOR             봇 작성자 PR: 변경 파일 = apps/*/overlays/dev/kustomization.yaml, 변경 줄 = images[].digest 뿐
-#                           한계: 변경 줄이 `digest: sha256:<64hex>` 형식인지만 본다(값의 진위·서명은 보지 않음). 보증은 이 줄 검사와
-#                           같은 실행의 트리 검사(4a·kustomize build)의 결합이며, PR head의 스크립트로 돌리면 같은 PR에서 무력화될 수
-#                           있으므로 CI는 base ref의 tests/validate.sh 로 실행해야 한다(tests/README.md). PR 이벤트에서 PR_AUTHOR가
-#                           비면 FAIL(조용한 비활성 금지)
+#   6    AUTHOR             봇 작성자 PR: 변경 파일 = apps/*/overlays/dev/kustomization.yaml, 변경 줄 = images[].digest 값의 제자리 교체뿐
+#                           봇 판정: 로그인이 VALIDATE_BOT_AUTHORS에 있음(대소문자 무시) 또는 계정 ID(PR_AUTHOR_ID)가 VALIDATE_BOT_IDS에
+#                           있음 — ID가 목록에 있으면 로그인이 무엇이든 봇이다(App 이름을 바꿔도 ID는 그대로)
+#                           판정 규칙(계약 gitops-repo.md): ① SHA 입력의 merge-base는 정확히 하나(`git merge-base --all`이 둘 이상이면
+#                           6 AUTHOR-input FAIL) ② hunk 안의 변경은 제자리 교체뿐 — '-' 줄 하나 바로 뒤에 '+' 줄 하나가 오는 쌍만 허용하고
+#                           (짝 없는 삭제·추가는 줄 형식이 맞아도 FAIL), 두 줄이 모두 digest 줄이면 64hex 밖이 같아야 한다
+#                           ('\ No newline at end of file'은 건너뛴다) ③ '@@' 뒤 hunk 구간에서는 '+++ '·'--- '로 시작하는 줄도 내용이다
+#                           ④ git diff 옵션 고정(--no-ext-diff · --no-textconv · --no-renames · --ignore-submodules=none · --no-color)
+#                           한계: digest 값의 진위·서명과, 교체된 digest가 어떤 이미지인지는 보지 않는다. 보증은 이 줄 검사와
+#                           트리 검사(4a·kustomize build)의 결합이며, PR head의 스크립트로 돌리면 같은 PR에서 무력화될 수 있으므로
+#                           CI는 base ref의 tests/validate.sh 를 --only-author 로 실행해야 한다(tests/README.md 「T047 필수 조건」 —
+#                           트리 검사는 head 스크립트의 전체 실행이 맡는다). SHA 입력의 diff는 merge-base ↔ HEAD(아래 「입력」).
+#                           PR 이벤트에서 PR_AUTHOR가 비면 FAIL(조용한 비활성 금지)
 #   7.1  WAVE               Application sync-wave = §sync-wave 단일 표(이름·경로 규약 포함)
 #   7.2  WAVE-dir           표에 없는 platform/<component>/ 디렉터리 금지
 #   7.3  WAVE-secrets-base  secrets/<ns>의 단일 소유·배달: (a) `secrets/` 아래와 배달자 자신(platform/secrets)을 base로
@@ -87,19 +95,37 @@
 #
 # 입력(환경변수 또는 인자):
 #   --root <dir>            | VALIDATE_ROOT        검사 대상 트리(기본: 저장소 루트). 저장소 밖은 거부
-#   --author <login>        | PR_AUTHOR            PR 작성자 로그인(비어 있으면 검사 6은 대상 없음)
+#   --author <login>        | PR_AUTHOR            PR 작성자 로그인(비어 있으면 검사 6은 대상 없음 — 단, PR 이벤트면 FAIL)
+#   --author-id <숫자>      | PR_AUTHOR_ID         PR 작성자 계정 ID(pull_request.user.id, 선택). 주어졌는데 숫자가 아니거나, PR_AUTHOR 없이
+#                           ID만 있으면 6 AUTHOR-input FAIL
 #   --changed-files <file>  | CHANGED_FILES        변경 파일 목록(줄 구분; 환경변수는 내용, 인자는 파일)
 #   --diff <file>           | CHANGED_DIFF         unified diff 파일 경로
-#   VALIDATE_BASE_SHA · VALIDATE_HEAD_SHA           위 둘 대신 `git diff <base> <head>`로 계산(CI 권장)
+#   VALIDATE_BASE_SHA · VALIDATE_HEAD_SHA           위 둘 대신 git으로 계산(CI 권장): **merge-base(BASE, HEAD) ↔ HEAD**의 파일 목록과
+#                           diff(두 점 diff가 아니다 — PR 브랜치가 main 끝보다 뒤처져 있어도 main 쪽 변경이 섞이지 않는다).
+#                           우선순위: CHANGED_DIFF가 있으면 SHA는 쓰이지 않는다(diff = 그 파일, 파일 목록 = CHANGED_FILES). CHANGED_DIFF가
+#                           없고 CHANGED_FILES만 있으면 파일 목록은 그 값을 쓰고 diff만 계산한다 — CI는 두 변수를 설정하지 않는다.
+#                           두 값이 커밋으로 풀리지 않거나('-'로 시작 · 객체 없음 · 얕은 체크아웃) --root가 git 작업 트리가 아니거나
+#                           공통 조상이 없거나 merge-base가 둘 이상이거나 git diff가 실패하면 6 AUTHOR-input FAIL(요약까지 찍고 exit 1).
+#                           이 입력은 **작성자가 봇일 때만** 읽는다 — 사람 작성자는 SHA를 보지 않고 PASS다(잘못된 SHA여도)
 #   --skip-tools            | VALIDATE_SKIP_TOOLS=1  없는 도구가 필요한 검사를 SKIP(로컬 부분 검증용; CI 기본은 fail-closed)
-#   VALIDATE_BOT_AUTHORS    봇 로그인 목록(쉼표). 기본 "jt-ci[bot],joshuatech-gitapp-1[bot]"
+#   --only-author           | VALIDATE_ONLY_AUTHOR=1 (T047) 검사 6(작성자 검사)만 실행 — 도구 확인·파일 수집·다른 검사를 하지 않는다
+#                           (쓰는 외부 명령: git · bash · coreutils의 dirname·tr — --changed-files 인자를 쓰면 cat, -h는 sed).
+#                           CI는 base ref의 이 스크립트를 이 모드로 돌린다(tests/README.md 「T047 필수 조건」).
+#                           머리의 `모드: --only-author — 작성자 검사만 실행`과 요약의 `결과(작성자 검사만 실행): …`로 드러난다 —
+#                           이 모드의 exit 0은 전체 검사 통과가 아니다. VALIDATE_ONLY_AUTHOR는 0·1만 받고(그 밖의 값은 exit 2)
+#                           빈 문자열은 0(꺼짐)으로 읽는다
+#   VALIDATE_BOT_AUTHORS    봇 로그인 목록(쉼표 — 비교는 대소문자 무시). 기본 "jt-ci[bot],joshuatech-gitapp-1[bot]" — 이 기본값이 봇
+#                           로그인 목록의 정본이다. 빈 값이면 기본값
+#   VALIDATE_BOT_IDS        봇 계정 ID 목록(쉼표, 숫자만 — 아닌 원소가 있으면 exit 2). 기본 "323873425"(joshuatech-gitapp-1[bot]).
+#                           빈 값이면 기본값
 #   VALIDATE_K8S_VERSION    kubeconform -kubernetes-version (기본 master)
 #   VALIDATE_KUSTOMIZE_FLAGS kustomize build 추가 플래그(예: --load-restrictor LoadRestrictionsNone)
 #   VALIDATE_KUBECONFORM_CACHE kubeconform 스키마 캐시 디렉터리(기본 ${TMPDIR:-/tmp}/kubeconform-cache — 저장소 밖 임시 경로)
-#   GITHUB_EVENT_NAME=pull_request | VALIDATE_REQUIRE_AUTHOR=1   PR_AUTHOR가 비어 있으면 검사 6 FAIL
+#   GITHUB_EVENT_NAME=pull_request|pull_request_target | VALIDATE_REQUIRE_AUTHOR=1   PR_AUTHOR가 비어 있으면 검사 6 FAIL
 #
 # 원칙: --root 트리(와 명시적으로 넘긴 입력 파일) 밖을 읽거나 쓰지 않는다(예외: kubeconform 스키마 캐시만 저장소 밖
-#       임시 경로에 둔다). 저장소 안에는 임시 파일을 만들지 않는다(파이프·변수만). 자격·비밀을 요구하지 않는다.
+#       임시 경로에 둔다). 스크립트가 직접 임시 파일을 만들지 않는다(파이프·변수만) — 단, 검사 1의 kustomize --enable-helm
+#       인플레이트가 <kustomization>/charts/ 아래에 차트를 풀어 둔다(빌드 산출물 · .gitignore 대상). 자격·비밀을 요구하지 않는다.
 #       결과는 [PASS]/[FAIL]/[WARN]/[SKIP] 한 줄씩이며 FAIL이 하나라도 있으면 exit 1(SKIP은 exit에 영향 없음 —
 #       단, 요약에 "불완전"으로 표시).
 # =============================================================================
@@ -110,10 +136,12 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 
 ROOT="${VALIDATE_ROOT:-$REPO_ROOT}"
 PR_AUTHOR="${PR_AUTHOR:-}"
+PR_AUTHOR_ID="${PR_AUTHOR_ID:-}"
 CHANGED_FILES="${CHANGED_FILES:-}"
 CHANGED_DIFF="${CHANGED_DIFF:-}"
 SKIP_TOOLS="${VALIDATE_SKIP_TOOLS:-0}"
 BOT_AUTHORS="${VALIDATE_BOT_AUTHORS:-jt-ci[bot],joshuatech-gitapp-1[bot]}"
+BOT_IDS="${VALIDATE_BOT_IDS:-323873425}"
 K8S_VERSION="${VALIDATE_K8S_VERSION:-master}"
 KUSTOMIZE_FLAGS="${VALIDATE_KUSTOMIZE_FLAGS:-}"
 BASE_SHA="${VALIDATE_BASE_SHA:-}"
@@ -121,6 +149,7 @@ HEAD_SHA="${VALIDATE_HEAD_SHA:-}"
 KUBECONFORM_CACHE="${VALIDATE_KUBECONFORM_CACHE:-${TMPDIR:-/tmp}/kubeconform-cache}"
 REQUIRE_AUTHOR="${VALIDATE_REQUIRE_AUTHOR:-0}"
 GH_EVENT="${GITHUB_EVENT_NAME:-}"
+ONLY_AUTHOR="${VALIDATE_ONLY_AUTHOR:-0}"
 
 usage() {
   # 머리 주석 전체(2행 ~ 닫는 `# ====` 줄). 줄 번호를 박지 않는다 — 검사를 추가해도 잘리지 않게.
@@ -131,12 +160,24 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --root) ROOT="$2"; shift 2 ;;
     --author) PR_AUTHOR="$2"; shift 2 ;;
+    --author-id) PR_AUTHOR_ID="$2"; shift 2 ;;
     --changed-files) CHANGED_FILES="$(cat "$2")"; shift 2 ;;
     --diff) CHANGED_DIFF="$2"; shift 2 ;;
     --skip-tools) SKIP_TOOLS=1; shift ;;
+    --only-author) ONLY_AUTHOR=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) printf 'error: 알 수 없는 인자: %s\n' "$1" >&2; usage >&2; exit 2 ;;
   esac
+done
+# 모드 스위치는 값이 모호하면 거부한다 — 'true' 등을 조용히 전체 모드로 읽지 않는다
+case "$ONLY_AUTHOR" in
+  0|1) ;;
+  *) printf 'error: VALIDATE_ONLY_AUTHOR는 0 또는 1이어야 한다: %s\n' "$ONLY_AUTHOR" >&2; exit 2 ;;
+esac
+# 봇 계정 ID 목록(검사 6)은 숫자만 받는다 — 틀린 원소가 조용히 "그 ID는 봇 아님"으로 읽히지 않게 인자 오류로 거부한다
+IFS=',' read -r -a BOT_ID_LIST <<< "$BOT_IDS"
+for _id in "${BOT_ID_LIST[@]}"; do
+  [[ $_id =~ ^[0-9]+$ ]] || { printf "error: VALIDATE_BOT_IDS의 원소는 숫자여야 한다: '%s' (목록 '%s')\n" "$_id" "$BOT_IDS" >&2; exit 2; }
 done
 
 [[ -d "$ROOT" ]] || { printf 'error: 검사 대상 디렉터리 없음: %s\n' "$ROOT" >&2; exit 2; }
@@ -542,54 +583,59 @@ collect_rows() {
 }
 
 # -----------------------------------------------------------------------------
-# 시작: 도구 · 파일 수집 · YAML 파싱
+# 시작: 도구 · 파일 수집 · YAML 파싱  (--only-author 모드는 이 절을 통째로 건너뛴다 — 도구 설치 여부와 무관하게 판정한다)
 # -----------------------------------------------------------------------------
 printf 'platform-gitops validate — 대상: %s\n' "$ROOT"
-if [[ $SKIP_TOOLS == 1 ]]; then
-  printf '모드: VALIDATE_SKIP_TOOLS=1 (없는 도구가 필요한 검사는 SKIP — CI 기준 불완전)\n'
-fi
-
-header 0 "도구 · 파일 수집 · YAML 파싱"
-for t in yq kustomize kubeconform gitleaks helm; do
-  detect_tool "$t"
-  if [[ ${TOOL_OK[$t]} == 1 ]]; then
-    printf '  도구 %-12s 있음  %s\n' "$t" "$(tool_version "$t")"
-  else
-    printf '  도구 %-12s 없음  (설치: %s)\n' "$t" "${TOOL_HINT[$t]}"
+if [[ $ONLY_AUTHOR == 1 ]]; then
+  # 실행은 맨 아래 「실행」 절(검사 6 하나 + 별도 문구의 요약). 여기서는 모드만 알린다
+  printf '모드: --only-author — 작성자 검사만 실행(검사 6). 도구 확인·파일 수집·다른 검사(0–5 · 7–10)는 하지 않는다 — 이 결과는 전체 검사 통과가 아니다\n'
+else
+  if [[ $SKIP_TOOLS == 1 ]]; then
+    printf '모드: VALIDATE_SKIP_TOOLS=1 (없는 도구가 필요한 검사는 SKIP — CI 기준 불완전)\n'
   fi
-done
 
-# kubeconform 공통 인자. 스키마 캐시는 저장소 밖 임시 경로(카탈로그를 실행마다 다시 받지 않도록) — 생성 실패 시 캐시 없이 진행
-KC_ARGS=(-strict -ignore-missing-schemas -summary -kubernetes-version "$K8S_VERSION" -schema-location default -schema-location "$DATREE_SCHEMA")
-if [[ ${TOOL_OK[kubeconform]} == 1 ]]; then
-  if mkdir -p "$KUBECONFORM_CACHE" 2>/dev/null; then
-    KC_ARGS+=(-cache "$KUBECONFORM_CACHE")
-    printf '  kubeconform 스키마 캐시: %s\n' "$KUBECONFORM_CACHE"
-  else
-    printf '  kubeconform 스키마 캐시 디렉터리 생성 실패(%s) — 캐시 없이 실행\n' "$KUBECONFORM_CACHE"
-  fi
-fi
-
-mapfile -t YAML_FILES < <(find "$ROOT" -type f \( -name '*.yaml' -o -name '*.yml' \) \
-  -not -path '*/.git/*' -not -path "$ROOT/tests/*" -not -path '*/charts/*' | LC_ALL=C sort)
-mapfile -t KUST_FILES < <(find "$ROOT" -type f \( -name 'kustomization.yaml' -o -name 'kustomization.yml' -o -name 'Kustomization' \) \
-  -not -path '*/.git/*' -not -path "$ROOT/tests/*" -not -path '*/charts/*' | LC_ALL=C sort)
-printf '  YAML 파일 %d개, kustomization %d개 (tests/·.git/·charts/ 제외)\n' "${#YAML_FILES[@]}" "${#KUST_FILES[@]}"
-
-for f in "${YAML_FILES[@]}"; do
-  add_src "$(rel "$f")" "$(rel "$f")" file
-done
-
-if [[ ${TOOL_OK[yq]} == 1 ]]; then
-  fails_before=$N_FAIL
-  for f in "${YAML_FILES[@]}"; do
-    if ! yq -N 'true' "$f" >/dev/null 2>&1; then
-      fail "0 YAML" "파싱 실패: $(rel "$f")"
+  header 0 "도구 · 파일 수집 · YAML 파싱"
+  for t in yq kustomize kubeconform gitleaks helm; do
+    detect_tool "$t"
+    if [[ ${TOOL_OK[$t]} == 1 ]]; then
+      printf '  도구 %-12s 있음  %s\n' "$t" "$(tool_version "$t")"
+    else
+      printf '  도구 %-12s 없음  (설치: %s)\n' "$t" "${TOOL_HINT[$t]}"
     fi
   done
-  finish_group "0 YAML" "YAML ${#YAML_FILES[@]}개 파싱" "$fails_before"
-else
-  need_tool "0 YAML" yq || true
+
+  # kubeconform 공통 인자. 스키마 캐시는 저장소 밖 임시 경로(카탈로그를 실행마다 다시 받지 않도록) — 생성 실패 시 캐시 없이 진행
+  KC_ARGS=(-strict -ignore-missing-schemas -summary -kubernetes-version "$K8S_VERSION" -schema-location default -schema-location "$DATREE_SCHEMA")
+  if [[ ${TOOL_OK[kubeconform]} == 1 ]]; then
+    if mkdir -p "$KUBECONFORM_CACHE" 2>/dev/null; then
+      KC_ARGS+=(-cache "$KUBECONFORM_CACHE")
+      printf '  kubeconform 스키마 캐시: %s\n' "$KUBECONFORM_CACHE"
+    else
+      printf '  kubeconform 스키마 캐시 디렉터리 생성 실패(%s) — 캐시 없이 실행\n' "$KUBECONFORM_CACHE"
+    fi
+  fi
+
+  mapfile -t YAML_FILES < <(find "$ROOT" -type f \( -name '*.yaml' -o -name '*.yml' \) \
+    -not -path '*/.git/*' -not -path "$ROOT/tests/*" -not -path '*/charts/*' | LC_ALL=C sort)
+  mapfile -t KUST_FILES < <(find "$ROOT" -type f \( -name 'kustomization.yaml' -o -name 'kustomization.yml' -o -name 'Kustomization' \) \
+    -not -path '*/.git/*' -not -path "$ROOT/tests/*" -not -path '*/charts/*' | LC_ALL=C sort)
+  printf '  YAML 파일 %d개, kustomization %d개 (tests/·.git/·charts/ 제외)\n' "${#YAML_FILES[@]}" "${#KUST_FILES[@]}"
+
+  for f in "${YAML_FILES[@]}"; do
+    add_src "$(rel "$f")" "$(rel "$f")" file
+  done
+
+  if [[ ${TOOL_OK[yq]} == 1 ]]; then
+    fails_before=$N_FAIL
+    for f in "${YAML_FILES[@]}"; do
+      if ! yq -N 'true' "$f" >/dev/null 2>&1; then
+        fail "0 YAML" "파싱 실패: $(rel "$f")"
+      fi
+    done
+    finish_group "0 YAML" "YAML ${#YAML_FILES[@]}개 파싱" "$fails_before"
+  else
+    need_tool "0 YAML" yq || true
+  fi
 fi
 
 # -----------------------------------------------------------------------------
@@ -1107,7 +1153,7 @@ check_5_policies() {
 # -----------------------------------------------------------------------------
 check_6_author() {
   header 6 "작성자 검사(봇 PR은 apps/*/overlays/dev/kustomization.yaml의 images[].digest 줄만)"
-  local fails_before=$N_FAIL is_bot=0 b f n=0 diff_text='' line content a_path b_path
+  local fails_before=$N_FAIL is_bot=0 by_id=0 b f n=0 diff_text='' line content a_path b_path
   local -a arr_bots
   if [[ -z $PR_AUTHOR ]]; then
     # PR 이벤트(또는 명시 요구)인데 작성자가 비어 있으면 검사 6이 조용히 꺼진 것이므로 fail-closed
@@ -1115,15 +1161,40 @@ check_6_author() {
       fail "6 AUTHOR-input" "PR 이벤트(GITHUB_EVENT_NAME='$GH_EVENT', VALIDATE_REQUIRE_AUTHOR=$REQUIRE_AUTHOR)인데 PR_AUTHOR가 비어 있음 — 작성자 lint의 조용한 비활성 금지"
       return 0
     fi
+    # 계정 ID만 오고 로그인이 없으면 입력이 어긋난 것이다(워크플로는 둘을 함께 넘긴다) — 대상 없음으로 읽지 않는다
+    if [[ -n $PR_AUTHOR_ID ]]; then
+      fail "6 AUTHOR-input" "PR_AUTHOR_ID '$PR_AUTHOR_ID'만 있고 PR_AUTHOR가 비어 있음 — 작성자 입력이 어긋남(fail-closed)"
+      return 0
+    fi
     pass "6 AUTHOR" "PR 작성자 미지정(push 이벤트 등) — 봇 경로 lint 대상 없음"
     return 0
   fi
+  # PR_AUTHOR_ID(pull_request.user.id)는 선택 입력이다. 주어졌는데 숫자가 아니면 ID 판정을 할 수 없으므로 fail-closed
+  if [[ -n $PR_AUTHOR_ID && ! $PR_AUTHOR_ID =~ ^[0-9]+$ ]]; then
+    fail "6 AUTHOR-input" "PR_AUTHOR_ID '$PR_AUTHOR_ID'가 숫자가 아님(pull_request.user.id) — fail-closed"
+    return 0
+  fi
+  # 봇 판정(계약): 로그인이 봇 로그인 목록에 있음(대소문자 무시) 또는 계정 ID가 VALIDATE_BOT_IDS에 있음.
+  # App 이름을 바꾸면 로그인은 바뀌지만 ID는 그대로다 — ID가 목록에 있으면 로그인이 무엇이든 봇이다
   IFS=',' read -r -a arr_bots <<< "$BOT_AUTHORS"
   for b in "${arr_bots[@]}"; do
-    if [[ $PR_AUTHOR == "$b" ]]; then is_bot=1; fi
+    if [[ ${PR_AUTHOR,,} == "${b,,}" ]]; then is_bot=1; fi
   done
+  if [[ -n $PR_AUTHOR_ID ]]; then
+    for b in "${BOT_ID_LIST[@]}"; do
+      if [[ $PR_AUTHOR_ID == "$b" ]]; then by_id=1; fi
+    done
+  fi
+  if [[ $is_bot == 0 && $by_id == 1 ]]; then
+    printf "  봇 판정: 로그인 '%s' — 봇 로그인 목록 밖 · 계정 ID %s — VALIDATE_BOT_IDS 안 → 봇으로 본다\n" "$PR_AUTHOR" "$PR_AUTHOR_ID"
+    is_bot=1
+  fi
   if [[ $is_bot == 0 ]]; then
-    pass "6 AUTHOR" "작성자 '$PR_AUTHOR'는 봇 아님 — 경로 제한 없음(ruleset·리뷰가 게이트)"
+    if [[ -n $PR_AUTHOR_ID ]]; then
+      pass "6 AUTHOR" "작성자 '$PR_AUTHOR'는 봇 아님 — 경로 제한 없음(ruleset·리뷰가 게이트) · 계정 ID ${PR_AUTHOR_ID}도 VALIDATE_BOT_IDS 밖"
+    else
+      pass "6 AUTHOR" "작성자 '$PR_AUTHOR'는 봇 아님 — 경로 제한 없음(ruleset·리뷰가 게이트)"
+    fi
     return 0
   fi
   # 입력: CHANGED_DIFF(+CHANGED_FILES) 또는 git(VALIDATE_BASE_SHA·VALIDATE_HEAD_SHA). 없으면 fail-closed
@@ -1131,11 +1202,59 @@ check_6_author() {
     [[ -f $CHANGED_DIFF ]] || { fail "6 AUTHOR-input" "diff 파일 없음: $CHANGED_DIFF"; return 0; }
     diff_text=$(tr -d '\r' < "$CHANGED_DIFF")
   elif [[ -n $BASE_SHA && -n $HEAD_SHA ]]; then
-    if git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-      [[ -n $CHANGED_FILES ]] || CHANGED_FILES=$(git -C "$ROOT" diff --name-only "$BASE_SHA" "$HEAD_SHA" | tr -d '\r')
-      diff_text=$(git -C "$ROOT" diff "$BASE_SHA" "$HEAD_SHA" | tr -d '\r')
-    else
+    if ! git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
       fail "6 AUTHOR-input" "봇 작성자 '$PR_AUTHOR'인데 git 저장소가 아니라 diff를 계산할 수 없음"
+      return 0
+    fi
+    # merge-base ↔ HEAD(계약 §이미지·승격 전제 ③). 두 점 diff(BASE HEAD)는 PR 브랜치가 main 끝보다 뒤처져 있으면 main 쪽 변경의
+    # 역까지 섞는다(정상 봇 PR이 main의 변경 때문에 FAIL한다). 입력 해석·merge-base·diff가 실패하면 set -e로 요약 없이 끝나지 않고
+    # 6 AUTHOR-input FAIL로 남긴다(fail-closed). '-'로 시작하는 값은 git 옵션으로 읽히므로 해석 전에 거부하고, 해석은
+    # `^{commit}`으로 커밋 객체를 실제로 읽어 본다(40자 hex는 객체가 없어도 형식만으로 풀리기 때문이다).
+    # merge-base는 정확히 하나여야 한다(계약 판정 규칙 ①): `git merge-base --all`이 둘 이상이면(교차 이력) git merge-base는 그중
+    # 하나를 골라 주는데, head 트리를 "고른 쪽 + digest 한 줄"로 만들면 그 diff는 깨끗하고 실제 머지 결과는 다른 파일을 바꾼다.
+    # git diff 옵션 고정(규칙 ④) — 각 옵션이 막는 것:
+    #   --no-ext-diff              diff.external·GIT_EXTERNAL_DIFF·diff.<driver>.command 가 출력을 대신 만들지 못한다
+    #   --no-textconv              .gitattributes 의 diff=<driver> 에 설정된 textconv가 내용을 바꿔 보여 주지 못한다
+    #   --no-renames               이름 변경을 옛 경로 삭제 + 새 경로 추가로 — 파일 목록에 옛 경로도 나온다(diff.renames 무시)
+    #   --ignore-submodules=none   .gitmodules·설정의 submodule.<name>.ignore(all 등)가 gitlink 변경을 숨기지 못한다
+    #   --no-color                 color.diff 설정이 색 코드를 넣지 못한다
+    local -a sha_in=(VALIDATE_BASE_SHA "$BASE_SHA" VALIDATE_HEAD_SHA "$HEAD_SHA") sha_c=() mb_list=() diff_opts=(--no-ext-diff
+      --no-textconv --no-renames --ignore-submodules=none --no-color)
+    local k c mb mbs mb_rc=0
+    for ((k = 0; k < ${#sha_in[@]}; k += 2)); do
+      if [[ ${sha_in[k+1]} == -* ]]; then
+        fail "6 AUTHOR-input" "봇 작성자 '$PR_AUTHOR' — ${sha_in[k]} '${sha_in[k+1]}'가 '-'로 시작한다(git 옵션으로 읽힌다) — fail-closed"
+        return 0
+      fi
+      if ! c=$(git -C "$ROOT" rev-parse --verify --quiet "${sha_in[k+1]}^{commit}"); then
+        fail "6 AUTHOR-input" "봇 작성자 '$PR_AUTHOR' — ${sha_in[k]} '${sha_in[k+1]}'가 이 저장소의 커밋으로 풀리지 않음(객체 없음 · 잘못된 값 · 얕은 체크아웃) — fail-closed"
+        return 0
+      fi
+      sha_c+=("${c%$'\r'}")
+    done
+    mbs=$(git -C "$ROOT" merge-base --all "${sha_c[0]}" "${sha_c[1]}") || mb_rc=$?
+    while IFS= read -r c; do
+      c=${c%$'\r'}
+      if [[ -n $c ]]; then mb_list+=("$c"); fi
+    done <<< "$mbs"
+    if [[ $mb_rc != 0 || ${#mb_list[@]} -eq 0 ]]; then
+      if [[ $mb_rc == 1 ]]; then c='공통 조상 없음(얕은 체크아웃이면 이력이 모자라도 이렇게 나온다)'; else c="git merge-base exit $mb_rc"; fi
+      fail "6 AUTHOR-input" "봇 작성자 '$PR_AUTHOR' — merge-base 계산 실패: $c — VALIDATE_BASE_SHA '$BASE_SHA' · VALIDATE_HEAD_SHA '$HEAD_SHA' — fail-closed"
+      return 0
+    fi
+    if [[ ${#mb_list[@]} -ne 1 ]]; then
+      fail "6 AUTHOR-input" "봇 작성자 '$PR_AUTHOR' — merge-base가 ${#mb_list[@]}개(git merge-base --all — 교차 이력): 정확히 하나여야 한다(하나를 골라 본 diff는 실제 머지 결과와 다를 수 있다) — VALIDATE_BASE_SHA '$BASE_SHA' · VALIDATE_HEAD_SHA '$HEAD_SHA' — fail-closed"
+      return 0
+    fi
+    mb=${mb_list[0]}
+    if [[ -z $CHANGED_FILES ]]; then
+      if ! CHANGED_FILES=$(git -C "$ROOT" diff "${diff_opts[@]}" --name-only "$mb" "${sha_c[1]}" | tr -d '\r'); then
+        fail "6 AUTHOR-input" "봇 작성자 '$PR_AUTHOR' — 변경 파일 목록 계산 실패(git diff --name-only merge-base ${mb:0:12} ↔ HEAD ${sha_c[1]:0:12}) — fail-closed"
+        return 0
+      fi
+    fi
+    if ! diff_text=$(git -C "$ROOT" diff "${diff_opts[@]}" "$mb" "${sha_c[1]}" | tr -d '\r'); then
+      fail "6 AUTHOR-input" "봇 작성자 '$PR_AUTHOR' — diff 계산 실패(git diff merge-base ${mb:0:12} ↔ HEAD ${sha_c[1]:0:12}) — fail-closed"
       return 0
     fi
   fi
@@ -1149,7 +1268,55 @@ check_6_author() {
     [[ $f =~ $RE_BOT_FILE ]] || fail "6 AUTHOR-file" "봇 '$PR_AUTHOR'의 변경 파일 '$f' 불허(apps/*/overlays/dev/kustomization.yaml만)"
   done < <(printf '%s\n' "$CHANGED_FILES")
   [[ $n -gt 0 ]] || fail "6 AUTHOR-file" "봇 '$PR_AUTHOR' PR에 변경 파일이 없음"
+  # diff 파서(계약 판정 규칙 ②·③):
+  #   - 상태: 'diff --git' 줄에서 머리 구간(in_hunk=0)으로 돌아가고, '@@' 줄 뒤는 hunk 구간(in_hunk=1)이다. hunk 구간에서는 '+'·'-'로
+  #     시작하는 모든 줄이 내용이다('+++ '·'--- ' 포함 — 내용이 '++ '·'-- '로 시작하는 줄은 diff에서 파일 머리줄과 같은 모양이 된다).
+  #     머리 구간의 '--- '·'+++ '·'index ' 줄은 머리줄이고, 머리 구간의 그 밖의 '+'·'-' 줄은 해석할 수 없는 줄이다.
+  #   - 제자리 교체: hunk 안에서 '-' 줄 하나 바로 뒤에 '+' 줄 하나가 오는 쌍만 허용한다. 짝 없는 '-'(뒤에 문맥·'-'·hunk 끝이 옴)와
+  #     짝 없는 '+'(앞에 '-'가 없음 — '+' 뒤의 '+' 포함)는 줄 형식이 맞아도 FAIL — digest 줄 삭제·다른 images 항목으로 옮김·'- digest:'
+  #     목록 항목 삽입이 모두 여기 걸린다. 쌍의 두 줄이 모두 digest 줄이면 64hex 밖(들여쓰기·'- '·키·공백)이 같아야 한다 — 쌍이어도
+  #     '    digest:'를 '  - digest:'로 바꾸면 새 images 항목이 되어 원래 항목의 고정이 풀린다.
+  #     '\ No newline at end of file' 줄은 쌍 판정에서 건너뛴다(개행 없는 마지막 digest 줄의 교체는 '-'·'\'·'+'·'\' 모양이다).
+  local in_hunk=0 pend='' pend_on=0 old_shape new_shape re_hex='^(.*sha256:)[0-9a-f]{64}(.*)$'
   while IFS= read -r line; do
+    if [[ $in_hunk == 1 ]]; then
+      case "$line" in
+        "-"*)
+          content=${line:1}
+          [[ $content =~ $RE_BOT_LINE ]] || fail "6 AUTHOR-line" "봇 diff: images[].digest 외 줄 변경 불허 → '${content}'"
+          if [[ $pend_on == 1 ]]; then
+            fail "6 AUTHOR-line" "봇 diff: 제자리 교체만 허용 — 짝 없는 삭제 줄(바로 뒤에 추가 줄이 없다) → '${pend}'"
+          fi
+          pend=$content; pend_on=1
+          continue ;;
+        "+"*)
+          content=${line:1}
+          [[ $content =~ $RE_BOT_LINE ]] || fail "6 AUTHOR-line" "봇 diff: images[].digest 외 줄 변경 불허 → '${content}'"
+          if [[ $pend_on == 0 ]]; then
+            fail "6 AUTHOR-line" "봇 diff: 제자리 교체만 허용 — 짝 없는 추가 줄(바로 앞에 삭제 줄이 없다) → '${content}'"
+          elif [[ $pend =~ $RE_BOT_LINE && $content =~ $RE_BOT_LINE ]]; then
+            old_shape=$pend; new_shape=$content
+            if [[ $pend =~ $re_hex ]]; then old_shape=${BASH_REMATCH[1]}${BASH_REMATCH[2]}; fi
+            if [[ $content =~ $re_hex ]]; then new_shape=${BASH_REMATCH[1]}${BASH_REMATCH[2]}; fi
+            if [[ $old_shape != "$new_shape" ]]; then
+              fail "6 AUTHOR-line" "봇 diff: 제자리 교체만 허용 — digest 값 밖이 바뀐 교체 '${pend}' → '${content}'"
+            fi
+          fi
+          pend_on=0
+          continue ;;
+        "\\"*) continue ;;
+      esac
+      # 그 밖의 줄에 닿으면 짝을 기다리던 삭제 줄은 짝이 없는 것이다
+      if [[ $pend_on == 1 ]]; then
+        fail "6 AUTHOR-line" "봇 diff: 제자리 교체만 허용 — 짝 없는 삭제 줄(바로 뒤에 추가 줄이 없다) → '${pend}'"
+        pend_on=0
+      fi
+      case "$line" in
+        " "*|""|"@@"*) continue ;;
+        "diff --git "*) in_hunk=0 ;;
+        *) fail "6 AUTHOR-line" "봇 diff: 해석할 수 없는 줄 → '$line'"; continue ;;
+      esac
+    fi
     case "$line" in
       "diff --git "*)
         a_path=${line#diff --git a/}; b_path=${a_path#* b/}; a_path=${a_path%% b/*}
@@ -1158,15 +1325,15 @@ check_6_author() {
         ;;
       "new file mode"*|"deleted file mode"*|"rename "*|"similarity index"*|"Binary files"*|"old mode"*|"new mode"*)
         fail "6 AUTHOR-file" "봇 diff: 파일 추가·삭제·이름/모드 변경 불허 ($line)" ;;
-      "--- "*|"+++ "*|"@@"*|"index "*|" "*|"\\"*|"") ;;
-      "+"*|"-"*)
-        content=${line:1}
-        [[ $content =~ $RE_BOT_LINE ]] || fail "6 AUTHOR-line" "봇 diff: images[].digest 외 줄 변경 불허 → '${content}'"
-        ;;
+      "@@"*) in_hunk=1 ;;
+      "--- "*|"+++ "*|"index "*|" "*|"\\"*|"") ;;
       *) fail "6 AUTHOR-line" "봇 diff: 해석할 수 없는 줄 → '$line'" ;;
     esac
   done < <(printf '%s\n' "$diff_text")
-  finish_group "6 AUTHOR" "봇 '$PR_AUTHOR' PR: 변경 파일 ${n}개 모두 overlays/dev kustomization, 변경 줄 모두 images[].digest" "$fails_before"
+  if [[ $pend_on == 1 ]]; then
+    fail "6 AUTHOR-line" "봇 diff: 제자리 교체만 허용 — 짝 없는 삭제 줄(바로 뒤에 추가 줄이 없다) → '${pend}'"
+  fi
+  finish_group "6 AUTHOR" "봇 '$PR_AUTHOR' PR: 변경 파일 ${n}개 모두 overlays/dev kustomization, 변경 줄 모두 images[].digest 값의 제자리 교체" "$fails_before"
 }
 
 # -----------------------------------------------------------------------------
@@ -1902,6 +2069,22 @@ check_10_reloader() {
 # -----------------------------------------------------------------------------
 # 실행
 # -----------------------------------------------------------------------------
+if [[ $ONLY_AUTHOR == 1 ]]; then
+  # --only-author(T047): 검사 6 하나만. 요약 머리와 결과 줄의 문구가 전체 실행과 다르다 — 이 모드의 exit 0이 전체 통과로 읽히지 않게
+  check_6_author
+  printf '\n== 요약(작성자 검사만 실행 — 검사 6 외의 검사는 돌지 않았다) ==\n'
+  printf 'PASS %d · FAIL %d · WARN %d · SKIP %d\n' "$N_PASS" "$N_FAIL" "$N_WARN" "$N_SKIP"
+  if [[ ${#FAIL_LINES[@]} -gt 0 ]]; then
+    printf '실패 목록:\n'
+    for l in "${FAIL_LINES[@]}"; do printf '  - %s\n' "$l"; done
+  fi
+  if [[ $N_FAIL -gt 0 ]]; then
+    printf '결과(작성자 검사만 실행): FAIL\n'
+    exit 1
+  fi
+  printf '결과(작성자 검사만 실행): PASS\n'
+  exit 0
+fi
 load_wave_table
 check_1_kustomize
 check_1b_plain

@@ -8,14 +8,21 @@
 #                            ⚠ 부분 트리 픽스처의 exit 1은 판정 근거가 아니다 — 무관한 검사(5.x 등)도 FAIL하므로 결함이 없어도 1이다.
 #                            근거는 그 하위 검사에 고유한 `+[FAIL] <코드> — …` 단언과, 그룹 PASS 줄이 없다는 `-[PASS] <코드>` 음성 단언이다
 #   - author/*.diff        : 검사 6(봇 작성자) 입력 — positive 트리 위에서 환경변수로 넘긴다
+#   - tests/.tmp/          : (T047) 검사 6의 SHA 경로 케이스가 쓰는 임시 git 저장소(mergebase · lines · submodule · textconv)와
+#                            git 밖 디렉터리(nogit), 도구 없는 PATH의 심 디렉터리.
+#                            --root는 저장소 안이어야 하므로 여기에 만든다(.gitignore 대상). 시작할 때와 끝날 때(EXIT trap) 통째로 지운다
 # 실제 트리 검사(validate.sh 기본 실행)는 tests/ 를 제외하므로 픽스처가 실제 결과에 섞이지 않는다.
 #
 # 도구가 없으면 VALIDATE_SKIP_TOOLS=1로 내려가 실행한다(어떤 검사가 SKIP되는지 출력). yq(mikefarah)가 없으면
 # 대부분의 단언이 성립할 수 없으므로 즉시 실패한다(fail-closed). VALIDATE_TESTS_REQUIRE_TOOLS=1 또는 CI=true 이면
-# 도구 누락 시 SKIP 모드로 내려가지 않고 exit 1 (CI에서 조용히 불완전한 결과가 통과하지 않도록).
-# 각 케이스는 env -u 로 작성자 관련 환경변수를 지우고 시작한다(CI의 GITHUB_EVENT_NAME 등이 새지 않도록).
+# 도구 누락 시 SKIP 모드로 내려가지 않고 exit 1 (CI에서 조용히 불완전한 결과가 통과하지 않도록). 이 두 스위치에서는
+# helm도 필수다(T047) — 없으면 helm이 필요한 케이스(rel-scoped 4개 등)가 "도구 없음" 단언으로 바뀌어 통과하기 때문이다.
+# 스위치가 없는 로컬 실행에서 helm이 없을 때의 동작은 그대로다(그 케이스만 "도구 없음" 단언).
+# 각 케이스는 env -u 로 작성자·모드 관련 환경변수를 지우고 시작한다(CI의 GITHUB_EVENT_NAME, VALIDATE_ONLY_AUTHOR 등이 새지 않도록 —
+# VALIDATE_ONLY_AUTHOR가 새면 모든 케이스가 검사 6만 돌게 된다).
 #
-# 부분 실행: VALIDATE_TESTS_ONLY='<bash 확장 정규식>'이면 이름이 맞는 케이스만 돌리고 나머지는 건너뛴다(건너뛴 수를 센다).
+# 부분 실행: VALIDATE_TESTS_ONLY='<bash 확장 정규식>'이면 이름이 맞는 케이스만 돌리고 나머지는 건너뛴다(건너뛴 수를 센다 —
+#   준비 블록을 통째로 건너뛸 때도 skip_cases로 세므로, 어떤 필터든 건너뜀 + 실행 = 전체 케이스 수).
 #   요약 줄이 "부분 실행 — 필터 '…' · 건너뜀 N"을 드러내고, 맞는 케이스가 0개면 exit 1이다(빈 실행을 통과로 읽지 않는다).
 #   예: VALIDATE_TESTS_ONLY='^(positive|app-source-)' bash tests/validate.tests.sh
 #   ⚠ 부분 실행은 반복 작업용이다 — PR·과제 마무리 판정은 필터 없는 전체 실행으로 한다(tests/README.md). 비어 있으면 필터 없음.
@@ -25,6 +32,10 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 VALIDATE="$HERE/validate.sh"
 FIX="$HERE/fixtures"
+# 임시 git 저장소·심 디렉터리(머리 주석 「tests/.tmp/」). 지난 실행이 실패로 남긴 것을 지우고 시작하고, 어떻게 끝나든 지운다
+TMP="$HERE/.tmp"
+rm -rf -- "$TMP"
+trap 'rm -rf -- "$TMP"' EXIT
 
 missing=()
 for t in yq kustomize kubeconform gitleaks; do
@@ -34,6 +45,10 @@ for t in yq kustomize kubeconform gitleaks; do
     missing+=("$t")
   fi
 done
+# helm은 CI·판정용 실행(아래 두 스위치)에서만 필수다(머리 주석). 로컬에서 없으면 helm 케이스가 "도구 없음" 단언으로 바뀐다
+if [[ ${VALIDATE_TESTS_REQUIRE_TOOLS:-0} == 1 || ${CI:-} == true ]] && ! command -v helm >/dev/null 2>&1; then
+  missing+=(helm)
+fi
 if [[ ${#missing[@]} -gt 0 ]]; then
   if [[ ${VALIDATE_TESTS_REQUIRE_TOOLS:-0} == 1 || ${CI:-} == true ]]; then
     printf '도구 없음: %s — VALIDATE_TESTS_REQUIRE_TOOLS=1/CI=true 이므로 SKIP 모드로 내려가지 않고 실패한다(exit 1)\n' "${missing[*]}"
@@ -72,21 +87,46 @@ selected() {
   NSKIP=$((NSKIP + 1))
   return 1
 }
+# any_selected <케이스 이름>... — 하나라도 필터에 맞으면 0. 건너뜀을 세지 않는다(준비 작업 — 임시 저장소 등 — 을 할지 정할 때만 쓴다)
+any_selected() {
+  local c
+  for c in "$@"; do
+    if [[ -z $ONLY ]] || [[ $c =~ $ONLY ]]; then return 0; fi
+  done
+  return 1
+}
+# skip_cases <케이스 이름>... — any_selected가 거짓이라 블록을 통째로 건너뛸 때 그 케이스들을 건너뜀으로 센다
+#   (어떤 필터를 주든 건너뜀 + 실행 = 전체 케이스 수가 되게). 필터에 맞는 이름이 섞여 있으면 그 이름은 세지 않으므로
+#   any_selected의 else 쪽에서만 부른다
+skip_cases() {
+  local c
+  for c in "$@"; do selected "$c" || true; done
+}
+# fail_case <이름> <사유> — 준비 단계가 실패해 validate를 돌리지 못한 케이스를 FAIL로 센다(조용히 빠지지 않게)
+fail_case() {
+  selected "$1" || return 0
+  N=$((N + 1)); NF=$((NF + 1)); FAILED+=("$1")
+  printf '[FAIL] %s\n       - 준비 실패: %s\n' "$1" "$2"
+}
 
-# run_case <이름> <root> <기대 exit> [--env K=V]... [+있어야 할 문자열 | -있으면 안 되는 문자열]...
+# run_case <이름> <root> <기대 exit> [--env K=V]... [--arg <validate.sh 인자>]... [+있어야 할 문자열 | -있으면 안 되는 문자열]...
+#   --arg 는 --root 뒤에 차례로 붙는다(예: --arg --author-id --arg 323873425)
 run_case() {
   selected "$1" || return 0
   local name=$1 root=$2 want=$3; shift 3
-  local -a envs=() asserts=()
+  local -a envs=() args=() asserts=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --env) envs+=("$2"); shift 2 ;;
+      --arg) args+=("$2"); shift 2 ;;
       *) asserts+=("$1"); shift ;;
     esac
   done
   local out rc=0 ok=1 a
-  out=$(env -u GITHUB_EVENT_NAME -u VALIDATE_REQUIRE_AUTHOR -u PR_AUTHOR -u CHANGED_FILES -u CHANGED_DIFF \
-        -u VALIDATE_BASE_SHA -u VALIDATE_HEAD_SHA "${envs[@]}" bash "$VALIDATE" --root "$root" 2>&1) || rc=$?
+  # 봇 목록(VALIDATE_BOT_AUTHORS·VALIDATE_BOT_IDS)도 지운다 — 작성자 단언은 스크립트 기본값을 전제로 한다
+  out=$(env -u GITHUB_EVENT_NAME -u VALIDATE_REQUIRE_AUTHOR -u PR_AUTHOR -u PR_AUTHOR_ID -u CHANGED_FILES -u CHANGED_DIFF \
+        -u VALIDATE_BASE_SHA -u VALIDATE_HEAD_SHA -u VALIDATE_ONLY_AUTHOR -u VALIDATE_BOT_AUTHORS -u VALIDATE_BOT_IDS \
+        "${envs[@]}" bash "$VALIDATE" --root "$root" "${args[@]}" 2>&1) || rc=$?
   N=$((N + 1))
   local problems=()
   if [[ $rc != "$want" ]]; then ok=0; problems+=("exit $rc ≠ 기대 $want"); fi
@@ -575,6 +615,441 @@ run_case author-required-flag "$FIX/positive" 1 \
 run_case author-push-event-ok "$FIX/positive" 0 \
   --env "GITHUB_EVENT_NAME=push" \
   "+[PASS] 6 AUTHOR — PR 작성자 미지정(push 이벤트 등)"
+
+# --- 검사 6만 실행(--only-author · T047 전제 ②) -------------------------------------------------------------
+# CI는 base ref의 스크립트를 이 모드로 돌린다(tests/README.md 「T047 필수 조건」). run_case는 --root 뒤에 인자를 넘기지 않으므로
+# 같은 뜻의 환경 변수 VALIDATE_ONLY_AUTHOR=1로 켠다. 모든 케이스가 "작성자 검사만 실행" 문구를 요구하고, 전체 실행의 결과 줄
+# (`결과: PASS`·`결과: FAIL`)과 검사 0(도구 확인) 출력이 없음을 단언한다 — 이 모드의 exit 0이 전체 통과로 읽히지 않고, 도구를 보지
+# 않는다는 증거다.
+OA='VALIDATE_ONLY_AUTHOR=1'
+OA_MODE='+모드: --only-author — 작성자 검사만 실행'
+OA_NOFULL=('-결과: PASS' '-결과: FAIL' '-== 검사 0' '-도구 yq')
+run_case author-only-bot-ok "$FIX/positive" 0 --env "$OA" \
+  --env "PR_AUTHOR=jt-ci[bot]" --env "CHANGED_FILES=$DIGEST_FILE" --env "CHANGED_DIFF=$FIX/author/ok.diff" \
+  "+[PASS] 6 AUTHOR — 봇 'jt-ci[bot]' PR: 변경 파일 1개 모두 overlays/dev kustomization, 변경 줄 모두 images[].digest" \
+  "$OA_MODE" '+== 요약(작성자 검사만 실행' '+결과(작성자 검사만 실행): PASS' "${OA_NOFULL[@]}" '-[FAIL]'
+run_case author-only-bot-bad-file "$FIX/positive" 1 --env "$OA" \
+  --env "PR_AUTHOR=jt-ci[bot]" --env "CHANGED_FILES=$DIGEST_FILE"$'\n'"platform/vault/kustomization.yaml" --env "CHANGED_DIFF=$FIX/author/bad-file.diff" \
+  "+[FAIL] 6 AUTHOR-file — 봇 'jt-ci[bot]'의 변경 파일 'platform/vault/kustomization.yaml' 불허" \
+  "$OA_MODE" '+결과(작성자 검사만 실행): FAIL' "${OA_NOFULL[@]}" '-[PASS] 6 AUTHOR'
+run_case author-only-human "$FIX/positive" 0 --env "$OA" \
+  --env "PR_AUTHOR=joshua92y" --env "CHANGED_FILES=$DIGEST_FILE" --env "CHANGED_DIFF=$FIX/author/bad-line.diff" \
+  "+[PASS] 6 AUTHOR — 작성자 'joshua92y'는 봇 아님" "$OA_MODE" '+결과(작성자 검사만 실행): PASS' "${OA_NOFULL[@]}"
+run_case author-only-required-pr-event "$FIX/positive" 1 --env "$OA" \
+  --env "GITHUB_EVENT_NAME=pull_request" \
+  "+[FAIL] 6 AUTHOR-input — PR 이벤트(GITHUB_EVENT_NAME='pull_request', VALIDATE_REQUIRE_AUTHOR=0)인데 PR_AUTHOR가 비어 있음" \
+  "$OA_MODE" '+결과(작성자 검사만 실행): FAIL' "${OA_NOFULL[@]}"
+# 다른 검사가 돌지 않는다: img-newtag는 일반 모드에서 4a IMG-newTag FAIL(위 img-newtag 케이스 — 부분 트리라 5.x 등도 FAIL)이다.
+# 이 모드에서는 exit 0이고 검사 6 밖의 머리·PASS·FAIL 줄이 하나도 없어야 한다.
+run_case author-only-skips-other-checks "$FIX/img-newtag" 0 --env "$OA" \
+  "+[PASS] 6 AUTHOR — PR 작성자 미지정(push 이벤트 등)" "$OA_MODE" '+결과(작성자 검사만 실행): PASS' "${OA_NOFULL[@]}" \
+  '-[FAIL]' '-4a IMG-newTag' '-== 검사 1' '-== 검사 4' '-== 검사 5' '-[PASS] 0 YAML'
+# 모드 스위치 값이 모호하면(0·1 밖) 전체 모드로 조용히 읽지 않고 인자 오류(exit 2)다. 빠른 부분 트리(gitleaks-empty)로 돈다 —
+# 이 분기가 없으면 전체 모드로 돌아 exit 1이 된다.
+run_case author-only-bad-switch "$FIX/gitleaks-empty" 2 --env 'VALIDATE_ONLY_AUTHOR=true' \
+  '+error: VALIDATE_ONLY_AUTHOR는 0 또는 1이어야 한다: true' '-== 검사' '-결과'
+# pull_request_target도 PR 이벤트다 — PR_AUTHOR가 비면 조용히 꺼지지 않고 FAIL
+run_case author-only-required-pr-target-event "$FIX/positive" 1 --env "$OA" \
+  --env "GITHUB_EVENT_NAME=pull_request_target" \
+  "+[FAIL] 6 AUTHOR-input — PR 이벤트(GITHUB_EVENT_NAME='pull_request_target', VALIDATE_REQUIRE_AUTHOR=0)인데 PR_AUTHOR가 비어 있음" \
+  '+결과(작성자 검사만 실행): FAIL' '-[PASS] 6 AUTHOR'
+
+# --- 봇 판정: 로그인(대소문자 무시) 또는 계정 ID(계약 「봇 판정은 로그인과 계정 ID 둘 다로 한다」) ------------------------------
+# App 이름을 바꾸면 로그인은 바뀌지만 ID는 그대로다. 금지된 diff(bad-line — namespace 변경)를 넘기므로 봇으로 판정되면 FAIL, 사람이면 PASS다.
+BOT_ID='323873425'
+BAD_LINE_ENV=(--env "CHANGED_FILES=$DIGEST_FILE" --env "CHANGED_DIFF=$FIX/author/bad-line.diff")
+BAD_LINE_FAIL="+[FAIL] 6 AUTHOR-line — 봇 diff: images[].digest 외 줄 변경 불허 → 'namespace: jt-prod'"
+run_case author-only-bot-login-case "$FIX/positive" 1 --env "$OA" --env "PR_AUTHOR=Joshuatech-GitApp-1[bot]" "${BAD_LINE_ENV[@]}" \
+  "$BAD_LINE_FAIL" '+결과(작성자 검사만 실행): FAIL' '-봇 아님' '-[PASS] 6 AUTHOR'
+run_case author-only-bot-id "$FIX/positive" 1 --env "$OA" --env "PR_AUTHOR=renamed-app[bot]" --env "PR_AUTHOR_ID=$BOT_ID" \
+  "${BAD_LINE_ENV[@]}" \
+  "+봇 판정: 로그인 'renamed-app[bot]' — 봇 로그인 목록 밖 · 계정 ID $BOT_ID — VALIDATE_BOT_IDS 안 → 봇으로 본다" \
+  "$BAD_LINE_FAIL" '+결과(작성자 검사만 실행): FAIL' '-봇 아님' '-[PASS] 6 AUTHOR'
+# 인자 --author-id 는 PR_AUTHOR_ID와 같은 입력이다
+run_case author-only-bot-id-arg "$FIX/positive" 1 --env "$OA" --env "PR_AUTHOR=renamed-app[bot]" --arg --author-id --arg "$BOT_ID" \
+  "${BAD_LINE_ENV[@]}" "$BAD_LINE_FAIL" '-봇 아님' '-[PASS] 6 AUTHOR'
+# VALIDATE_BOT_IDS가 빈 값이면 기본값(VALIDATE_BOT_AUTHORS와 같은 규칙) — 빈 목록으로 읽혀 ID 판정이 꺼지지 않는다
+run_case author-only-bot-ids-empty-default "$FIX/positive" 1 --env "$OA" --env 'VALIDATE_BOT_IDS=' \
+  --env "PR_AUTHOR=renamed-app[bot]" --env "PR_AUTHOR_ID=$BOT_ID" "${BAD_LINE_ENV[@]}" "$BAD_LINE_FAIL" '-봇 아님' '-[PASS] 6 AUTHOR'
+run_case author-only-human-id "$FIX/positive" 0 --env "$OA" --env "PR_AUTHOR=joshua92y" --env "PR_AUTHOR_ID=12345678" \
+  "${BAD_LINE_ENV[@]}" "+[PASS] 6 AUTHOR — 작성자 'joshua92y'는 봇 아님" '+계정 ID 12345678도 VALIDATE_BOT_IDS 밖' \
+  '+결과(작성자 검사만 실행): PASS' '-[FAIL]'
+# PR_AUTHOR_ID는 선택 입력이지만, 주어졌는데 숫자가 아니거나 로그인 없이 ID만 있으면 입력이 어긋난 것이다(fail-closed)
+run_case author-only-bad-id "$FIX/positive" 1 --env "$OA" --env "PR_AUTHOR=joshua92y" --env "PR_AUTHOR_ID=12a" "${BAD_LINE_ENV[@]}" \
+  "+[FAIL] 6 AUTHOR-input — PR_AUTHOR_ID '12a'가 숫자가 아님" '+결과(작성자 검사만 실행): FAIL' '-[PASS] 6 AUTHOR'
+run_case author-only-id-without-login "$FIX/positive" 1 --env "$OA" --env "PR_AUTHOR_ID=$BOT_ID" \
+  "+[FAIL] 6 AUTHOR-input — PR_AUTHOR_ID '$BOT_ID'만 있고 PR_AUTHOR가 비어 있음" '+결과(작성자 검사만 실행): FAIL' '-[PASS] 6 AUTHOR'
+# 봇 ID 목록에 숫자가 아닌 원소가 있으면 인자 오류(exit 2) — 틀린 목록이 조용히 "봇 없음"으로 읽히지 않게
+run_case author-only-bad-bot-ids "$FIX/gitleaks-empty" 2 --env "$OA" --env 'VALIDATE_BOT_IDS=323873425,abc' \
+  "+error: VALIDATE_BOT_IDS의 원소는 숫자여야 한다: 'abc'" '-== 검사' '-결과'
+
+# --- 제자리 교체(계약 판정 규칙 ②) · CHANGED_DIFF 입력 -------------------------------------------------------------------
+# git은 붙은 두 줄의 교체를 '-X -Y +Z +W'로 묶어 보여 준다. 쌍은 바로 붙은 -Y/+Z 하나뿐이다 — X는 짝 없는 삭제, W는 짝 없는 추가.
+# (kustomization의 digest 줄은 images 항목마다 name 줄을 사이에 두므로 정상 봇 PR에서 이 모양은 나오지 않는다)
+IP_DEL='봇 diff: 제자리 교체만 허용 — 짝 없는 삭제 줄(바로 뒤에 추가 줄이 없다) → '
+IP_ADD='봇 diff: 제자리 교체만 허용 — 짝 없는 추가 줄(바로 앞에 삭제 줄이 없다) → '
+run_case author-only-inplace-grouped "$FIX/positive" 1 --env "$OA" --env "PR_AUTHOR=jt-ci[bot]" \
+  --env "CHANGED_FILES=$DIGEST_FILE" --env "CHANGED_DIFF=$FIX/author/grouped.diff" \
+  "+[FAIL] 6 AUTHOR-line — ${IP_DEL}'    digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'" \
+  "+[FAIL] 6 AUTHOR-line — ${IP_ADD}'    digest: sha256:2222222222222222222222222222222222222222222222222222222222222222'" \
+  "-${IP_DEL}'    digest: sha256:1111" "-${IP_ADD}'    digest: sha256:fedc" '-images[].digest 외 줄' '-[PASS] 6 AUTHOR'
+# 도구 없이 돈다: PATH에서 도구 5종(yq·kustomize·kubeconform·gitleaks·helm)이 든 디렉터리를 빼고 돌린다. 남은 PATH에서 못 찾는
+# bash·git·dirname·tr·cat은 tests/.tmp/no-tools-bin/ 에 심볼릭 링크로 보탠다(예: ubuntu 러너는 /usr/bin에 yq가 있어 /usr/bin이
+# 통째로 빠진다). 새 bash 프로세스로 "도구 0 · git 있음"을 먼저 확인하고, 구성하지 못하면 조용히 건너뛰지 않고 FAIL로 센다.
+TOOLFREE_PATH=''; TF_ERR=''
+tool_free_path() { # → 전역 TOOLFREE_PATH. 실패하면 TF_ERR에 사유를 두고 1(if 조건 안에서 부르므로 단계마다 실패를 확인한다)
+  local d t hit shim="$TMP/no-tools-bin" src
+  local -a dirs=() keep=()
+  IFS=':' read -r -a dirs <<< "$PATH"
+  for d in "${dirs[@]}"; do
+    [[ -n $d ]] || continue
+    hit=0
+    for t in yq kustomize kubeconform gitleaks helm; do
+      if [[ -e $d/$t || -e $d/$t.exe ]]; then hit=1; break; fi
+    done
+    [[ $hit == 1 ]] || keep+=("$d")
+  done
+  TOOLFREE_PATH=$(IFS=':'; printf '%s' "${keep[*]}")
+  mkdir -p "$shim" || { TF_ERR="mkdir $shim 실패"; return 1; }
+  for t in bash git dirname tr cat; do
+    if (PATH=$TOOLFREE_PATH; command -v "$t") >/dev/null 2>&1; then continue; fi
+    src=$(command -v "$t") || { TF_ERR="$t 를 찾을 수 없음"; return 1; }
+    ln -s "$src" "$shim/$t" || { TF_ERR="$t 링크 실패"; return 1; }
+  done
+  TOOLFREE_PATH="$shim${TOOLFREE_PATH:+:$TOOLFREE_PATH}"
+  TF_ERR=$(env PATH="$TOOLFREE_PATH" bash -c 'for t in yq kustomize kubeconform gitleaks helm; do
+      if command -v "$t" >/dev/null 2>&1; then echo "도구가 남아 있음: $(command -v "$t")"; exit 1; fi
+    done
+    command -v git >/dev/null 2>&1 || { echo "git 없음"; exit 1; }' 2>&1) || { TF_ERR="확인 실패: ${TF_ERR:-bash 실행 불가}"; return 1; }
+}
+if any_selected author-only-no-tools; then
+  if tool_free_path; then
+    run_case author-only-no-tools "$FIX/positive" 0 --env "$OA" --env "PATH=$TOOLFREE_PATH" \
+      --env "PR_AUTHOR=jt-ci[bot]" --env "CHANGED_FILES=$DIGEST_FILE" --env "CHANGED_DIFF=$FIX/author/ok.diff" \
+      "+[PASS] 6 AUTHOR — 봇 'jt-ci[bot]' PR: 변경 파일 1개 모두 overlays/dev kustomization, 변경 줄 모두 images[].digest" \
+      "$OA_MODE" '+결과(작성자 검사만 실행): PASS' "${OA_NOFULL[@]}" '-[FAIL]' '-도구 없음'
+  else
+    fail_case author-only-no-tools "도구 없는 PATH를 만들 수 없음 — $TF_ERR"
+  fi
+else
+  skip_cases author-only-no-tools
+fi
+
+# --- 검사 6 · SHA 입력(VALIDATE_BASE_SHA · VALIDATE_HEAD_SHA): merge-base ↔ HEAD(T047 전제 ③) · fail-closed -------------
+# git 이력이 필요하므로 tests/.tmp/mergebase/ 에 임시 git 저장소를 만든다(--root는 저장소 안이어야 한다). 커밋은 -c 로 이름·메일·
+# 서명·훅·줄끝 설정을 주고 만든다 — 전역 git 설정을 바꾸지도, 그 영향을 받지도 않는다. 부분 트리라 모두 --only-author로 돌린다.
+#
+#   c0 ─┬─ c2            main이 앞서감: platform/vault/kustomization.yaml 변경(봇에게 금지된 파일)   ← BASE
+#       └─ c1 ─ c1b      PR: dev digest 한 줄(c1) · 이어서 금지된 파일도 고침(c1b)                  ← HEAD
+#   c3                    고아 이력(공통 조상 없음)
+# 두 점 diff(c2 c1)라면 main 쪽 변경의 역(platform/vault)이 섞여 c1이 FAIL한다 — merge-base(c0) ↔ c1은 digest 한 줄뿐이다.
+# mb_build_t2가 c0에서 더 가른다(계약 판정 규칙 ①·④와 입력 분기):
+#   c0 ─┬─ cx ─┬─ xmain = merge(cx, cy)            main이 교차 이력을 머지 커밋으로 받음                  ← BASE
+#       └─ cy ─┴─ xhead = parents (cx, cy)          또 하나의 머지 커밋, 트리 = (git이 고르는 쪽) + digest ← HEAD
+#                                                   → merge-base --all = {cx, cy} 2개
+#   c0 ── cr              platform/vault/kustomization.yaml → apps/vault/overlays/dev/kustomization.yaml 이름 변경
+MB_REPO="$TMP/mergebase"
+MB_BROKEN="$TMP/mergebase-broken"
+MB_FILE='apps/demo/overlays/dev/kustomization.yaml'
+MB_C0=''; MB_C1=''; MB_C1B=''; MB_C2=''; MB_C3=''
+MB_CX=''; MB_CY=''; MB_XMAIN=''; MB_XHEAD=''; MB_CR=''
+# tg <저장소> <git 인자>... — 임시 저장소용 git(전역 설정에 기대지도, 바꾸지도 않는다)
+tg() {
+  local repo=$1; shift
+  git -c user.name=validate-tests -c user.email=validate-tests@example.invalid -c commit.gpgsign=false \
+    -c core.autocrlf=false -c core.hooksPath="$TMP/no-hooks" -c init.defaultBranch=main -c advice.detachedHead=false \
+    -C "$repo" "$@"
+}
+mb_git() { tg "$MB_REPO" "$@"; }
+# hex64 <문자 1개> · hex40 <문자 1개> — 그 문자를 64개·40개 이은 값(가짜 digest · 가짜 커밋 ID)
+hex64() { local d=$1$1$1$1$1$1$1$1; printf '%s' "$d$d$d$d$d$d$d$d"; }
+hex40() { local d=$1$1$1$1$1$1$1$1; printf '%s' "$d$d$d$d$d"; }
+mb_kust() { # <digest 문자 1개> — dev overlay kustomization(digest = 그 문자 64개)
+  local d=$1$1$1$1$1$1$1$1
+  d=$d$d$d$d$d$d$d$d
+  printf 'resources:\n  - ../../base\nimages:\n  - name: ghcr.io/example/demo\n    newName: ghcr.io/example/demo\n    digest: sha256:%s\n' "$d" > "$MB_REPO/$MB_FILE"
+}
+mb_build() { # → 전역 MB_C0·MB_C1·MB_C1B·MB_C2·MB_C3 (if 조건 안에서 부르므로 set -e가 꺼진다 — 단계마다 실패를 확인한다)
+  mkdir -p "$MB_REPO/apps/demo/overlays/dev" "$MB_REPO/platform/vault" || return 1
+  mb_git init -q || return 1
+  mb_kust a || return 1
+  printf 'resources: []\n' > "$MB_REPO/platform/vault/kustomization.yaml" || return 1
+  mb_git add -A || return 1
+  mb_git commit -q -m c0 || return 1
+  MB_C0=$(mb_git rev-parse HEAD) || return 1
+  printf 'resources: [evil.yaml]\n' > "$MB_REPO/platform/vault/kustomization.yaml" || return 1
+  mb_git commit -q -am c2 || return 1
+  MB_C2=$(mb_git rev-parse HEAD) || return 1
+  mb_git checkout -q --detach "$MB_C0" || return 1
+  mb_kust b || return 1
+  mb_git commit -q -am c1 || return 1
+  MB_C1=$(mb_git rev-parse HEAD) || return 1
+  printf 'resources: [pr-evil.yaml]\n' > "$MB_REPO/platform/vault/kustomization.yaml" || return 1
+  mb_git commit -q -am c1b || return 1
+  MB_C1B=$(mb_git rev-parse HEAD) || return 1
+  mb_git checkout -q --orphan unrelated || return 1
+  mb_git commit -q -m c3 || return 1
+  MB_C3=$(mb_git rev-parse HEAD) || return 1
+}
+mb_build_t2() { # → 전역 MB_CX·MB_CY·MB_XMAIN·MB_XHEAD·MB_CR (mb_build 뒤에 — 위 그림의 둘째 부분)
+  local p pick t i
+  mb_git checkout -q --detach "$MB_C0" || return 1
+  printf 'resources: [cx.yaml]\n' > "$MB_REPO/platform/vault/kustomization.yaml" || return 1
+  mb_git commit -q -am cx || return 1
+  MB_CX=$(mb_git rev-parse HEAD) || return 1
+  mb_git checkout -q --detach "$MB_C0" || return 1
+  printf 'resources: [cy.yaml]\n' > "$MB_REPO/platform/cy.yaml" || return 1
+  mb_git add -A || return 1
+  mb_git commit -q -m cy || return 1
+  MB_CY=$(mb_git rev-parse HEAD) || return 1
+  mb_git checkout -q --detach "$MB_CX" || return 1
+  mb_git merge -q --no-ff --no-edit -m xmain "$MB_CY" || return 1
+  MB_XMAIN=$(mb_git rev-parse HEAD) || return 1
+  # xhead 트리 = git merge-base(하나만)가 고르는 쪽의 트리 + digest 한 줄 — 그 하나로 보면 diff가 깨끗하다(리뷰 F1의 우회 모양).
+  # 고르는 쪽은 그래프·날짜로 정해지므로 cx로 만들어 보고 다르면 고른 쪽으로 한 번 다시 만든다(어느 쪽이든 merge-base는 2개다)
+  p=$MB_CX
+  for i in 1 2; do
+    mb_git checkout -q --detach "$p" || return 1
+    mb_kust c || return 1
+    mb_git add -A || return 1
+    t=$(mb_git write-tree) || return 1
+    mb_git reset -q --hard || return 1
+    MB_XHEAD=$(mb_git commit-tree "$t" -p "$MB_CX" -p "$MB_CY" -m xhead) || return 1
+    pick=$(mb_git merge-base "$MB_XMAIN" "$MB_XHEAD") || return 1
+    if [[ $pick == "$p" ]]; then break; fi
+    p=$pick
+  done
+  mb_git checkout -q --detach "$MB_C0" || return 1
+  mkdir -p "$MB_REPO/apps/vault/overlays/dev" || return 1
+  mb_git mv platform/vault/kustomization.yaml apps/vault/overlays/dev/kustomization.yaml || return 1
+  mb_git commit -q -m cr || return 1
+  MB_CR=$(mb_git rev-parse HEAD) || return 1
+}
+mb_break() { # 사본에서 c1의 dev kustomization blob을 지운다 → 커밋 해석·merge-base·파일 목록은 되고 diff 본문만 실패한다
+  local blob
+  cp -R "$MB_REPO" "$MB_BROKEN" || return 1
+  blob=$(mb_git rev-parse "$MB_C1:$MB_FILE") || return 1
+  rm -f "$MB_BROKEN/.git/objects/${blob:0:2}/${blob:2}" || return 1
+  ! git -C "$MB_BROKEN" cat-file -e "$blob" 2>/dev/null
+}
+MB_CASES=(author-mergebase-main-ahead author-mergebase-head-forbidden author-mergebase-unrelated author-mergebase-bad-sha
+  author-mergebase-dash-sha author-mergebase-criss-cross author-mergebase-files-fail author-mergebase-no-renames
+  author-mergebase-given-files author-mergebase-diff-fails)
+MB_ENV=(--env "$OA" --env "PR_AUTHOR=jt-ci[bot]")
+if any_selected "${MB_CASES[@]}"; then
+  mkdir -p "$TMP"
+  if mb_build 2>"$TMP/mergebase.log" && mb_build_t2 2>>"$TMP/mergebase.log"; then
+    # main이 앞서간 PR: 두 점 diff였다면 platform/vault(main 쪽 변경의 역)가 섞여 FAIL — merge-base 기준이면 digest 한 줄뿐이라 PASS
+    run_case author-mergebase-main-ahead "$MB_REPO" 0 "${MB_ENV[@]}" --env "VALIDATE_BASE_SHA=$MB_C2" --env "VALIDATE_HEAD_SHA=$MB_C1" \
+      "+[PASS] 6 AUTHOR — 봇 'jt-ci[bot]' PR: 변경 파일 1개 모두 overlays/dev kustomization, 변경 줄 모두 images[].digest" \
+      '+결과(작성자 검사만 실행): PASS' '-[FAIL]' '-platform/vault'
+    # merge-base 기준이 PR 자신의 변경은 그대로 본다: head 쪽 금지 파일 변경은 FAIL, main 쪽 줄('resources: [evil.yaml]')은 섞이지 않는다
+    run_case author-mergebase-head-forbidden "$MB_REPO" 1 "${MB_ENV[@]}" --env "VALIDATE_BASE_SHA=$MB_C2" --env "VALIDATE_HEAD_SHA=$MB_C1B" \
+      "+[FAIL] 6 AUTHOR-file — 봇 'jt-ci[bot]'의 변경 파일 'platform/vault/kustomization.yaml' 불허" \
+      "+[FAIL] 6 AUTHOR-line — 봇 diff: images[].digest 외 줄 변경 불허 → 'resources: [pr-evil.yaml]'" \
+      "-→ 'resources: [evil.yaml]'" '+결과(작성자 검사만 실행): FAIL' '-[PASS] 6 AUTHOR'
+    # fail-closed: 요약 없이 git의 종료 코드로 끝나지 않고 6 AUTHOR-input FAIL + 요약 + exit 1
+    run_case author-mergebase-unrelated "$MB_REPO" 1 "${MB_ENV[@]}" --env "VALIDATE_BASE_SHA=$MB_C3" --env "VALIDATE_HEAD_SHA=$MB_C1" \
+      "+[FAIL] 6 AUTHOR-input — 봇 작성자 'jt-ci[bot]' — merge-base 계산 실패: 공통 조상 없음" \
+      '+== 요약(작성자 검사만 실행' '+결과(작성자 검사만 실행): FAIL' '-[PASS] 6 AUTHOR'
+    run_case author-mergebase-bad-sha "$MB_REPO" 1 "${MB_ENV[@]}" \
+      --env "VALIDATE_BASE_SHA=0123456789abcdef0123456789abcdef01234567" --env "VALIDATE_HEAD_SHA=$MB_C1" \
+      "+[FAIL] 6 AUTHOR-input — 봇 작성자 'jt-ci[bot]' — VALIDATE_BASE_SHA '0123456789abcdef0123456789abcdef01234567'가 이 저장소의 커밋으로 풀리지 않음" \
+      '+== 요약(작성자 검사만 실행' '+결과(작성자 검사만 실행): FAIL' '-[PASS] 6 AUTHOR'
+    run_case author-mergebase-dash-sha "$MB_REPO" 1 "${MB_ENV[@]}" --env "VALIDATE_BASE_SHA=$MB_C2" --env "VALIDATE_HEAD_SHA=-x" \
+      "+[FAIL] 6 AUTHOR-input — 봇 작성자 'jt-ci[bot]' — VALIDATE_HEAD_SHA '-x'가 '-'로 시작한다(git 옵션으로 읽힌다)" \
+      '+== 요약(작성자 검사만 실행' '+결과(작성자 검사만 실행): FAIL' '-[PASS] 6 AUTHOR'
+    # 교차 이력(계약 판정 규칙 ①): merge-base가 cx·cy 둘이다. git merge-base(하나만)는 그중 하나를 골라 주고, xhead 트리가 "고른 쪽 +
+    # digest 한 줄"이라 그 diff는 깨끗하다 — 실제 머지 결과는 다른 쪽의 변경까지 바꾼다. 하나가 아니면 입력 오류로 FAIL
+    run_case author-mergebase-criss-cross "$MB_REPO" 1 "${MB_ENV[@]}" --env "VALIDATE_BASE_SHA=$MB_XMAIN" --env "VALIDATE_HEAD_SHA=$MB_XHEAD" \
+      "+[FAIL] 6 AUTHOR-input — 봇 작성자 'jt-ci[bot]' — merge-base가 2개" \
+      '+== 요약(작성자 검사만 실행' '+결과(작성자 검사만 실행): FAIL' '-[PASS] 6 AUTHOR'
+    # 파일 목록 계산 실패: diff.orderFile이 없는 파일을 가리키면 git diff 계열만 죽는다(rev-parse·merge-base는 산다) — 목록이 먼저다
+    run_case author-mergebase-files-fail "$MB_REPO" 1 "${MB_ENV[@]}" --env "VALIDATE_BASE_SHA=$MB_C2" --env "VALIDATE_HEAD_SHA=$MB_C1" \
+      --env 'GIT_CONFIG_COUNT=1' --env 'GIT_CONFIG_KEY_0=diff.orderFile' --env "GIT_CONFIG_VALUE_0=$TMP/no-such-orderfile" \
+      "+[FAIL] 6 AUTHOR-input — 봇 작성자 'jt-ci[bot]' — 변경 파일 목록 계산 실패(git diff --name-only merge-base " \
+      '+== 요약(작성자 검사만 실행' '+결과(작성자 검사만 실행): FAIL' '-[PASS] 6 AUTHOR' '-diff 계산 실패'
+    # --no-renames: 금지 파일(platform/vault)을 허용 경로(apps/vault/overlays/dev)로 옮긴 PR. 이름 변경 감지가 켜져 있으면 파일 목록에는
+    # 새 경로(허용)만 나오고 diff는 rename 머리줄이 된다 — 끄면 옛 경로가 파일 목록에 드러나고 diff는 삭제 + 추가다
+    run_case author-mergebase-no-renames "$MB_REPO" 1 "${MB_ENV[@]}" --env "VALIDATE_BASE_SHA=$MB_C0" --env "VALIDATE_HEAD_SHA=$MB_CR" \
+      "+[FAIL] 6 AUTHOR-file — 봇 'jt-ci[bot]'의 변경 파일 'platform/vault/kustomization.yaml' 불허" \
+      "+[FAIL] 6 AUTHOR-file — 봇 diff: 파일 추가·삭제·이름/모드 변경 불허 (deleted file mode 100644)" \
+      '-이름 변경 불허' '-similarity index' '-rename from' '-[PASS] 6 AUTHOR'
+    # CHANGED_FILES가 주어지면 파일 목록은 그 값을 쓰고 diff만 계산한다: 목록(허용 파일 하나)에 없는 platform/vault 변경이
+    # 계산된 diff에서 FAIL하고, 파일 목록 쪽 FAIL(…의 변경 파일 … 불허)은 없다
+    run_case author-mergebase-given-files "$MB_REPO" 1 "${MB_ENV[@]}" --env "CHANGED_FILES=$MB_FILE" \
+      --env "VALIDATE_BASE_SHA=$MB_C2" --env "VALIDATE_HEAD_SHA=$MB_C1B" \
+      "+[FAIL] 6 AUTHOR-file — 봇 diff: 파일 'platform/vault/kustomization.yaml' 불허" \
+      "+[FAIL] 6 AUTHOR-line — 봇 diff: images[].digest 외 줄 변경 불허 → 'resources: [pr-evil.yaml]'" \
+      "-의 변경 파일 'platform/vault/kustomization.yaml' 불허" '-입력이 없음' '-[PASS] 6 AUTHOR'
+    if any_selected author-mergebase-diff-fails; then
+      if mb_break 2>>"$TMP/mergebase.log"; then
+        run_case author-mergebase-diff-fails "$MB_BROKEN" 1 "${MB_ENV[@]}" --env "VALIDATE_BASE_SHA=$MB_C2" --env "VALIDATE_HEAD_SHA=$MB_C1" \
+          "+[FAIL] 6 AUTHOR-input — 봇 작성자 'jt-ci[bot]' — diff 계산 실패(git diff merge-base " \
+          '+== 요약(작성자 검사만 실행' '+결과(작성자 검사만 실행): FAIL' '-[PASS] 6 AUTHOR' '-변경 파일 목록 계산 실패'
+      else
+        fail_case author-mergebase-diff-fails "객체를 지운 사본을 만들 수 없음 — $(tr -d '\r' < "$TMP/mergebase.log" | tail -n 3 | tr '\n' ' ')"
+      fi
+    else
+      skip_cases author-mergebase-diff-fails
+    fi
+  else
+    mb_why=$(tr -d '\r' < "$TMP/mergebase.log" | tail -n 3 | tr '\n' ' ')
+    for c in "${MB_CASES[@]}"; do fail_case "$c" "임시 git 저장소를 만들 수 없음 — $mb_why"; done
+  fi
+else
+  skip_cases "${MB_CASES[@]}"
+fi
+
+# git 작업 트리가 아닌 --root + SHA 입력 → fail-closed. --root는 저장소 안이어야 하므로 tests/.tmp/nogit 을 쓰고,
+# GIT_CEILING_DIRECTORIES로 git이 그 위(이 저장소)로 올라가 찾지 못하게 한다
+mkdir -p "$TMP/nogit"
+run_case author-mergebase-not-git "$TMP/nogit" 1 "${MB_ENV[@]}" --env "GIT_CEILING_DIRECTORIES=$TMP" \
+  --env 'VALIDATE_BASE_SHA=HEAD' --env 'VALIDATE_HEAD_SHA=HEAD' \
+  "+[FAIL] 6 AUTHOR-input — 봇 작성자 'jt-ci[bot]'인데 git 저장소가 아니라 diff를 계산할 수 없음" \
+  '+결과(작성자 검사만 실행): FAIL' '-[PASS] 6 AUTHOR' '-커밋으로 풀리지 않음'
+
+# --- 검사 6 · hunk 구간(계약 판정 규칙 ③) · 제자리 교체(규칙 ②) — 실제 git diff 모양으로 ------------------------------------------
+# tests/.tmp/lines/ 의 L0: 두 images 항목(demo는 digest 있음, side는 없음) + 끝줄 '-- guard: keep' 인 파일과, 줄 끝 개행 없이 digest
+# 줄로 끝나는 파일. L0에서 갈라진 커밋마다 변경 한 가지를 담고 BASE = L0 · HEAD = 그 커밋으로 돌린다.
+#   ok        demo digest 값만 교체                         → PASS
+#   noeol     개행 없는 마지막 digest 줄 교체('-' / '\' / '+' / '\')   → PASS
+#   move      demo의 digest 줄을 지우고 side에 추가(고정이 side로 옮겨 간다) → 짝 없는 삭제 + 짝 없는 추가
+#   delete    demo의 digest 줄 삭제만                       → 짝 없는 삭제
+#   add       side 뒤에 '- digest:' 목록 항목 삽입           → 짝 없는 추가
+#   reshape   demo의 '    digest:' 를 '  - digest:' 로 교체(쌍이지만 새 images 항목이 된다) → digest 값 밖이 바뀐 교체
+#   plusplus  끝에 '++ anything: goes' 추가 → diff 줄 '+++ anything: goes'(파일 머리줄과 같은 모양)
+#   minusminus 끝줄 '-- guard: keep' 삭제 → diff 줄 '--- guard: keep'
+LN_REPO="$TMP/lines"
+LN_FILE='apps/lines/overlays/dev/kustomization.yaml'
+LN_NOEOL='apps/noeol/overlays/dev/kustomization.yaml'
+LN_L0=''
+declare -A LN=()
+ln_git() { tg "$LN_REPO" "$@"; }
+ln_file() { # <demo의 digest 줄 | ''> <side 뒤에 붙일 줄 | ''> <꼬리(개행 포함)>
+  {
+    printf 'resources:\n  - ../../base\nimages:\n  - name: ghcr.io/example/demo\n    newName: ghcr.io/example/demo\n'
+    if [[ -n $1 ]]; then printf '%s\n' "$1"; fi
+    printf '  - name: ghcr.io/example/side\n    newName: ghcr.io/example/side\n'
+    if [[ -n $2 ]]; then printf '%s\n' "$2"; fi
+    printf '%s' "$3"
+  } > "$LN_REPO/$LN_FILE"
+}
+ln_noeol() { # <digest 문자 1개> — 마지막 줄(digest) 뒤에 개행이 없다
+  printf 'images:\n  - name: ghcr.io/example/noeol\n    newName: ghcr.io/example/noeol\n    digest: sha256:%s' "$(hex64 "$1")" > "$LN_REPO/$LN_NOEOL"
+}
+ln_variant() { # <이름> <명령>... — L0에서 갈라 명령으로 파일을 고치고 커밋한다 → LN[<이름>]
+  local name=$1; shift
+  ln_git checkout -q --detach "$LN_L0" || return 1
+  "$@" || return 1
+  ln_git commit -q -am "$name" || return 1
+  LN[$name]=$(ln_git rev-parse HEAD) || return 1
+}
+ln_build() { # if 조건 안에서 부르므로 set -e가 꺼진다 — 단계마다 실패를 확인한다
+  local g=$'-- guard: keep\n' dc="    digest: sha256:$(hex64 c)"
+  mkdir -p "$LN_REPO/${LN_FILE%/*}" "$LN_REPO/${LN_NOEOL%/*}" || return 1
+  ln_git init -q || return 1
+  ln_file "$dc" '' "$g" || return 1
+  ln_noeol a || return 1
+  ln_git add -A || return 1
+  ln_git commit -q -m l0 || return 1
+  LN_L0=$(ln_git rev-parse HEAD) || return 1
+  ln_variant ok ln_file "    digest: sha256:$(hex64 d)" '' "$g" || return 1
+  ln_variant noeol ln_noeol d || return 1
+  ln_variant move ln_file '' "$dc" "$g" || return 1
+  ln_variant delete ln_file '' '' "$g" || return 1
+  ln_variant add ln_file "$dc" "  - digest: sha256:$(hex64 e)" "$g" || return 1
+  ln_variant reshape ln_file "  - digest: sha256:$(hex64 f)" '' "$g" || return 1
+  ln_variant plusplus ln_file "$dc" '' "$g"$'++ anything: goes\n' || return 1
+  ln_variant minusminus ln_file "$dc" '' '' || return 1
+}
+ln_case() { # <케이스> <변형> <기대 exit> [단언...]
+  local c=$1 v=$2 w=$3; shift 3
+  run_case "$c" "$LN_REPO" "$w" "${MB_ENV[@]}" --env "VALIDATE_BASE_SHA=$LN_L0" --env "VALIDATE_HEAD_SHA=${LN[$v]:-}" "$@"
+}
+LN_CASES=(author-only-inplace-ok author-only-inplace-noeol-ok author-only-inplace-move author-only-inplace-delete
+  author-only-inplace-add author-only-inplace-reshape author-only-hunk-plusplus author-only-hunk-minusminus)
+if any_selected "${LN_CASES[@]}"; then
+  mkdir -p "$TMP"
+  if ln_build 2>"$TMP/lines.log"; then
+    HC=$(hex64 c)
+    LN_OK="+[PASS] 6 AUTHOR — 봇 'jt-ci[bot]' PR: 변경 파일 1개 모두 overlays/dev kustomization, 변경 줄 모두 images[].digest 값의 제자리 교체"
+    ln_case author-only-inplace-ok ok 0 "$LN_OK" '+결과(작성자 검사만 실행): PASS' '-[FAIL]'
+    ln_case author-only-inplace-noeol-ok noeol 0 "$LN_OK" '+결과(작성자 검사만 실행): PASS' '-[FAIL]'
+    ln_case author-only-inplace-move move 1 \
+      "+[FAIL] 6 AUTHOR-line — ${IP_DEL}'    digest: sha256:$HC'" "+[FAIL] 6 AUTHOR-line — ${IP_ADD}'    digest: sha256:$HC'" \
+      '-images[].digest 외 줄' '-[PASS] 6 AUTHOR'
+    ln_case author-only-inplace-delete delete 1 \
+      "+[FAIL] 6 AUTHOR-line — ${IP_DEL}'    digest: sha256:$HC'" "-$IP_ADD" '-images[].digest 외 줄' '-[PASS] 6 AUTHOR'
+    ln_case author-only-inplace-add add 1 \
+      "+[FAIL] 6 AUTHOR-line — ${IP_ADD}'  - digest: sha256:$(hex64 e)'" "-$IP_DEL" '-images[].digest 외 줄' '-[PASS] 6 AUTHOR'
+    ln_case author-only-inplace-reshape reshape 1 \
+      "+[FAIL] 6 AUTHOR-line — 봇 diff: 제자리 교체만 허용 — digest 값 밖이 바뀐 교체 '    digest: sha256:$HC' → '  - digest: sha256:$(hex64 f)'" \
+      "-$IP_DEL" "-$IP_ADD" '-images[].digest 외 줄' '-[PASS] 6 AUTHOR'
+    ln_case author-only-hunk-plusplus plusplus 1 \
+      "+[FAIL] 6 AUTHOR-line — 봇 diff: images[].digest 외 줄 변경 불허 → '++ anything: goes'" \
+      "+[FAIL] 6 AUTHOR-line — ${IP_ADD}'++ anything: goes'" '-[PASS] 6 AUTHOR'
+    ln_case author-only-hunk-minusminus minusminus 1 \
+      "+[FAIL] 6 AUTHOR-line — 봇 diff: images[].digest 외 줄 변경 불허 → '-- guard: keep'" \
+      "+[FAIL] 6 AUTHOR-line — ${IP_DEL}'-- guard: keep'" '-[PASS] 6 AUTHOR'
+  else
+    ln_why=$(tr -d '\r' < "$TMP/lines.log" | tail -n 3 | tr '\n' ' ')
+    for c in "${LN_CASES[@]}"; do fail_case "$c" "임시 git 저장소를 만들 수 없음 — $ln_why"; done
+  fi
+else
+  skip_cases "${LN_CASES[@]}"
+fi
+
+# --- 검사 6 · diff 옵션 고정(계약 판정 규칙 ④): 저장소 내용·설정이 출력 모양을 바꾸지 못한다 ------------------------------------------
+#   submodule  base에 이미 'ignore = all' 인 .gitmodules + gitlink sub. head = digest 한 줄 + gitlink 변경. 옵션 없이는 git diff가
+#              gitlink 변경을 통째로 숨긴다(파일 목록·diff 모두) → --ignore-submodules=none 이면 'sub'가 드러나 FAIL
+#   textconv   .gitattributes '*.yaml diff=digestonly' + (러너 설정을 흉내 낸) diff.digestonly.textconv='grep digest'. head = namespace
+#              변경 + digest 교체. textconv가 켜져 있으면 diff에 digest 줄만 남는다 → --no-textconv 이면 namespace 줄이 드러나 FAIL
+FMT_SUB="$TMP/submodule"
+FMT_TC="$TMP/textconv"
+FMT_S0=''; FMT_S1=''; FMT_T0=''; FMT_T1=''
+fmt_build() { # if 조건 안에서 부르므로 set -e가 꺼진다 — 단계마다 실패를 확인한다
+  mkdir -p "$FMT_SUB/${MB_FILE%/*}" "$FMT_TC/${MB_FILE%/*}" || return 1
+  tg "$FMT_SUB" init -q || return 1
+  printf '[submodule "sub"]\n\tpath = sub\n\turl = ./sub\n\tignore = all\n' > "$FMT_SUB/.gitmodules" || return 1
+  printf 'images:\n  - name: ghcr.io/example/demo\n    digest: sha256:%s\n' "$(hex64 a)" > "$FMT_SUB/$MB_FILE" || return 1
+  tg "$FMT_SUB" add -A || return 1
+  tg "$FMT_SUB" update-index --add --cacheinfo "160000,$(hex40 1),sub" || return 1
+  tg "$FMT_SUB" commit -q -m s0 || return 1
+  FMT_S0=$(tg "$FMT_SUB" rev-parse HEAD) || return 1
+  printf 'images:\n  - name: ghcr.io/example/demo\n    digest: sha256:%s\n' "$(hex64 b)" > "$FMT_SUB/$MB_FILE" || return 1
+  tg "$FMT_SUB" add "$MB_FILE" || return 1
+  tg "$FMT_SUB" update-index --cacheinfo "160000,$(hex40 2),sub" || return 1
+  tg "$FMT_SUB" commit -q -m s1 || return 1
+  FMT_S1=$(tg "$FMT_SUB" rev-parse HEAD) || return 1
+  tg "$FMT_TC" init -q || return 1
+  printf '*.yaml diff=digestonly\n' > "$FMT_TC/.gitattributes" || return 1
+  printf 'namespace: jt-dev\nimages:\n  - name: ghcr.io/example/demo\n    digest: sha256:%s\n' "$(hex64 a)" > "$FMT_TC/$MB_FILE" || return 1
+  tg "$FMT_TC" add -A || return 1
+  tg "$FMT_TC" commit -q -m t0 || return 1
+  FMT_T0=$(tg "$FMT_TC" rev-parse HEAD) || return 1
+  printf 'namespace: jt-prod\nimages:\n  - name: ghcr.io/example/demo\n    digest: sha256:%s\n' "$(hex64 b)" > "$FMT_TC/$MB_FILE" || return 1
+  tg "$FMT_TC" commit -q -am t1 || return 1
+  FMT_T1=$(tg "$FMT_TC" rev-parse HEAD) || return 1
+}
+FMT_CASES=(author-mergebase-submodule-ignore author-mergebase-no-textconv)
+if any_selected "${FMT_CASES[@]}"; then
+  mkdir -p "$TMP"
+  if fmt_build 2>"$TMP/format.log"; then
+    run_case author-mergebase-submodule-ignore "$FMT_SUB" 1 "${MB_ENV[@]}" --env "VALIDATE_BASE_SHA=$FMT_S0" --env "VALIDATE_HEAD_SHA=$FMT_S1" \
+      "+[FAIL] 6 AUTHOR-file — 봇 'jt-ci[bot]'의 변경 파일 'sub' 불허" "+[FAIL] 6 AUTHOR-file — 봇 diff: 파일 'sub' 불허" \
+      '+결과(작성자 검사만 실행): FAIL' '-[PASS] 6 AUTHOR'
+    run_case author-mergebase-no-textconv "$FMT_TC" 1 "${MB_ENV[@]}" --env "VALIDATE_BASE_SHA=$FMT_T0" --env "VALIDATE_HEAD_SHA=$FMT_T1" \
+      --env 'GIT_CONFIG_COUNT=1' --env 'GIT_CONFIG_KEY_0=diff.digestonly.textconv' --env 'GIT_CONFIG_VALUE_0=grep digest' \
+      "+[FAIL] 6 AUTHOR-line — 봇 diff: images[].digest 외 줄 변경 불허 → 'namespace: jt-prod'" \
+      '+결과(작성자 검사만 실행): FAIL' '-[PASS] 6 AUTHOR'
+  else
+    fmt_why=$(tr -d '\r' < "$TMP/format.log" | tail -n 3 | tr '\n' ' ')
+    for c in "${FMT_CASES[@]}"; do fail_case "$c" "임시 git 저장소를 만들 수 없음 — $fmt_why"; done
+  fi
+else
+  skip_cases "${FMT_CASES[@]}"
+fi
 
 # --- 저장소 밖 root 거부(exit 2) — 실제 트리 검사는 여기서 하지 않는다(트리 상태에 따라 결과가 달라지므로) -----
 if selected root-outside-repo-rejected; then
