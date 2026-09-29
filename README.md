@@ -9,7 +9,7 @@ JoshuaTech v2 플랫폼의 GitOps 정본 저장소 — 클러스터(OCI K3s)가 
 
 - **main은 PR로만** 쓴다(ruleset `main`, 커밋 사본 `.github/ruleset-main.json`). required check `validate` 통과가 머지 조건이다. ⚠ **그 check가 오늘 실제로 보는 것은 gitleaks뿐이다** — `tests/validate.sh`(검사 0–9)를 CI가 부르는 것은 **T047** 뒤이고, 그때까지 강제 수단은 PR 전 로컬 실행과 리뷰다(`tests/README.md` 「CI 배선 상태」).
 - **dev bump는 App auto-merge**: GitHub App `joshuatech-gitapp-1`(봇 로그인 `joshuatech-gitapp-1[bot]`)이 `apps/*/overlays/dev/kustomization.yaml`의 `images[].digest`만 바꾸는 PR(`bump/dev-<pod>-<sha7>`)을 열고 `gh pr merge --auto --squash`를 건다(VD-5).
-- **prod 승격은 사람 머지**(FR-038): `promote.yml`(T047에서 작성 — 지금은 없음)은 PR을 열기만 하고 auto-merge를 걸지 않는다 — 운영자가 렌더링 diff 코멘트를 확인하고 직접 머지한다.
+- **prod 승격은 사람이 PR을 열고 사람이 머지한다**(FR-038 · T047 결정): `promote.yml`(T047에서 작성 — 지금은 없음)은 attestation을 검증한 뒤 **브랜치만 만든다**. PR은 운영자가 열고, 렌더링 diff 코멘트를 확인한 뒤 직접 머지한다. 워크플로가 PR을 열지 않는 이유 — App 토큰으로 열면 작성자가 봇이라 검사 6(봇은 `overlays/dev`만)에 걸리고, `GITHUB_TOKEN`으로 열면 워크플로가 일어나지 않아 required check가 보고되지 않는다. **이 형태는 임시다** — 목표는 봇이 승격 PR을 만들고 사람은 승인만 하는 것이고, 그러려면 봇이 통과시킬 수 없는 승인 관문이 required check 안에 있어야 한다(T047의 승격 워크플로 단계에서 실측해 정한다).
 
 ## ruleset 근거 (JSON은 주석이 불가능하므로 여기에 기록)
 
@@ -18,8 +18,19 @@ JoshuaTech v2 플랫폼의 GitOps 정본 저장소 — 클러스터(OCI K3s)가 
 - `pull_request`, `required_approving_review_count: 0` — 1인 운영이므로 승인 수는 0. 게이트는 승인이 아니라 required check `validate`(strict: 브랜치가 main 최신이어야 함)다. ⚠ 그 check의 **오늘 내용은 gitleaks뿐**이다(위 「변경 규칙」 첫 줄 · `tests/README.md` 「CI 배선 상태」) — 검사 본체의 CI 배선은 T047이다.
 - `bypass_actors: []` — GitHub App 포함 누구도 우회 불가. App 토큰이 탈취돼도 main 직접 push는 불가능하고 PR + `validate` 경유만 가능하다(추가로 `tests/validate.sh` 검사 6의 `joshuatech-gitapp-1[bot]` 경로 lint가 dev digest 외 변경을 거부한다 — T033이 **스크립트에** 구현했고 **CI 배선은 T047**이다. 그전까지 이 lint는 자동으로 돌지 않는다 — `tests/README.md` 「CI 배선 상태」).
 - `non_fast_forward` + `deletion` — main 히스토리 재작성·브랜치 삭제 금지.
-- 서버 사본은 기본값 필드(allowed_merge_methods·require_extra_approval_for_unattributed_changes 등)를 추가 저장하므로 API 출력과 `.github/ruleset-main.json`은 1:1로 일치하지 않는다 — 비교는 규칙 의미로.
+- `required_linear_history` + `pull_request.allowed_merge_methods: ["squash"]`(T047) — main에 머지 커밋이 들어오지 못한다. auto-merge의 방식은 거는 쪽이 고르므로, 막지 않으면 App 토큰을 가진 쪽이 `--merge`로 이력을 교차시킬 수 있다. 교차한 이력에서는 merge-base가 둘 이상이 되어 검사 6(경로 lint)의 diff 기준이 흔들린다 — 검사 6도 merge-base가 하나가 아니면 FAIL한다(이중 방어 · `tests/README.md` 「T047 필수 조건」). 2026-09-29까지의 머지는 전부 squash였다.
+- **이 파일을 고치는 것만으로는 적용되지 않는다.** PR이 머지된 뒤 운영자가 `gh api -X PUT repos/joshua92y/platform-gitops/rulesets/<id> --input .github/ruleset-main.json`으로 적용하고, `gh api repos/joshua92y/platform-gitops/rulesets/<id>`의 출력과 규칙 의미로 대조한다(`<id>`는 `gh api repos/joshua92y/platform-gitops/rulesets`).
+- 서버 사본은 기본값 필드(require_extra_approval_for_unattributed_changes · required_reviewers 등)를 추가 저장하므로 API 출력과 `.github/ruleset-main.json`은 1:1로 일치하지 않는다 — 비교는 규칙 의미로.
 - 저장소 설정 **Allow auto-merge 활성** — dev bump PR의 auto-merge 전제(VD-5: 첫 PR에서 실측 확정).
+
+`.github/ruleset-branches.json`(T047) — 적용 대상 **main과 `bump/**`를 뺀 모든 브랜치**:
+
+- `creation` + `update` + `deletion` 제한, bypass는 저장소 관리자 역할(`RepositoryRole` 5)뿐 — **App과 워크플로의 `GITHUB_TOKEN`은 `bump/**`만 만들고 고칠 수 있다.** 사람이 작업하는 브랜치에는 push하지 못한다.
+- 왜 필요한가: App은 저장소에 쓰기 권한이 있어, 막지 않으면 **사람이 연 PR의 브랜치에 커밋을 push하고 머지할 수 있다**(승인 수 0 · 머지 API와 auto-merge 둘 다). 검사 6이 PR 작성자만 보던 때에는 그 PR이 사람 PR이라 제한 없이 통과했다. 지금은 검사 6이 이벤트 발신자도 보지만(봇이 push한 커밋이 head인 상태로는 통과하지 못한다), PR이 열리기 **전에** 봇이 그 브랜치에 넣은 커밋은 발신자로 보이지 않는다 — 그 빈틈을 이 ruleset이 막는다(이중 방어).
+- main을 대상에서 뺀 이유: 머지는 main의 갱신이다. main을 넣으면 봇의 dev bump 머지가 갱신 제한에 걸린다. main은 `ruleset-main.json`이 맡는다.
+- 새 자동화가 브랜치를 만들어야 하면(승격 브랜치 `promote/**` · Renovate 등) 계약을 먼저 고치고 이 파일의 `exclude`에 패턴을 더한다.
+- 적용(운영자 · 처음 한 번은 생성): `gh api -X POST repos/joshua92y/platform-gitops/rulesets --input .github/ruleset-branches.json`. 이후 갱신은 `-X PUT …/rulesets/<id>`.
+- **실측 범위**: 관리자의 push가 통과하는 것과 브랜치 이름별 적용 규칙(`gh api repos/joshua92y/platform-gitops/rules/branches/<브랜치>`)은 적용 직후 확인한다. App 토큰의 push가 **실제로 거부되는 것**은 App 키가 있어야 시험할 수 있다 — 첫 dev bump(T074)와 승격 실연(T115)에서 증거를 남긴다. 그때까지는 "설정으로 확인 · 거부는 미실측"이다.
 
 ## 뼈대 상태 (T003)
 
