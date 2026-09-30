@@ -840,8 +840,11 @@ MB_CX=''; MB_CY=''; MB_XMAIN=''; MB_XHEAD=''; MB_CR=''
 # tg <저장소> <git 인자>... — 임시 저장소용 git(전역 설정에 기대지도, 바꾸지도 않는다)
 tg() {
   local repo=$1; shift
+  # gc.auto=0 · maintenance.auto=false: 임시 저장소에서 git이 뒤에서 객체를 pack으로 묶지 않게 한다(merge · commit 뒤의 자동
+  # 정리). mb_break는 느슨한 객체 파일 하나를 지워 diff만 실패시키는데, 그 객체가 pack 안에 있으면 지워지지 않는다
   git -c user.name=validate-tests -c user.email=validate-tests@example.invalid -c commit.gpgsign=false \
     -c core.autocrlf=false -c core.hooksPath="$TMP/no-hooks" -c init.defaultBranch=main -c advice.detachedHead=false \
+    -c gc.auto=0 -c maintenance.auto=false \
     -C "$repo" "$@"
 }
 mb_git() { tg "$MB_REPO" "$@"; }
@@ -910,11 +913,28 @@ mb_build_t2() { # → 전역 MB_CX·MB_CY·MB_XMAIN·MB_XHEAD·MB_CR (mb_build �
   MB_CR=$(mb_git rev-parse HEAD) || return 1
 }
 mb_break() { # 사본에서 c1의 dev kustomization blob을 지운다 → 커밋 해석·merge-base·파일 목록은 되고 diff 본문만 실패한다
-  local blob
+  # 객체가 pack 안에 있으면 느슨한 파일을 지워도 남는다(2026-09-30 러너에서 1회 — 어제는 같은 러너에서 네 번 통과했다). 그래서
+  # 사본의 pack을 전부 밖으로 옮긴 뒤 느슨한 객체로 풀어 놓고(pack이 저장소 안에 있으면 unpack-objects가 "이미 있다"며 건너뛴다)
+  # 그 다음에 지운다. 그래도 남으면 객체 저장 상태를 로그에 남긴다(fail_case 메시지에 실린다)
+  local blob p b hold
   cp -R "$MB_REPO" "$MB_BROKEN" || return 1
   blob=$(mb_git rev-parse "$MB_C1:$MB_FILE") || return 1
+  hold="$TMP/mergebase-broken-packs"
+  mkdir -p "$hold" || return 1
+  for p in "$MB_BROKEN"/.git/objects/pack/*.pack; do
+    [[ -e $p ]] || continue
+    b=${p%.pack}
+    mv -f "$b".pack "$hold"/ || return 1
+    rm -f "$b".idx "$b".rev "$b".bitmap "$b".promisor "$b".mtimes
+    git -C "$MB_BROKEN" unpack-objects -q < "$hold/$(basename "$b").pack" || return 1
+  done
   rm -f "$MB_BROKEN/.git/objects/${blob:0:2}/${blob:2}" || return 1
-  ! git -C "$MB_BROKEN" cat-file -e "$blob" 2>/dev/null
+  if git -C "$MB_BROKEN" cat-file -e "$blob" 2>/dev/null; then
+    printf 'mb_break: blob %s이 사본에 아직 있다 — count-objects: %s · packs: %s\n' "$blob" \
+      "$(git -C "$MB_BROKEN" count-objects -v 2>&1 | tr '\n' ' ')" "$(ls "$MB_BROKEN/.git/objects/pack" 2>&1 | tr '\n' ' ')" >&2
+    return 1
+  fi
+  return 0
 }
 MB_CASES=(author-mergebase-main-ahead author-mergebase-head-forbidden author-mergebase-unrelated author-mergebase-bad-sha
   author-mergebase-dash-sha author-mergebase-criss-cross author-mergebase-files-fail author-mergebase-no-renames
