@@ -1,7 +1,8 @@
-# validate — required check `validate`를 내는 워크플로(T003 골격 → T047 G2 배선 → G3 렌더링 diff 코멘트)
+# validate — required check `validate` · `prod-approval`을 내는 워크플로(T003 골격 → T047 G2 배선 → G3 렌더링 diff 코멘트
+#            → G5 승인 관문)
 #
 # 규약
-# - job 이름 `validate`는 ruleset(main)의 required check 이름과 일치해야 한다 — 바꾸면 머지가 막힌다
+# - job 이름 `validate` · `prod-approval`은 ruleset(main)의 required check 이름과 일치해야 한다 — 바꾸면 머지가 막힌다
 #   (job에 `name:`을 붙여도 check 이름이 바뀐다).
 # - runs-on: ubuntu-24.04-arm — 운영 노드(OCI Ampere A1)와 이미지/도구가 모두 arm64이므로
 #   퍼블릭 arm64 러너에서 같은 아키텍처로 검사한다.
@@ -10,8 +11,9 @@
 # - 검사 항목의 정본: 모노레포 계약 gitops-repo.md §validate.yml. 검사 본체는 tests/validate.sh(전체 검사)와
 #   tests/validate.tests.sh(자기검사)이고, job validate는 그것을 부르는 배선만 둔다. 무엇이 어떤 순서로 도는지와
 #   아직 CI가 하지 않는 것은 tests/README.md 「CI 배선 상태」 한 곳에 적는다.
-# - job은 셋이다. required check는 validate 하나이고, render-diff · render-comment(렌더링 diff PR 코멘트 — 아래
-#   「렌더링 diff job 둘」)는 required check가 아니다 — 실패해도 머지를 막지 않는다.
+# - job은 여섯이다. required check는 둘 — validate와 prod-approval(승인 관문 — 아래 「승인 관문 job 셋」)이다.
+#   render-diff · render-comment(렌더링 diff PR 코멘트 — 아래 「렌더링 diff job 둘」)와 classify · gate는 required check가
+#   아니다 — render-diff · render-comment의 실패는 머지를 막지 않고, classify · gate의 결과는 prod-approval이 모아 판정한다.
 #
 # 스텝 순서와 이유(보안 설계 — 순서를 바꾸지 않는다)
 #   1 checkout       fetch-depth 0(검사 6의 merge-base · gitleaks 히스토리 스캔). 저장소 쪽 코드는 실행되지 않는다.
@@ -64,6 +66,29 @@
 #   둔다 — 봇(App)은 workflows 권한이 없어 이 파일은 못 바꾸지만 tests/ · .github/actions/ · .github/scripts/ 는 바꿀 수 있다.
 #   도구 버전 · sha256은 validate 스텝 3의 값과 같다 — 두 job의 값을 함께 바꾼다(render-diff 스텝 2b가 대조해 어긋나면 실패한다).
 #
+# 승인 관문 job 셋(T047 G5 · 계약 gitops-repo.md §validate.yml 8 · 결정 D7) — required check prod-approval
+#   목적  운영 overlay(apps/<pod>/overlays/prod 자체와 그 아래 — 경로 성분 단위: <pod>는 성분 하나 · 그 아래는 어느 깊이든)를
+#         건드린 PR은 운영자가 승인해야 머지된다.
+#         ruleset(main)은 승인 수 0 · bypass 없음이다 — Environment production의 필수 검토자(운영자) 승인은 봇(App) 토큰이
+#         스스로 채울 수 없는 조건이다(검토자는 사용자 · 팀만 될 수 있다). 범위는 운영 overlay뿐이다(D7 — 플랫폼 · 검사 · 문서
+#         변경 PR은 관문 밖이다). 봇의 dev bump PR은 skip이라 지금처럼 승인 없이 자동 머지된다.
+#   classify       PR 이벤트만 · 권한 contents: read뿐. 체크아웃만 하고 PR 쪽 코드를 실행하지 않는다(러너의 git · bash만).
+#                  가져온 origin/main의 끝과 PR head의 merge-base ↔ head의 변경 경로(-z — 경로 글자를 인용하지 않고 그대로 받는다)에
+#                  운영 overlay가 있으면 need, 없으면 skip. main 끝을 못 구하거나 merge-base가 하나가 아니거나(교차 이력) diff가
+#                  실패하면 need(fail-closed). 출력 approval은 숫자로 읽히지 않는 낱말이다(need · skip — 스텝 2b의 주석과 같은 이유).
+#                  validate와 job을 나눈 이유: validate는 PR 쪽 코드(tests/validate.sh · validate.tests.sh)를 실행한다 — 같은 job에서
+#                  판정하면 그 코드가 판정의 재료(.git · 작업 트리 · GITHUB_ENV로 뒤 스텝에 넘기는 환경 변수)를 바꿀 수 있다.
+#                  classify는 PR 쪽 코드가 한 줄도 돌지 않는 러너에서 판정한다.
+#   gate           needs validate · classify · approval이 skip이 아닐 때 · environment: production · 권한 없음. Environment의
+#                  필수 검토자가 승인해야 시작되는 빈 job이다. if에 상태 함수를 두지 않으므로 success()가 붙는다 — validate가 성공한
+#                  뒤에만 승인을 요청한다(validate · classify가 실패 · 취소되면 돌지 않는다). 출력이 비어도 != 'skip'은 참이다(fail-closed).
+#   prod-approval  needs validate · classify · gate · always() · PR 이벤트만 · 권한 없음 · required check. validate와 classify가
+#                  success이고, approval이 need면 gate가 success, skip이면 gate가 skipped일 때만 통과 — 그 밖(빈 값 · failure ·
+#                  cancelled · 알 수 없는 값)은 실패(fail-closed). 승인 전에는 gate가 waiting이고 이 job은 만들어지지 않아 check가
+#                  보고되지 않는다 → 머지가 막힌다. 거절하면 gate가 실패하고 이 job이 실패한다.
+#   push 이벤트(main)에서는 셋 다 돌지 않는다 — classify와 prod-approval은 if가 PR 이벤트만 받고, gate는 classify가 건너뛰어 건너뛴다.
+#   승인 · 거절은 실행 · 사람 · 코멘트와 함께 이력으로 남는다. 승인 API(pending_deployments · approve)는 운영자 전용 명령이다.
+#
 # 입력 규칙
 # - `${{ }}` 값은 run: 본문에 끼워 넣지 않고 env:로만 넘긴다(PR 제목·브랜치 이름 등을 통한 스크립트 주입 방지).
 # - CHANGED_FILES·CHANGED_DIFF는 2·4에서 빈 값으로 명시한다(값이 있으면 SHA 입력보다 먼저 쓰인다).
@@ -73,7 +98,7 @@
 # - 러너가 CI=true를 넣는다 — 자기검사는 부분 실행을 거부하고 도구 누락(helm 포함)을 실패로 본다.
 # - HELM_*_HOME은 helm을 직접 부를 때만 쓰인다 — kustomize --enable-helm은 helm을 부를 때 이 셋을 자기 임시
 #   디렉터리(os.MkdirTemp — $TMPDIR 아래)로 덮어쓴다(kustomize v5.8.1 HelmChartInflationGenerator 소스 확인).
-# - 각 run 스텝은 스텝 이름 · 시작·종료 시각(UTC) · 초 · exit를 job 요약($GITHUB_STEP_SUMMARY)에 한 줄 남긴다(세 job 모두).
+# - 각 run 스텝은 스텝 이름 · 시작·종료 시각(UTC) · 초 · exit를 job 요약($GITHUB_STEP_SUMMARY)에 한 줄 남긴다(모든 job).
 name: validate
 
 on:
@@ -1290,3 +1315,217 @@ jobs:
             printf '코멘트를 갱신했다(%s): %s\n' "$id" "$url"
           fi
           printf -- '- 렌더링 diff 코멘트: %s\n' "$url" >> "$GITHUB_STEP_SUMMARY" || true
+
+  classify:
+    # 승인 관문 1/3 — 이 PR이 운영 overlay를 건드렸는가(need · skip). 체크아웃만 하고 PR 쪽 코드를 실행하지 않는다
+    # (머리 주석 「승인 관문 job 셋」). required check가 아니다 — 결과는 prod-approval이 모아 판정한다
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      approval: ${{ steps.classify.outputs.approval }}
+    defaults:
+      run:
+        shell: bash # = bash --noprofile --norc -eo pipefail {0}
+    steps:
+      - name: "1 checkout"
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # merge-base 계산 — origin/main의 끝 · PR head · 둘의 공통 조상이 체크아웃에 있어야 한다
+          persist-credentials: false
+
+      - name: "2 운영 overlay 변경 판정 — need · skip(판정에 실패하면 need)"
+        id: classify
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # shellcheck disable=SC2016 # 작은따옴표 안의 백틱은 글자 그대로 쓴다(마크다운)
+          set -euo pipefail
+          step='2 운영 overlay 변경 판정'
+          t0=$(date -u +%s)
+          on_exit() {
+            local rc=$? t1
+            t1=$(date -u +%s)
+            printf -- '- **%s** · 시작 %s · 종료 %s · %d초 · exit %d\n' "$step" \
+              "$(date -u -d "@$t0" +%FT%TZ)" "$(date -u -d "@$t1" +%FT%TZ)" "$((t1 - t0))" "$rc" >> "$GITHUB_STEP_SUMMARY" || true
+            exit "$rc"
+          }
+          trap on_exit EXIT
+
+          # 판정은 러너의 git · bash만으로 한다 — 체크아웃한 PR의 파일을 실행하지 않는다. 판정에 실패하면 need(fail-closed).
+          # 출력 값은 숫자로 읽히지 않는 낱말이다(need · skip — validate 스텝 2b의 주석). 기준은 가져온 origin/main의 끝이다
+          # (PR이 말하는 base가 아니다 — validate 스텝 2의 주석)
+          sha_re='^([0-9a-f]{40}|[0-9a-f]{64})$'
+          list=$RUNNER_TEMP/classify-paths # 변경 경로(NUL 구분 — git diff -z)
+          approval=need
+          why='판정 실패 — need(fail-closed)'
+          hits=()
+          n=0
+          # is_prod <경로> — apps/<pod>/overlays/prod 자체이거나 그 아래인가(경로 성분 단위: <pod>는 성분 하나 · 그 아래는 어느 깊이든).
+          # 바이트 단위(LC_ALL=C)로 본다 — 로캘에 맞지 않는 바이트가 든 경로도 . 이 받는다(bash의 =~ 에서는 . 이 개행도 받는다)
+          is_prod() {
+            local LC_ALL=C
+            [[ $1 =~ ^apps/[^/]+/overlays/prod(/.+)?$ ]]
+          }
+          # show <경로> — SHOWN에 요약 · 로그에 싣는 모양. 허용 글자 밖의 바이트는 %XX로 바꾼다(파일 이름은 PR이 고른 글자다 —
+          # 백틱 · 개행 · < · | 등이 요약의 마크다운이나 워크플로 명령으로 해석되지 않게)
+          show() {
+            local LC_ALL=C s=$1 c i
+            SHOWN=''
+            for ((i = 0; i < ${#s}; i++)); do
+              c=${s:i:1}
+              case $c in
+                [A-Za-z0-9_.:@+=,~/-]) SHOWN+=$c ;;
+                *) printf -v c '%%%02X' "'$c"; SHOWN+=$c ;;
+              esac
+            done
+          }
+
+          if ! main_tip=$(git rev-parse --verify --quiet 'refs/remotes/origin/main^{commit}') || [[ ! $main_tip =~ $sha_re ]]; then
+            why='refs/remotes/origin/main 이 커밋으로 풀리지 않는다 — need(fail-closed)'
+          elif [[ ! $HEAD_SHA =~ $sha_re ]] || ! git rev-parse --verify --quiet "${HEAD_SHA}^{commit}" > /dev/null; then
+            why='PR head가 전체 커밋 ID가 아니거나 체크아웃에 없다 — need(fail-closed)'
+          elif ! mb_out=$(git merge-base --all "$main_tip" "$HEAD_SHA"); then
+            why='merge-base를 구하지 못했다(공통 조상 없음 포함) — need(fail-closed)'
+          else
+            mapfile -t mbs <<< "$mb_out"
+            if [[ ${#mbs[@]} -ne 1 || ! ${mbs[0]} =~ $sha_re ]]; then
+              why="merge-base가 하나가 아니다(${#mbs[@]}줄 — 교차 이력) — need(fail-closed)"
+            elif ! git diff --no-ext-diff --no-textconv --no-renames --ignore-submodules=none --no-color \
+              --name-only -z "${mbs[0]}" "$HEAD_SHA" > "$list"; then
+              why='git diff가 실패했다 — need(fail-closed)'
+            else
+              while IFS= read -r -d '' p; do
+                n=$((n + 1))
+                if is_prod "$p"; then hits+=("$p"); fi
+              done < "$list"
+              if (( ${#hits[@]} > 0 )); then
+                why="운영 overlay 변경 ${#hits[@]}개(변경 경로 ${n}개 중) — 승인 관문을 요구한다"
+              else
+                approval=skip
+                why="운영 overlay 변경 없음(변경 경로 ${n}개) — 관문을 건너뛴다"
+              fi
+            fi
+          fi
+
+          printf 'approval=%s\n' "$approval" >> "$GITHUB_OUTPUT"
+          printf '승인 관문 판정: approval=%s — %s\n' "$approval" "$why"
+          # 경로는 %XX로 바꾼 모양만 싣는다(앞 50개)
+          for ((i = 0; i < ${#hits[@]} && i < 50; i++)); do
+            show "${hits[i]}"
+            printf '  운영 overlay 경로: %s\n' "$SHOWN"
+          done
+          {
+            printf -- '- **판정** · approval=%s · %s\n' "$approval" "$why"
+            for ((i = 0; i < ${#hits[@]} && i < 50; i++)); do
+              show "${hits[i]}"
+              printf -- '  - `%s`\n' "$SHOWN"
+            done
+            if (( ${#hits[@]} > 50 )); then printf -- '  - …외 %d개\n' "$((${#hits[@]} - 50))"; fi
+          } >> "$GITHUB_STEP_SUMMARY" || true
+
+  gate:
+    # 승인 관문 2/3 — Environment production(필수 검토자 = 운영자)을 요구하는 빈 job. 운영자가 승인해야 시작된다.
+    # if에 상태 함수를 두지 않는다 — success()가 붙어 validate · classify가 성공한 뒤에만 승인을 요청한다(머리 주석
+    # 「승인 관문 job 셋」). required check가 아니다 — 결과는 prod-approval이 모아 판정한다
+    needs: [validate, classify]
+    if: needs.classify.outputs.approval != 'skip'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 5
+    environment: production
+    permissions: {}
+    defaults:
+      run:
+        shell: bash # = bash --noprofile --norc -eo pipefail {0}
+    steps:
+      - name: "1 승인 확인 — Environment production의 검토자가 승인한 뒤에만 돈다"
+        run: |
+          set -euo pipefail
+          step='1 승인 확인'
+          t0=$(date -u +%s)
+          on_exit() {
+            local rc=$? t1
+            t1=$(date -u +%s)
+            printf -- '- **%s** · 시작 %s · 종료 %s · %d초 · exit %d\n' "$step" \
+              "$(date -u -d "@$t0" +%FT%TZ)" "$(date -u -d "@$t1" +%FT%TZ)" "$((t1 - t0))" "$rc" >> "$GITHUB_STEP_SUMMARY" || true
+            exit "$rc"
+          }
+          trap on_exit EXIT
+
+          echo "운영자가 승인했다"
+
+  prod-approval:
+    # 승인 관문 3/3 — required check `prod-approval`(.github/ruleset-main.json). 세 job의 결과를 모아 판정한다(fail-closed).
+    # always(): gate가 거절 · 실패 · 건너뜀이어도 돌아 결과를 보고한다. gate가 승인을 기다리는 동안에는 이 job이 만들어지지
+    # 않아 check가 보고되지 않는다 → 머지가 막힌다. PR 이벤트에서만 돈다(머리 주석 「승인 관문 job 셋」)
+    needs: [validate, classify, gate]
+    if: always() && github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 5
+    permissions: {}
+    defaults:
+      run:
+        shell: bash # = bash --noprofile --norc -eo pipefail {0}
+    steps:
+      - name: "1 판정 — validate · classify 성공이고 need면 gate 성공 · skip이면 gate 건너뜀일 때만 통과"
+        env:
+          VALIDATE_RESULT: ${{ needs.validate.result }}
+          CLASSIFY_RESULT: ${{ needs.classify.result }}
+          APPROVAL: ${{ needs.classify.outputs.approval }}
+          GATE_RESULT: ${{ needs.gate.result }}
+        run: |
+          set -euo pipefail
+          step='1 판정'
+          t0=$(date -u +%s)
+          on_exit() {
+            local rc=$? t1
+            t1=$(date -u +%s)
+            printf -- '- **%s** · 시작 %s · 종료 %s · %d초 · exit %d\n' "$step" \
+              "$(date -u -d "@$t0" +%FT%TZ)" "$(date -u -d "@$t1" +%FT%TZ)" "$((t1 - t0))" "$rc" >> "$GITHUB_STEP_SUMMARY" || true
+            exit "$rc"
+          }
+          trap on_exit EXIT
+
+          # 값은 식이 넣은 낱말이다(결과: success · failure · cancelled · skipped, 판정: need · skip). 형식 밖의 값은 싣지 않는다
+          val() {
+            if [[ -z $1 ]]; then
+              printf '(빈 값)'
+            elif [[ $1 =~ ^[a-z]{1,16}$ ]]; then
+              printf '%s' "$1"
+            else
+              printf '(형식 밖 값)'
+            fi
+          }
+          seen="validate=$(val "$VALIDATE_RESULT") · classify=$(val "$CLASSIFY_RESULT") · approval=$(val "$APPROVAL") · gate=$(val "$GATE_RESULT")"
+          ok=0
+          if [[ $VALIDATE_RESULT != success ]]; then
+            why='validate가 성공하지 않았다 — 검사가 통과해야 관문을 판정한다'
+          elif [[ $CLASSIFY_RESULT != success ]]; then
+            why='classify가 성공하지 않았다 — 운영 overlay 변경 여부를 판정하지 못했다'
+          elif [[ $APPROVAL == need ]]; then
+            if [[ $GATE_RESULT == success ]]; then
+              ok=1
+              why='운영 overlay 변경 — 운영자가 승인 관문을 승인했다'
+            else
+              why='운영 overlay 변경인데 승인 관문을 통과하지 못했다(거절 · 실패 · 취소 · 건너뜀)'
+            fi
+          elif [[ $APPROVAL == skip ]]; then
+            if [[ $GATE_RESULT == skipped ]]; then
+              ok=1
+              why='운영 overlay 변경 없음 — 승인 없이 통과'
+            else
+              why='관문이 필요 없다는 판정인데 gate가 건너뛰어지지 않았다'
+            fi
+          else
+            why='classify의 판정 값이 비었거나 알 수 없다'
+          fi
+          if (( ok )); then
+            printf 'prod-approval 통과 — %s (%s)\n' "$why" "$seen"
+            printf -- '- **판정** · 통과 · %s · %s\n' "$why" "$seen" >> "$GITHUB_STEP_SUMMARY" || true
+            exit 0
+          fi
+          printf '::error::prod-approval 실패 — %s (%s)\n' "$why" "$seen"
+          printf -- '- **판정** · 실패 · %s · %s\n' "$why" "$seen" >> "$GITHUB_STEP_SUMMARY" || true
+          exit 1
