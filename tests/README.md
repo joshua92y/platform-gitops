@@ -2,9 +2,9 @@
 
 required check `validate`가 부르는 검사 본체와 그 자기검사(무엇이 어떤 순서로 도는지는 아래 「CI 배선 상태」). 정본은 모노레포 `specs/003-platform-foundation/contracts/gitops-repo.md`(§validate.yml · §validate.yml ExternalSecret 검사 · §sync-wave 단일 표 · §ClusterSecretStore 5개 · §이름·인증 규약 · §이미지·승격)와 `contracts/network-policy.md`(네임스페이스 표 14개 · 정책 세트 · 외부 egress 규칙 형식 · 포트 출처 각주)다. 계약과 스크립트가 어긋나면 계약을 먼저 고친다.
 
-## CI 배선 상태 — `validate.yml`이 이 검사들을 부른다(T047 G2)
+## CI 배선 상태 — `validate.yml`이 이 검사들을 부른다(T047 G2 · G3)
 
-`.github/workflows/validate.yml`의 job `validate`(= ruleset `main`의 required check 이름)가 **main을 향한 PR**과 main push에서 아래 순서로 돈다(다른 브랜치를 base로 한 PR에서는 돌지 않는다 — 아래 「base는 봇이 고른다」). 스텝 하나라도 실패하면 check가 실패하고 머지가 막힌다. 순서의 이유와 입력 규칙(`${{ }}` 값은 `env:`로만 넘긴다 · `VALIDATE_SKIP_TOOLS` 등 스위치 변수는 어디에도 두지 않는다)의 정본은 워크플로 머리 주석이다.
+`.github/workflows/validate.yml`의 job `validate`(= ruleset `main`의 required check 이름)가 **main을 향한 PR**과 main push에서 아래 순서로 돈다(다른 브랜치를 base로 한 PR에서는 돌지 않는다 — 아래 「base는 봇이 고른다」). 스텝 하나라도 실패하면 check가 실패하고 머지가 막힌다. 순서의 이유와 입력 규칙(`${{ }}` 값은 `env:`로만 넘긴다 · `VALIDATE_SKIP_TOOLS` 등 스위치 변수는 어디에도 두지 않는다)의 정본은 워크플로 머리 주석이다. 같은 워크플로의 job `render-diff` · `render-comment`는 required check가 아니다(아래 「렌더링 diff PR 코멘트」).
 
 | 순서 | 스텝 | 이벤트 | 실행되는 코드 |
 |---|---|---|---|
@@ -23,8 +23,33 @@ required check `validate`가 부르는 검사 본체와 그 자기검사(무엇�
 - **동시 실행**: PR은 같은 PR의 옛 실행을 취소한다(취소된 실행은 check를 채우지 못한다). **main push 실행은 서로 취소하지 않는다** — "봇 PR의 검사 스크립트는 main push에서 검증한다"가 성립하려면 main의 실행이 끝까지 돌아야 한다. main 실행의 실패는 머지를 막지 못한다(이미 머지된 뒤다) — 커밋의 상태 표시로 드러나므로 머지한 사람이 확인한다(알림은 관측 태스크에서 다룬다).
 - **사람 PR의 check가 봇 때문에 실패했을 때**: 봇이 사람의 PR을 닫았다 다시 열면 이벤트 발신자가 봇이라 스텝 2가 FAIL하고 그 커밋의 check가 실패로 남는다(의도한 동작이다 — 봇이 건드린 PR을 통과시키지 않는다). 복구는 **사람이** 그 PR을 다시 열거나 새 커밋을 push하는 것이다(재실행은 같은 이벤트로 돌므로 결과가 같다).
 - **봇은 값만 바꾼다 — 첫 `images` 항목은 사람 PR이 만든다**: 스텝 2는 제자리 교체만 허용하므로, dev overlay에 `images` 항목이 아직 없을 때 봇이 그 블록을 **추가**하는 PR은 FAIL한다. pod의 overlay를 처음 만드는 PR(사람)이 첫 digest까지 넣는다.
+- **렌더링 diff PR 코멘트(T047 G3 · 계약 §validate.yml 7) — required check가 아니다.** 같은 워크플로의 job 둘이 PR 이벤트에서 `validate`가 **성공한 뒤에만** 돈다(실패해도 머지를 막지 않는다 — 판정은 `validate`가 한다). 운영자가 머지 전에 "이 PR이 클러스터에 무엇을 바꾸는가"를 보는 수단이고, prod 승격 PR은 이 코멘트를 확인한 뒤 머지한다 — 코멘트가 없거나 · `render-diff`가 실패했거나 · 코멘트 머리의 PR head가 PR의 최신 커밋이 아니면 머지하지 않는다. 로직은 모두 워크플로 파일 안의 인라인 스크립트다(봇은 `.github/workflows/`를 못 바꾸지만 `tests/` · `.github/actions/` · `.github/scripts/`는 바꿀 수 있다).
+
+  | job | 조건 · 권한 | 스텝 | 실행되는 코드 |
+  |---|---|---|---|
+  | `render-diff` | `needs: validate` · PR 이벤트만 · job 권한 `contents: read`뿐 | 1 checkout(`fetch-depth: 0` · `persist-credentials: false`) → 2 도구 설치(kustomize · yq · helm — `validate` 스텝 3과 같은 버전 · sha256) → 2b 두 job의 도구 값 대조(워크플로 파일에서 읽어 어긋나면 실패) → 3 렌더와 비교 → 4 아티팩트 `render-diff`(`body.md` · `full.diff` · 7일 보존) → 5 job 요약 | 인라인 스크립트 + 액션(SHA 고정). PR의 매니페스트를 `kustomize build --enable-helm`으로 렌더한다 — 쓰기 권한이 없는 job이다 |
+  | `render-comment` | `needs: render-diff` · 같은 저장소 브랜치의 PR만 · job 권한 `pull-requests: write`뿐(`contents`도 없다) | 1 아티팩트 `render-diff` 받기 → 2 코멘트 달기 | 인라인 스크립트 + 액션(SHA 고정). **체크아웃하지 않고 PR의 내용을 처리하지 않는다** — 쓰기 토큰을 가진 job이 PR이 고른 내용을 렌더하지 않게 권한을 나눴다(`pull_request_target`은 쓰지 않는다) |
+
+  - **비교의 두 쪽**: main = 러너가 가져온 `origin/main`의 끝(`git worktree`로 꺼낸다 — 스텝 2와 같은 기준이고 `pull_request.base.sha`가 아니다), PR = 체크아웃된 merge ref.
+  - **대상**: 두 쪽 kustomization 디렉터리의 합집합(`tests/validate.sh`의 열거와 같은 규칙 — 세 파일 이름 · 루트 `tests/` · `.git/` · 경로에 `/charts/`가 든 곳 제외. 한쪽에만 있으면 빈 렌더와 비교해 새 디렉터리 · 디렉터리 삭제로 나온다) + directory source 경로(두 쪽 Application — `clusters/**/apps/*.yaml` · `bootstrap/root-app.yaml` — 의 `spec.source.path` 중 kustomization이 없는 곳 — 오늘은 `clusters/oci-k3s/apps`). directory source는 그 디렉터리 바로 아래의 `*.yaml` · `*.yml` · `*.json`(Argo CD가 읽는 파일 — README는 뺀다)을 파일마다 `diff -uN`과 같은 방식으로 비교한다. 경로는 실제 경로(`realpath`)로 풀어 저장소 루트 아래가 아니면(경로 중간의 심볼릭 링크가 루트 밖을 가리키면) 읽지 않고 렌더 실패로 적는다 — 경로 끝이 심볼릭 링크이거나 디렉터리가 아닌 경우도 같다. 그 디렉터리 안의 파일이 심볼릭 링크면 따라가지 않고 링크라는 사실만 적는다. 한쪽에만 kustomization이 있는 `source.path`(directory source ↔ kustomization 전환)는 없는 쪽을 directory source로 읽어 kustomization 렌더와 비교하고, 표에 `(directory source → kustomization)` · `(kustomization → directory source)`로 적는다 — 두 형식의 diff에는 서식 차이(kustomize가 키를 정렬한다 · 파일 이름 주석 줄)가 섞이므로 무엇이 바뀌었는지는 객체 목록으로 본다.
+  - **본문(`body.md`)의 모양**: 첫 줄 표식 `<!-- render-diff:validate -->` → 머리(비교한 main 끝 · PR head · 렌더한 merge ref의 짧은 SHA, 실행 기록 링크, 대상 · 바뀐 · 렌더 실패 디렉터리 수) → 변경이 없으면 `렌더 변경 없음` 한 줄(문서만 바꾼 PR), 있으면 요약 표(디렉터리 · 추가 · 삭제 · 변경 객체 수 · diff 줄 수(+/−) · 렌더 상태 — 정상 · 새 디렉터리 · 디렉터리 삭제 · main 쪽 실패 · PR 쪽 실패 · 양쪽 실패 · 경로 없음(양쪽))와 디렉터리별 `<details>`(바뀐 객체 목록과 unified diff). `경로 없음(양쪽)`은 Application의 `source.path`가 두 쪽 어디에도 없는 경우다 — 머리의 대상 수에 들어가므로 표에도 행으로 싣는다(머리에 그 수를 따로 적는다). diff를 싣지 못한 행(Secret이 든 YAML을 읽지 못함 · diff 오류)은 줄 수를 `—`로 적는다. 객체 비교는 렌더를 문서로 나눠 `apiVersion` · `kind/namespace/name`과 문서 내용(JSON)을 맞추고, 목록에는 `` `kind/namespace/name` (`apiVersion`) ``로 적는다(같은 식별자가 여럿이면 나온 순서로 `#2` · `#3` — apiVersion만 다른 두 객체는 따로 맞추고, apiVersion이 바뀐 객체는 삭제 + 추가로 나온다). 렌더가 실패한 디렉터리는 오류 앞 5줄을 싣고 넘어간다(스텝은 경고만 남기고 통과한다 — 렌더 실패의 판정은 `validate`의 검사 1).
+  - **PR이 고른 글자**: diff와 렌더 오류는 코드 울타리 안에만 둔다 — 울타리는 내용의 가장 긴 백틱 연속보다 길다(내용 안의 백틱 3개 줄 · `</details>` · 표식이 울타리를 닫거나 해석되지 않는다). 울타리 밖에 두는 디렉터리 · 객체 이름은 `[A-Za-z0-9_.:@+=,~-]`(경로와 apiVersion은 `/`도) 밖의 바이트를 `%XX`로 바꿔 인라인 코드로 싣는다(백틱 · 개행 · `<` · `|` 포함 — 객체 이름도 YAML에서 풀린 원래 바이트 기준이라 개행은 `%0A`다). 탭 · 개행 밖의 제어 문자는 지운다. 렌더 스텝은 PR이 고른 글자를 표준 출력에 찍지 않는다(워크플로 명령 해석 방지).
+  - **크기 한도**: 본문이 60000바이트를 넘으면 디렉터리별 diff 전문을 빼고 요약 표 + 바뀐 객체 목록만 남기며 "전문은 이 실행의 아티팩트 `render-diff`에 있다"를 적는다. 그래도 넘으면 객체 목록을 디렉터리마다 앞의 N개(1000 · 500 · 200 · …)로 자르고 자른 사실을 적고, 그래도 넘으면 요약 표만, 마지막으로 머리만 남긴다(조용히 자르지 않는다). 전문 `full.diff`는 객체 목록 · 렌더 오류 · diff를 전부 담는다.
+  - **Secret**: 렌더(또는 directory source 파일)에 `data` · `stringData` · `metadata.annotations`가 있는 `kind: Secret` 맵(List 안 포함)이 있으면 그 디렉터리는 두 쪽 모두 그 값(어노테이션은 전부 — `kubectl.kubernetes.io/last-applied-configuration`에는 값이 통째로 들어간다)을 `Secret 객체 — 값 생략`으로 바꾼 뒤(키는 남긴다) 비교해 본문 · 전문 어디에도 값이 실리지 않는다. 그 디렉터리의 diff는 yq가 다시 쓴 사본끼리의 diff다(원문과 서식 · 따옴표 · 들여쓰기가 다를 수 있다). 값만 바뀐 Secret은 객체 목록에 "값만 바뀌었다"로 나온다(값은 싣지 않는다). **Secret이 아닌 kind에 든 값(ConfigMap에 넣은 Secret 문서 · ExternalSecret의 `template.data` 등)은 가리지 않는다** — 그런 값이 저장소에 들어오지 않게 하는 것은 gitleaks(검사 8 · 스텝 6)다.
+  - **코멘트 달기**: 받은 `body.md`를 믿지 않는다 — 일반 파일(심볼릭 링크 아님) · 1–65000바이트 · 첫 줄이 표식이 아니면 코멘트를 달지 않고 실패한다. 본문은 `jq -n --rawfile`로 JSON을 만들어 `gh api --input`으로 보낸다(명령줄 인자로 넘기지 않는다). PR 번호 · 저장소 이름은 `env:`로 받고 형식을 확인한다. 그 PR의 이슈 코멘트를 전부(페이지 넘김 포함) 읽어 **작성자가 `github-actions[bot]`이고 본문이 표식으로 시작하는** 것 중 가장 오래된 하나를 PATCH로 갱신하고, 없으면 POST로 만든다 — PR마다 코멘트 하나다. 다른 계정이 표식을 넣은 코멘트는 건드리지 않고, 조건에 맞는 것이 둘 이상이면 하나만 갱신하고 경고를 남긴다(지우지 않는다). `GH_TOKEN`은 이 스텝의 env에만 있다.
+  - **포크 PR**: 토큰이 읽기 전용이라 `render-comment`가 돌지 않는다 — `render-diff`가 job 요약에 본문 전체를 남긴다(같은 저장소 PR의 job 요약에는 머리와 요약 표만).
+  - **도구 값**: `render-diff` 스텝 2의 버전 · sha256은 `validate` 스텝 3의 값을 그대로 옮긴 것이다 — 두 job의 값을 함께 바꾼다(스텝 2b가 워크플로 파일에서 두 값을 읽어 어긋나면 실패한다).
+  - **한계**
+    - 코멘트는 `validate`가 **성공한 뒤에만** 달린다 — 검사가 실패한 PR에는 렌더 비교가 없다. `render-diff`가 실패하면 코멘트가 갱신되지 않아 **이전 커밋의 코멘트가 남는다** — 코멘트 머리의 PR head SHA가 PR의 최신 커밋과 같은지 본다.
+    - main 쪽 기준은 **실행 시점의** `origin/main` 끝이다. PR 브랜치가 뒤처져 있으면 PR 쪽(merge ref)에 main의 새 변경이 없어 그 변경이 diff에 거꾸로 섞여 보인다 — ruleset이 브랜치를 main 최신으로 요구하므로(strict) 머지 직전에는 같다.
+    - 렌더는 `kustomize build`이지 Argo CD가 실제로 적용한 결과가 아니다 — Application이 source를 덮어쓰지 않는다는 검사 7.4(`spec.source`의 kustomize · helm · directory 설정 · multi-source · hydrator 금지)가 둘을 같게 만든다. 클러스터의 라이브 상태와의 차이(수동 변경 · drift)는 보이지 않는다.
+    - 포크 PR에는 코멘트가 없다(job 요약만).
+    - helm 차트를 쓰는 컴포넌트는 렌더에 네트워크가 필요하다(차트 저장소). 렌더 한도는 디렉터리마다 60초(+ 정리 10초)이고 job 한도는 15분이다 — helm 디렉터리 넷이 두 쪽 모두 한도에 걸려도 약 9분 20초라 job이 끝까지 돌고, 내려받기가 실패한 디렉터리는 렌더 실패 행으로 코멘트에 실린다. **차트 저장소 장애가 그보다 길게 job을 붙잡아 job 한도를 넘기거나 `render-diff`가 다른 까닭으로 실패하면 코멘트가 갱신되지 않고 이전 커밋의 코멘트가 남는다** — 코멘트 머리의 PR head SHA를 본다. helm 디렉터리가 늘면 두 한도를 함께 본다(워크플로의 `render-diff` `timeout-minutes` 주석).
+    - **kustomization 디렉터리도 directory source 경로도 아닌 파일의 변경은 보이지 않는다** — `bootstrap/root-app.yaml` · `tests/` · `.github/` · 문서 등(그런 파일만 바꾼 PR은 "렌더 변경 없음"이다 — Application의 `source.path`를 바꿔 대상 경로가 달라지는 경우만 그 경로가 표에 나온다). 그 변경은 PR의 파일 diff로 본다.
+    - **비결정 렌더는 감지하지 않는다** — 차트가 렌더마다 난수 · 시각 · 새 인증서를 넣으면 파일이 그대로여도 그 디렉터리가 바뀐 것으로 나온다(오늘의 차트 넷은 결정적이다).
+    - Secret 값은 어디에도 싣지 않으므로 값의 **내용**이 어떻게 바뀌었는지는 보이지 않는다(바뀌었다는 사실만). directory source는 `*.yaml` · `*.yml` · `*.json`만 본다(`.jsonnet`은 평가하지 않는다).
+  - **실측**: 로컬(Windows · Git Bash) 렌더와 비교 스텝 약 40–70초(대상 30개 × 두 쪽 · helm 차트 네 개 내려받기 포함). 러너 실측은 첫 PR 실행에서 남긴다.
 - **아직 CI가 하지 않는 것**
-  - 렌더링 diff PR 코멘트(main ↔ PR `kustomize build` 비교) — 다음 PR(T047 G3).
   - 스키마 캐시 보존(`actions/cache`) — 넣지 않았다. 캐시 없이도 전체 검사가 35초라 얻을 것이 적다.
 - **러너 실측(2026-09-29 · ubuntu-24.04-arm · 캐시 없음)**: 경로 lint 1초 · 도구 설치 2초 · 전체 검사 **35초** · 자기검사 122 케이스 **184초** · gitleaks 히스토리 3초 · job 전체 약 3분 48초. 같은 검사가 Windows · Git Bash에서는 전체 검사 약 10분 · 자기검사 약 1시간이다(프로세스 생성 비용) — **로컬은 영향 받는 케이스만 돌리고(`VALIDATE_TESTS_ONLY`) 전체 판정은 CI가 맡는다.** 각 run 스텝은 스텝 이름 · 시작·종료 시각(UTC) · 초 · exit를 job 요약에 한 줄씩 남긴다.
 - **자기검사를 PR마다 돌리지 않는 이유**: 봇의 dev bump PR은 required check가 끝나야 자동 머지되므로 검사 시간이 그대로 배포 지연이다(dev bump → sync 5분 이내가 목표다). 봇은 `tests/`를 고칠 수 없으므로(스텝 2) 봇 PR의 검사 스크립트는 main의 것과 같고, 그것은 main push에서 이미 검증됐다. 검사를 고치는 PR(`tests/` · `.github/`)은 항상 자기검사를 거친다.

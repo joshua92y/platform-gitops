@@ -1,4 +1,4 @@
-# validate — required check `validate`를 내는 워크플로(T003 골격 → T047 G2 배선)
+# validate — required check `validate`를 내는 워크플로(T003 골격 → T047 G2 배선 → G3 렌더링 diff 코멘트)
 #
 # 규약
 # - job 이름 `validate`는 ruleset(main)의 required check 이름과 일치해야 한다 — 바꾸면 머지가 막힌다
@@ -8,8 +8,10 @@
 # - 모든 액션은 전체 커밋 SHA로 핀한다(주석의 vX.Y.Z는 사람용 표기).
 #   SHA 갱신은 Renovate(온보딩 필요 — T116에서 확인), 그 전까지 수동.
 # - 검사 항목의 정본: 모노레포 계약 gitops-repo.md §validate.yml. 검사 본체는 tests/validate.sh(전체 검사)와
-#   tests/validate.tests.sh(자기검사)이고, 이 파일은 그것을 부르는 배선만 둔다. 무엇이 어떤 순서로 도는지와
-#   아직 CI가 하지 않는 것(렌더링 diff PR 코멘트 — 다음 PR)은 tests/README.md 「CI 배선 상태」 한 곳에 적는다.
+#   tests/validate.tests.sh(자기검사)이고, job validate는 그것을 부르는 배선만 둔다. 무엇이 어떤 순서로 도는지와
+#   아직 CI가 하지 않는 것은 tests/README.md 「CI 배선 상태」 한 곳에 적는다.
+# - job은 셋이다. required check는 validate 하나이고, render-diff · render-comment(렌더링 diff PR 코멘트 — 아래
+#   「렌더링 diff job 둘」)는 required check가 아니다 — 실패해도 머지를 막지 않는다.
 #
 # 스텝 순서와 이유(보안 설계 — 순서를 바꾸지 않는다)
 #   1 checkout       fetch-depth 0(검사 6의 merge-base · gitleaks 히스토리 스캔). 저장소 쪽 코드는 실행되지 않는다.
@@ -40,6 +42,28 @@
 #                    두므로, 앞에 두면 4의 검사 8(gitleaks 파일 스캔)이 그것을 훑는다.
 #   6 gitleaks 액션  커밋 히스토리 스캔(액션이 자기 gitleaks를 받아 쓴다 — 3의 도구와 별개이고 버전만 같게 맞춘다).
 #
+# 렌더링 diff job 둘(T047 G3 · 계약 gitops-repo.md §validate.yml 7) — required check가 아니다
+#   목적  머지 전에 "이 PR이 클러스터에 무엇을 바꾸는가"를 보인다. prod 승격 PR은 운영자가 이 코멘트를 확인한 뒤
+#         머지한다(코멘트가 없거나 · render-diff가 실패했거나 · 코멘트 머리의 PR head가 PR의 최신 커밋이 아니면
+#         머지하지 않는다). Argo CD에 접근하지 않고 kustomize build 결과를 main(가져온 origin/main의 끝 — 스텝 2와
+#         같은 기준)과 PR(merge ref)에서 비교한다. 대상: 모든 kustomization 디렉터리(tests/validate.sh의 열거와 같은
+#         규칙 — 루트 tests/ · 경로에 /charts/ 제외) + directory source 경로(Application의 source.path 중
+#         kustomization이 없는 곳 — 오늘은 clusters/oci-k3s/apps. 한쪽에만 kustomization이 있는 source.path는 없는 쪽을
+#         directory source로 읽어 비교한다).
+#   render-diff     needs validate · PR 이벤트만 · 권한 contents: read뿐. PR의 내용을 렌더·비교해 코멘트 본문(body.md)과
+#                   전문(full.diff)을 파일로 만들어 아티팩트 render-diff로 올린다. 렌더 실패는 본문에 적고 넘어간다
+#                   (렌더 실패의 판정은 validate의 검사 1이 한다). Secret의 data · stringData · 어노테이션 값은 본문 · 전문에
+#                   싣지 않는다.
+#   render-comment  needs render-diff · 같은 저장소 브랜치의 PR만 · 권한 pull-requests: write뿐. 체크아웃하지 않고 PR의
+#                   내용을 처리하지 않는다 — 받은 body.md를 믿지 않고 확인한 뒤(일반 파일 · 65000바이트 이하 · 첫 줄이
+#                   표식) github-actions[bot]이 쓴 표식 코멘트 하나를 갱신한다(없으면 작성 · 다른 계정의 코멘트는 건드리지 않는다).
+#   권한을 나눈 이유  쓰기 토큰을 가진 job이 PR이 고른 내용(kustomization · 차트 · 값)을 렌더하지 않게 한다.
+#                   pull_request_target은 쓰지 않는다. 포크 PR은 토큰이 읽기 전용이라 render-comment를 건너뛰고
+#                   render-diff가 본문 전체를 job 요약에 남긴다.
+#   둘 다 validate가 성공한 뒤에만 돈다(봇 PR은 경로 lint를 통과한 것만 렌더된다). 로직은 모두 이 파일 안에 인라인으로
+#   둔다 — 봇(App)은 workflows 권한이 없어 이 파일은 못 바꾸지만 tests/ · .github/actions/ · .github/scripts/ 는 바꿀 수 있다.
+#   도구 버전 · sha256은 validate 스텝 3의 값과 같다 — 두 job의 값을 함께 바꾼다(render-diff 스텝 2b가 대조해 어긋나면 실패한다).
+#
 # 입력 규칙
 # - `${{ }}` 값은 run: 본문에 끼워 넣지 않고 env:로만 넘긴다(PR 제목·브랜치 이름 등을 통한 스크립트 주입 방지).
 # - CHANGED_FILES·CHANGED_DIFF는 2·4에서 빈 값으로 명시한다(값이 있으면 SHA 입력보다 먼저 쓰인다).
@@ -49,7 +73,7 @@
 # - 러너가 CI=true를 넣는다 — 자기검사는 부분 실행을 거부하고 도구 누락(helm 포함)을 실패로 본다.
 # - HELM_*_HOME은 helm을 직접 부를 때만 쓰인다 — kustomize --enable-helm은 helm을 부를 때 이 셋을 자기 임시
 #   디렉터리(os.MkdirTemp — $TMPDIR 아래)로 덮어쓴다(kustomize v5.8.1 HelmChartInflationGenerator 소스 확인).
-# - 각 run 스텝은 스텝 이름 · 시작·종료 시각(UTC) · 초 · exit를 job 요약($GITHUB_STEP_SUMMARY)에 한 줄 남긴다.
+# - 각 run 스텝은 스텝 이름 · 시작·종료 시각(UTC) · 초 · exit를 job 요약($GITHUB_STEP_SUMMARY)에 한 줄 남긴다(세 job 모두).
 name: validate
 
 on:
@@ -402,3 +426,867 @@ jobs:
           # PR 코멘트는 pull-requests: write 권한이 필요 — permissions를 contents: read로
           # 유지하기 위해 코멘트 기능을 끈다(결과는 job 로그·실패 상태로 확인).
           GITLEAKS_ENABLE_COMMENTS: "false"
+
+  render-diff:
+    # 렌더링 diff 1/2 — PR의 내용을 렌더·비교해 코멘트 본문을 파일로 만든다. 쓰기 권한이 없다(머리 주석 「렌더링 diff job 둘」).
+    # required check가 아니다 — 이 job의 실패는 머지를 막지 않는다(판정은 validate가 한다)
+    needs: validate
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04-arm
+    # 스텝 3의 디렉터리당 렌더 한도(60초 + 정리 10초)와 맞춘 값 — 네트워크를 쓰는 디렉터리(오늘은 helm 차트 넷)가 두 쪽
+    # 모두 한도에 걸려도 약 9분 20초라 job이 끝까지 돌아 실패 행이 코멘트에 실린다. helm 디렉터리가 늘면 두 한도를 함께 본다
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash # = bash --noprofile --norc -eo pipefail {0}
+    steps:
+      - name: "1 checkout"
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # main 쪽 = 가져온 origin/main의 끝 — 그 커밋이 체크아웃에 있어야 한다
+          persist-credentials: false
+
+      - name: "2 도구 설치 — kustomize · yq · helm(validate 스텝 3과 같은 버전 · sha256)"
+        env:
+          # validate job 스텝 3의 값과 같아야 한다 — 두 job의 값을 함께 바꾼다(스텝 2b가 대조해 어긋나면 실패한다).
+          # linux arm64 공식 릴리스 자산의 sha256. 버전을 바꾸면 sha256도 함께 바꾼다
+          KUSTOMIZE_VERSION: v5.8.1
+          KUSTOMIZE_SHA256: 0953ea3e476f66d6ddfcd911d750f5167b9365aa9491b2326398e289fef2c142
+          YQ_VERSION: v4.53.6
+          YQ_SHA256: 88a1016bc1d657375a35864e4f44b6f333df8ff97b559f51bba0adcb2169df09
+          HELM_VERSION: v4.3.0
+          HELM_SHA256: 31c5794dd55c66a51e6b7d2e2ac7a114ae8b1de41ff1d9ba51748ac973b06a08
+        run: |
+          set -euo pipefail
+          step='2 도구 설치'
+          t0=$(date -u +%s)
+          on_exit() {
+            local rc=$? t1
+            t1=$(date -u +%s)
+            printf -- '- **%s** · 시작 %s · 종료 %s · %d초 · exit %d\n' "$step" \
+              "$(date -u -d "@$t0" +%FT%TZ)" "$(date -u -d "@$t1" +%FT%TZ)" "$((t1 - t0))" "$rc" >> "$GITHUB_STEP_SUMMARY" || true
+            exit "$rc"
+          }
+          trap on_exit EXIT
+
+          bin="$RUNNER_TEMP/bin"
+          dl="$RUNNER_TEMP/dl"
+          mkdir -p "$bin" "$dl"
+          # fetch <url> <파일 이름> <sha256> — 받은 파일을 sha256으로 대조한다. 맞지 않으면 실패(풀지도 설치하지도 않는다)
+          fetch() {
+            if [[ ! $3 =~ ^[0-9a-f]{64}$ ]]; then
+              printf '::error::%s: sha256 값의 형식이 틀렸다: %q\n' "$2" "$3"
+              return 1
+            fi
+            curl -fsSL --retry 3 --connect-timeout 10 --max-time 120 -o "$dl/$2" "$1"
+            printf '%s  %s\n' "$3" "$dl/$2" | sha256sum -c -
+          }
+
+          fetch "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2F${KUSTOMIZE_VERSION}/kustomize_${KUSTOMIZE_VERSION}_linux_arm64.tar.gz" kustomize.tar.gz "$KUSTOMIZE_SHA256"
+          tar -xzf "$dl/kustomize.tar.gz" -C "$bin" kustomize
+
+          fetch "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_arm64" yq "$YQ_SHA256"
+          cp "$dl/yq" "$bin/yq"
+
+          fetch "https://get.helm.sh/helm-${HELM_VERSION}-linux-arm64.tar.gz" helm.tar.gz "$HELM_SHA256"
+          tar -xzf "$dl/helm.tar.gz" -C "$bin" --strip-components=1 linux-arm64/helm
+
+          chmod 0755 "$bin/kustomize" "$bin/yq" "$bin/helm"
+
+          # --- 버전 확인: 설치한 바이너리가 기대 버전이 아니면 실패 ---
+          want_got() {
+            if [[ $3 != "$2" ]]; then
+              printf '::error::%s 버전 불일치: 실제 %q ≠ 기대 %s\n' "$1" "$3" "$2"
+              return 1
+            fi
+            printf '  %-12s %s\n' "$1" "$3"
+          }
+          yq_out=$("$bin/yq" --version || true)
+          if [[ $yq_out != *mikefarah* ]]; then
+            printf '::error::yq가 mikefarah yq가 아니다: %q\n' "$yq_out"
+            exit 1
+          fi
+          want_got kustomize "$KUSTOMIZE_VERSION" "$("$bin/kustomize" version || true)"
+          want_got yq "$YQ_VERSION" "${yq_out##* }"
+          want_got helm "$HELM_VERSION" "$("$bin/helm" version --template '{{.Version}}' || true)"
+
+          # 다음 스텝부터 PATH 맨 앞에 온다(GITHUB_PATH는 앞에 붙인다)
+          printf '%s\n' "$bin" >> "$GITHUB_PATH"
+
+      - name: "2b 도구 값 대조 — validate job 스텝 3과 같은 버전 · sha256인가"
+        # 이 파일(PR 이벤트에서는 merge ref의 것 = 지금 도는 워크플로)에서 두 job의 값을 읽어 비교한다 — 한쪽만 바꾸면 실패
+        run: |
+          set -euo pipefail
+          step='2b 도구 값 대조'
+          t0=$(date -u +%s)
+          on_exit() {
+            local rc=$? t1
+            t1=$(date -u +%s)
+            printf -- '- **%s** · 시작 %s · 종료 %s · %d초 · exit %d\n' "$step" \
+              "$(date -u -d "@$t0" +%FT%TZ)" "$(date -u -d "@$t1" +%FT%TZ)" "$((t1 - t0))" "$rc" >> "$GITHUB_STEP_SUMMARY" || true
+            exit "$rc"
+          }
+          trap on_exit EXIT
+
+          p=$(command -v yq || true)
+          if [[ $p != "$RUNNER_TEMP/bin/yq" ]]; then
+            printf '::error::yq → %s (기대 %s)\n' "${p:-없음}" "$RUNNER_TEMP/bin/yq"
+            exit 1
+          fi
+          wf=.github/workflows/validate.yml
+          if [[ -L $wf || ! -f $wf ]]; then
+            printf '::error::%s 이(가) 일반 파일이 아니다\n' "$wf"
+            exit 1
+          fi
+          bad=0
+          for v in KUSTOMIZE_VERSION KUSTOMIZE_SHA256 YQ_VERSION YQ_SHA256 HELM_VERSION HELM_SHA256; do
+            a=$(yq -r ".jobs.validate.steps[] | select(.env.$v != null) | .env.$v" "$wf")
+            b=$(yq -r ".jobs.\"render-diff\".steps[] | select(.env.$v != null) | .env.$v" "$wf")
+            if [[ -z $a || $a == *$'\n'* || $a != "$b" ]]; then
+              printf '::error::%s: validate job %q ≠ render-diff job %q — 두 job의 값을 함께 바꾼다\n' "$v" "$a" "$b"
+              bad=1
+            else
+              printf '  %-18s %s (두 job 같음)\n' "$v" "$a"
+            fi
+          done
+          if (( bad )); then exit 1; fi
+
+      - name: "3 렌더와 비교 — main(origin/main의 끝) ↔ PR(merge ref)"
+        id: render
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HELM_CACHE_HOME: ${{ runner.temp }}/helm/cache
+          HELM_CONFIG_HOME: ${{ runner.temp }}/helm/config
+          HELM_DATA_HOME: ${{ runner.temp }}/helm/data
+        run: |
+          # shellcheck disable=SC2016 # 작은따옴표 안의 백틱 · $ 는 글자 그대로 쓴다(마크다운 · yq 식)
+          set -euo pipefail
+          step='3 렌더와 비교'
+          t0=$(date -u +%s)
+          on_exit() {
+            local rc=$? t1
+            t1=$(date -u +%s)
+            printf -- '- **%s** · 시작 %s · 종료 %s · %d초 · exit %d\n' "$step" \
+              "$(date -u -d "@$t0" +%FT%TZ)" "$(date -u -d "@$t1" +%FT%TZ)" "$((t1 - t0))" "$rc" >> "$GITHUB_STEP_SUMMARY" || true
+            exit "$rc"
+          }
+          trap on_exit EXIT
+
+          # 이 스텝은 PR이 고른 글자(렌더 · 오류 · 이름)를 표준 출력에 찍지 않는다 — 모두 파일로 간다(워크플로 명령 해석 방지).
+          # 렌더 실패는 본문에 적고 넘어간다(exit 0 — 판정은 validate의 검사 1). 실패로 끝나는 것은 준비 · 입력의 문제뿐이다
+          marker='<!-- render-diff:validate -->'
+          limit=60000      # body.md 바이트 한도(코멘트 본문 한도 65536자 — render-comment는 65000바이트를 넘으면 거부한다)
+          nulldoc=W251bGxd # base64 '[null]' — 빈 문서(주석뿐인 문서 포함)는 객체로 세지 않는다
+          sha_re='^([0-9a-f]{40}|[0-9a-f]{64})$'
+          # Secret 값 가리기: kind가 Secret인 맵(어느 깊이든 — List 안 포함)의 data · stringData 값과 metadata.annotations 값을
+          # 바꾼다(키는 남긴다 — kubectl.kubernetes.io/last-applied-configuration 어노테이션에는 값이 통째로 들어간다).
+          # Secret이 아닌 kind에 든 값(ConfigMap · ExternalSecret의 template.data 등)은 가리지 않는다
+          redact_expr='
+            ((.. | select(tag == "!!map" and .kind == "Secret" and has("data")) | .data | select(tag == "!!map") | .[]) = "Secret 객체 — 값 생략") |
+            ((.. | select(tag == "!!map" and .kind == "Secret" and has("stringData")) | .stringData | select(tag == "!!map") | .[]) = "Secret 객체 — 값 생략") |
+            ((.. | select(tag == "!!map" and .kind == "Secret" and has("data")) | .data | select(tag != "!!map" and tag != "!!null")) = "Secret 객체 — 값 생략") |
+            ((.. | select(tag == "!!map" and .kind == "Secret" and has("stringData")) | .stringData | select(tag != "!!map" and tag != "!!null")) = "Secret 객체 — 값 생략") |
+            ((.. | select(tag == "!!map" and .kind == "Secret" and has("metadata")) | .metadata | select(tag == "!!map" and has("annotations")) | .annotations | select(tag == "!!map") | .[]) = "Secret 객체 — 값 생략") |
+            ((.. | select(tag == "!!map" and .kind == "Secret" and has("metadata")) | .metadata | select(tag == "!!map" and has("annotations")) | .annotations | select(tag != "!!map" and tag != "!!null")) = "Secret 객체 — 값 생략")'
+          secret_expr='[.. | select(tag == "!!map" and .kind == "Secret" and (has("data") or has("stringData") or (((.metadata | tag) == "!!map") and (.metadata | has("annotations")))))] | length'
+          # 문서마다 한 줄(탭 구분): 식별자(base64 — apiVersion · kind · namespace · name) · 표시 조각 넷(apiVersion · kind ·
+          # namespace · name — 허용 글자만이면 "r:<글자>", 아니면 "b:<원래 바이트의 base64>") · 문서 JSON(base64) · map 여부.
+          # apiVersion이 식별자에 들어가므로 같은 kind/namespace/name에 apiVersion만 다른 두 객체는 따로 맞춘다
+          # (apiVersion이 바뀐 객체는 삭제 + 추가로 나온다)
+          obj_expr='
+            (tag == "!!map") as $m | ([.] | @json) as $j |
+            ((select($m) | .apiVersion | select(tag == "!!str")) // "") as $a |
+            ((select($m) | .kind | select(tag == "!!str")) // "") as $k |
+            ((select($m) | .metadata | select(tag == "!!map") | .namespace | select(tag == "!!str")) // "") as $ns |
+            ((select($m) | .metadata | select(tag == "!!map") | .name | select(tag == "!!str")) // "") as $n |
+            ([$a, $k, $ns, $n] | @json | @base64) + "\t" +
+            ([$a, $k, $ns, $n] | map((select(test("^[A-Za-z0-9_.:@+=,~/-]*$")) | "r:" + .) // ("b:" + @base64)) | join("\t")) + "\t" +
+            ($j | @base64) + "\t" + ($m | @json)'
+
+          # --- 도구: 스텝 2가 설치한 것으로 풀리는지(러너 이미지의 다른 yq 등이 먼저 잡히면 실패) ---
+          for t in kustomize helm yq; do
+            p=$(command -v "$t" || true)
+            if [[ $p != "$RUNNER_TEMP/bin/$t" ]]; then
+              printf '::error::%s → %s (기대 %s)\n' "$t" "${p:-없음}" "$RUNNER_TEMP/bin/$t"
+              exit 1
+            fi
+          done
+          # --- 두 쪽: main = 가져온 origin/main의 끝(PR이 말하는 base.sha가 아니다 — validate 스텝 2와 같은 기준) ---
+          if ! main_tip=$(git rev-parse --verify --quiet 'refs/remotes/origin/main^{commit}') || [[ ! $main_tip =~ $sha_re ]]; then
+            printf '::error::refs/remotes/origin/main 이 커밋으로 풀리지 않는다(fetch-depth: 0 필요)\n'
+            exit 1
+          fi
+          # PR = 체크아웃된 작업 공간(merge ref). PR head SHA는 머리에 적기만 한다
+          if ! pr_tree=$(git rev-parse --verify --quiet 'HEAD^{commit}') || [[ ! $pr_tree =~ $sha_re ]]; then
+            printf '::error::작업 공간의 HEAD가 커밋으로 풀리지 않는다\n'
+            exit 1
+          fi
+          if [[ ! $PR_HEAD_SHA =~ $sha_re ]]; then
+            printf '::error::PR_HEAD_SHA가 전체 커밋 ID가 아니다: %q\n' "$PR_HEAD_SHA"
+            exit 1
+          fi
+          out=$RUNNER_TEMP/render-diff            # 산출물(아티팩트): body.md · full.diff
+          work=$RUNNER_TEMP/render-work           # 중간 파일
+          main_root=$RUNNER_TEMP/main             # main 쪽 트리(git worktree)
+          summary=$RUNNER_TEMP/render-summary.md  # 스텝 5가 job 요약에 옮긴다
+          for p in "$out" "$work" "$main_root" "$summary"; do
+            if [[ -e $p || -L $p ]]; then
+              printf '::error::%s 이(가) 이미 있다\n' "$p"
+              exit 1
+            fi
+          done
+          mkdir -p "$out" "$work"
+          pr_root=$PWD
+          git worktree add --quiet --detach "$main_root" "$main_tip"
+
+          # ---------- 함수 ----------
+          # hexkey <글자> — 연관 배열의 첨자(PR이 고른 글자를 첨자로 쓰지 않는다)
+          hexkey() { printf '%s' "$1" | od -An -v -tx1 | tr -d ' \n'; }
+          # show <글자> [path] — SHOWN에 울타리 밖에 두는 이름. 허용 글자 밖의 바이트는 %XX로 바꾼다(백틱 · 개행 · < · > · & ·
+          # | · 따옴표 포함 — 인라인 코드 · 표 · HTML 어디에 두어도 해석되지 않는다). path면 / 를 남긴다
+          show() {
+            local LC_ALL=C s=$1 c i
+            SHOWN=''
+            for ((i = 0; i < ${#s}; i++)); do
+              c=${s:i:1}
+              case $c in
+                [A-Za-z0-9_.:@+=,~-]) SHOWN+=$c ;;
+                /) if [[ ${2:-} == path ]]; then SHOWN+=$c; else SHOWN+=%2F; fi ;;
+                *) printf -v c '%%%02X' "'$c"; SHOWN+=$c ;;
+              esac
+            done
+          }
+          # clean <입력> <출력> — 본문에 싣는 글자: 탭 · 개행 밖의 제어 문자(CR · ESC · NUL 포함)를 지우고 끝 개행을 맞춘다
+          clean() { LC_ALL=C tr -d '\000-\010\013-\037\177' < "$1" | LC_ALL=C awk 1 > "$2"; }
+          # fence <파일> — 파일 안의 가장 긴 백틱 연속보다 긴 울타리(최소 3개) — 내용의 어떤 줄도 울타리를 닫지 못한다
+          fence() {
+            local n
+            n=$({ LC_ALL=C grep -ao '`\+' -- "$1" || true; } | LC_ALL=C awk '{ if (length($0) > m) m = length($0) } END { print m + 0 }')
+            if (( n < 3 )); then n=2; fi
+            printf '%*s' "$((n + 1))" '' | tr ' ' '`'
+          }
+          # pm <diff 파일> — "더한 줄 수 뺀 줄 수". hunk 머리의 줄 수를 따라 센다(--- · +++ 머리 줄과 내용 줄을 헷갈리지 않는다)
+          pm() {
+            LC_ALL=C awk '
+              ro > 0 || rn > 0 {
+                c = substr($0, 1, 1)
+                if (c == " ") { ro--; rn-- } else if (c == "-") { ro--; r++ } else if (c == "+") { rn--; a++ }
+                next
+              }
+              /^@@ -[0-9]/ {
+                split(substr($2, 2), o, ","); split(substr($3, 2), n, ",")
+                ro = (2 in o) ? o[2] + 0 : 1; rn = (2 in n) ? n[2] + 0 : 1
+              }
+              END { printf "%d %d\n", a, r }' "$1"
+          }
+          # render_k <루트> <디렉터리> <출력> <오류> — kustomize build --enable-helm(한 디렉터리에 60초 한도 — job의
+          # timeout-minutes와 맞춘 값이다)
+          render_k() {
+            local rc=0
+            (cd "$1" && timeout -k 10 60 kustomize build --enable-helm "./$2") > "$3" 2> "$4" || rc=$?
+            if (( rc == 124 || rc == 137 )); then printf '\n(60초 한도에서 멈췄다)\n' >> "$4"; fi
+            return "$rc"
+          }
+          # stage_d <루트> <경로> <스테이징> — directory source가 읽는 파일(바로 아래의 *.yaml · *.yml · *.json)을 옮겨 둔다.
+          # 경로를 실제 경로(realpath)로 풀어 루트(같이 푼 값) 아래가 아니면 읽지 않는다 — 경로 중간의 심볼릭 링크로 저장소 밖을
+          # 읽지 않게 한다. 디렉터리 안의 심볼릭 링크 파일은 따라가지 않고 링크라는 사실만 남긴다.
+          # 반환: 0 있음 · 3 경로 없음 · 4 디렉터리가 아님(경로 끝이 심볼릭 링크 포함) 또는 루트 밖으로 풀림 · 5 옮기기 실패
+          stage_d() {
+            local f rr rd
+            mkdir -p "$3" || return 5
+            if [[ ! -e $1/$2 && ! -L $1/$2 ]]; then return 3; fi
+            if [[ -L $1/$2 || ! -d $1/$2 ]]; then return 4; fi
+            # 끝의 x: 명령 치환이 경로 끝의 개행을 떼지 않게 한다(realpath가 붙인 개행 하나만 뗀다) · 오류 출력에는 경로가 찍히므로 버린다
+            rr=$(realpath -e -- "$1" 2> /dev/null && printf x) && rd=$(realpath -e -- "$1/$2" 2> /dev/null && printf x) || return 4
+            rr=${rr%$'\n'x}; rd=${rd%$'\n'x}
+            if [[ -z $rr || -z $rd ]] || [[ $rd != "$rr" && $rd != "$rr"/* ]]; then return 4; fi
+            find "$rd/" -mindepth 1 -maxdepth 1 \( -type f -o -type l \) \( -name '*.yaml' -o -name '*.yml' -o -name '*.json' \) \
+              -print0 > "$3.ls" || return 5
+            while IFS= read -r -d '' f; do
+              if [[ -L $f ]]; then
+                show "$(readlink -- "$f")" path
+                printf '# (심볼릭 링크 — 따라가지 않는다) → %s\n' "$SHOWN" > "$3/${f##*/}" || return 5
+              else
+                cp -- "$f" "$3/${f##*/}" || return 5
+              fi
+            done < "$3.ls"
+          }
+          # cat_d <스테이징> — 파일 이름 순으로 이어 붙인다(파일마다 문서 구분자와 이름 주석)
+          cat_d() {
+            local f
+            find "$1" -mindepth 1 -maxdepth 1 -type f -print0 | LC_ALL=C sort -z > "$1.sorted"
+            while IFS= read -r -d '' f; do
+              show "${f##*/}"
+              printf -- '---\n# 파일: %s\n' "$SHOWN"
+              cat -- "$f"
+              printf '\n'
+            done < "$1.sorted"
+          }
+          # dsrc <루트> <경로> <접두(단위 파일의 쪽 — u<번호>.m · u<번호>.p)> — 한 쪽을 directory source로 읽는다:
+          # <접두>.dir에 옮기고 <접두>.raw에 이어 붙인다. DS에 ok · none(경로 없음) · fail(<접두>.err에 까닭)
+          dsrc() {
+            local rc=0
+            stage_d "$1" "$2" "$3.dir" || rc=$?
+            case $rc in
+              0) DS=ok; cat_d "$3.dir" > "$3.raw" ;;
+              3) DS=none ;;
+              4) DS=fail; printf '경로가 디렉터리가 아니거나 저장소 루트 밖으로 풀린다(경로의 심볼릭 링크 포함) — 읽지 않았다\n' > "$3.err" ;;
+              *) DS=fail; printf '파일을 옮기지 못했다\n' > "$3.err" ;;
+            esac
+          }
+          # diff_d <main 스테이징> <PR 스테이징> <표시 경로> — 파일마다 unified diff(diff -ruN과 같다 — 없는 쪽은 빈 파일)
+          diff_d() {
+            local name mf pf rc
+            { (cd "$1" && find . -mindepth 1 -maxdepth 1 -type f -printf '%f\0')
+              (cd "$2" && find . -mindepth 1 -maxdepth 1 -type f -printf '%f\0'); } | LC_ALL=C sort -zu > "$1.names" || return 2
+            while IFS= read -r -d '' name; do
+              show "$name"
+              mf=$1/$name; pf=$2/$name
+              if [[ ! -f $mf ]]; then mf=/dev/null; fi
+              if [[ ! -f $pf ]]; then pf=/dev/null; fi
+              rc=0
+              diff -u --label "main/$3/$SHOWN" --label "pr/$3/$SHOWN" -- "$mf" "$pf" || rc=$?
+              if (( rc > 1 )); then return 2; fi
+            done < "$1.names"
+          }
+          # list_kust <루트> <출력> — kustomization 디렉터리(NUL 구분). tests/validate.sh의 열거와 같은 규칙:
+          # kustomization.yaml · kustomization.yml · Kustomization, 루트의 tests/ · .git/ · 경로에 /charts/가 든 곳 제외
+          list_kust() {
+            (cd "$1" && find . -type f \( -name kustomization.yaml -o -name kustomization.yml -o -name Kustomization \) \
+              -not -path '*/.git/*' -not -path './tests/*' -not -path '*/charts/*' -print0) > "$2"
+          }
+          # app_paths <루트> <출력> — Application(clusters/**/apps/*.yaml · bootstrap/root-app.yaml)의 spec.source.path(NUL 구분)
+          app_paths() {
+            local f p
+            : > "$2"
+            (
+              cd "$1"
+              if [[ -d clusters ]]; then find clusters -type f -name '*.yaml' -print0; fi
+              if [[ -f bootstrap/root-app.yaml ]]; then printf 'bootstrap/root-app.yaml\0'; fi
+            ) > "$work/apps.ls"
+            while IFS= read -r -d '' f; do
+              if [[ $f != bootstrap/root-app.yaml && ${f%/*} != */apps ]]; then continue; fi
+              if ! yq -N 'select(tag == "!!map" and .kind == "Application") | .spec.source.path | select(tag == "!!str") | @base64' \
+                "$1/$f" > "$work/apps.out" 2> /dev/null; then
+                show "$f" path
+                printf '::warning::%s: YAML을 읽지 못해 source.path를 건너뛴다\n' "$SHOWN"
+                continue
+              fi
+              while IFS= read -r p; do
+                if [[ -n $p ]]; then { printf '%s' "$p" | base64 -d; printf '\0'; } >> "$2"; fi
+              done < "$work/apps.out"
+            done < "$work/apps.ls"
+          }
+          # norm_path <경로> — NORM에 앞의 ./ 와 끝의 / 를 뗀 경로. 절대 경로 · 빈 조각 · . · .. 조각이면 1
+          norm_path() {
+            local p=$1
+            if [[ $p == /* ]]; then return 1; fi
+            while [[ $p == ./* ]]; do p=${p#./}; done
+            while [[ $p == */ ]]; do p=${p%/}; done
+            if [[ -z $p || $p == . ]]; then NORM=.; return 0; fi
+            case /$p/ in
+              *//* | */./* | */../*) return 1 ;;
+            esac
+            NORM=$p
+          }
+          # load_objs <objs 파일> <OM · OP · DM · DP> — 키(식별자 base64 + #순번) → 문서 JSON(base64).
+          # 표시 조각은 OAV · OKIND · ONS · ONAME · OMAP
+          load_objs() {
+            local id aj kj nj mj jb ism key n
+            local -A seen=()
+            while IFS=$'\t' read -r id aj kj nj mj jb ism; do
+              if [[ -z $id || $jb == "$nulldoc" ]]; then continue; fi
+              if [[ $ism != true ]]; then id=-; fi
+              n=$(( ${seen[$id]:-0} + 1 )); seen[$id]=$n
+              key="$id#$n"
+              case $2 in
+                OM) OM[$key]=$jb ;;
+                OP) OP[$key]=$jb ;;
+                DM) DM[$key]=$jb ;;
+                DP) DP[$key]=$jb ;;
+              esac
+              if [[ -z ${OMAP[$key]+x} ]]; then OAV[$key]=$aj; OKIND[$key]=$kj; ONS[$key]=$nj; ONAME[$key]=$mj; OMAP[$key]=$ism; fi
+            done < "$1"
+          }
+          # dfield <조각> — FIELD에 표시 조각의 원래 글자("r:<글자>"는 그대로 · "b:<base64>"는 풀어서 — 끝의 개행도 지킨다).
+          # 풀린 글자는 show를 거쳐서만 싣는다(허용 글자 밖의 바이트는 %XX — 개행은 %0A)
+          dfield() {
+            case $1 in
+              r:*) FIELD=${1#r:} ;;
+              b:*) { FIELD=$(printf '%s' "${1#b:}" | base64 -d 2> /dev/null; printf x); } 2> /dev/null; FIELD=${FIELD%x} ;;
+              *) FIELD='' ;;
+            esac
+          }
+          # disp <키> — DISP에 표시 이름(`kind/namespace/name` (`apiVersion`) 인라인 코드 — show로 바꿔 쓴 글자만).
+          # map이 아닌 문서는 고정 문구
+          disp() {
+            local n=${1##*#} av kd ns nm x
+            if [[ ${OMAP[$1]} != true ]]; then DISP="(map이 아닌 문서 · ${n}번째)"; return 0; fi
+            dfield "${OAV[$1]}"; av=$FIELD
+            dfield "${OKIND[$1]}"; kd=$FIELD
+            dfield "${ONS[$1]}"; ns=$FIELD
+            dfield "${ONAME[$1]}"; nm=$FIELD
+            show "$kd"; x=${SHOWN:-?}
+            if [[ -n $ns ]]; then show "$ns"; x+=/$SHOWN; fi
+            show "$nm"; x+=/${SHOWN:-?}
+            if (( n > 1 )); then x+="#$n"; fi
+            show "$av" path
+            DISP="\`$x\` (\`${SHOWN:-?}\`)"
+          }
+          # note <키> [chg] — NOTE에 Secret 알림. 변경이고 값을 가린 뒤가 같으면 값만 바뀐 것이다
+          note() {
+            NOTE=''
+            if [[ ${OKIND[$1]} != 'r:Secret' ]]; then return 0; fi
+            NOTE=' — Secret(값은 싣지 않는다)'
+            if [[ ${2:-} == chg && -n ${DM[$1]+x} && -n ${DP[$1]+x} && ${DM[$1]} == "${DP[$1]}" ]]; then
+              NOTE=' — Secret: 값만 바뀌었다(값은 싣지 않는다)'
+            fi
+          }
+          # fail_md <쪽> <오류 파일> <출력(덧붙임)> — 오류 앞 5줄(한 줄 400바이트까지)을 울타리 안에
+          fail_md() {
+            local fz
+            { head -n 5 -- "$2" || true; } | LC_ALL=C cut -b 1-400 > "$work/fail.1"
+            clean "$work/fail.1" "$work/fail.2"
+            if [[ ! -s $work/fail.2 ]]; then printf '(오류 출력 없음)\n' > "$work/fail.2"; fi
+            fz=$(fence "$work/fail.2")
+            { printf '\n%s 렌더 실패 — 오류 앞 5줄:\n\n%s\n' "$1" "$fz"; cat -- "$work/fail.2"; printf '%s\n' "$fz"; } >> "$3"
+          }
+
+          # ---------- 대상: 두 쪽 kustomization 디렉터리의 합집합 + directory source 경로 ----------
+          list_kust "$main_root" "$work/kust.m"
+          list_kust "$pr_root" "$work/kust.p"
+          # KM · KP: 그 쪽에 kustomization이 있다 · UT: 종류(k · d) · UN: 이름 · AP: 두 쪽 Application의 source.path다
+          declare -A KM=() KP=() UT=() UN=() AP=()
+          while IFS= read -r -d '' f; do
+            d=${f%/*}; d=${d#./}; k=$(hexkey "$d"); KM[$k]=1; UT[$k]=k; UN[$k]=$d
+          done < "$work/kust.m"
+          while IFS= read -r -d '' f; do
+            d=${f%/*}; d=${d#./}; k=$(hexkey "$d"); KP[$k]=1; UT[$k]=k; UN[$k]=$d
+          done < "$work/kust.p"
+          # directory source: 두 쪽 Application의 source.path 중 어느 쪽에도 kustomization이 없는 경로.
+          # 한쪽에만 kustomization이 있는 source.path는 kustomization 단위로 두되 없는 쪽을 directory source로 읽는다(아래 dsrc)
+          n_bad=0
+          for r in "$main_root" "$pr_root"; do
+            app_paths "$r" "$work/paths"
+            while IFS= read -r -d '' p; do
+              if ! norm_path "$p"; then n_bad=$((n_bad + 1)); continue; fi
+              k=$(hexkey "$NORM")
+              AP[$k]=1
+              if [[ -z ${UT[$k]:-} ]]; then UT[$k]=d; UN[$k]=$NORM; fi
+            done < "$work/paths"
+          done
+          for k in "${!UT[@]}"; do printf '%s\0' "${UN[$k]}"; done | LC_ALL=C sort -z > "$work/units"
+          mapfile -d '' -t UNITS < "$work/units"
+
+          # ---------- 단위마다: 렌더 → 비교 ----------
+          declare -a U_ROW=() U_SUM=() U_TITLE=() U_ND=() U_FM=() U_FP=()
+          declare -A OM=() OP=() DM=() DP=() OAV=() OKIND=() ONS=() ONAME=() OMAP=()
+          listed=()
+          n_k=0 n_d=0 n_changed=0 n_failed=0 n_missing=0
+          for i in "${!UNITS[@]}"; do
+            u=${UNITS[i]}
+            k=$(hexkey "$u")
+            t=${UT[$k]}
+            f=$work/u$i
+            sm=none sp=none xm='' xp=''   # xm · xp: kustomization 단위인데 그 쪽을 directory source로 읽었다(d)
+            : > "$f.m.raw"; : > "$f.p.raw"; : > "$f.m.err"; : > "$f.p.err"
+            if [[ $t == k ]]; then
+              n_k=$((n_k + 1))
+              # 한쪽에만 kustomization이 있고 Application의 source.path인 경로(directory source ↔ kustomization 전환)는
+              # 없는 쪽을 directory source로 읽어 비교한다 — 빈 렌더와 비교하면 실제 변경이 "새 디렉터리"로 가려진다
+              if [[ -n ${KM[$k]:-} ]]; then sm=ok; render_k "$main_root" "$u" "$f.m.raw" "$f.m.err" || sm=fail
+              elif [[ -n ${AP[$k]:-} ]]; then dsrc "$main_root" "$u" "$f.m"; sm=$DS; if [[ $sm != none ]]; then xm=d; fi
+              fi
+              if [[ -n ${KP[$k]:-} ]]; then sp=ok; render_k "$pr_root" "$u" "$f.p.raw" "$f.p.err" || sp=fail
+              elif [[ -n ${AP[$k]:-} ]]; then dsrc "$pr_root" "$u" "$f.p"; sp=$DS; if [[ $sp != none ]]; then xp=d; fi
+              fi
+            else
+              n_d=$((n_d + 1))
+              dsrc "$main_root" "$u" "$f.m"; sm=$DS
+              dsrc "$pr_root" "$u" "$f.p"; sp=$DS
+            fi
+            failed=0 changed=0 missing=0
+            if [[ $sm == fail || $sp == fail ]]; then failed=1; n_failed=$((n_failed + 1)); fi
+            if [[ $sm != "$sp" ]] || { [[ $sm == ok ]] && ! cmp -s -- "$f.m.raw" "$f.p.raw"; }; then
+              changed=1; n_changed=$((n_changed + 1))
+            fi
+            # 두 쪽 어디에도 없는 source.path(directory source 단위만 이렇게 된다) — 표에 싣는다(대상 수와 표가 맞게)
+            if [[ $sm == none && $sp == none ]]; then missing=1; n_missing=$((n_missing + 1)); fi
+            if (( !changed && !failed && !missing )); then continue; fi
+            listed+=("$i")
+            case $sm/$sp in
+              ok/ok) st='정상' ;;
+              none/ok) st='정상 · 새 디렉터리' ;;
+              ok/none) st='정상 · 디렉터리 삭제' ;;
+              fail/fail) st='양쪽 실패' ;;
+              fail/*) st='main 쪽 실패' ;;
+              */fail) st='PR 쪽 실패' ;;
+              none/none) st='경로 없음(양쪽)' ;;
+            esac
+            if [[ $t == d ]]; then tl=' (directory source)'
+            elif [[ $xm == d ]]; then tl=' (directory source → kustomization)'
+            elif [[ $xp == d ]]; then tl=' (kustomization → directory source)'
+            else tl=''
+            fi
+            show "$u" path; us=$SHOWN
+            a='—' r='—' c='—' plus='—' minus='—' nd=0
+            : > "$f.diff"; : > "$f.objs.head"; : > "$f.objs.md"; : > "$f.fail.md"
+            if (( failed )); then
+              printf '렌더에 실패해 객체와 diff를 비교하지 않았다.\n' > "$f.objs.head"
+              if [[ $sm == fail ]]; then fail_md 'main 쪽' "$f.m.err" "$f.fail.md"; fi
+              if [[ $sp == fail ]]; then fail_md 'PR 쪽' "$f.p.err" "$f.fail.md"; fi
+            elif (( missing )); then
+              printf 'Application의 `source.path`가 가리키는 이 경로가 두 쪽 어디에도 없다 — 비교할 것이 없다(Argo CD는 없는 경로를 가리키는 Application을 동기화하지 못한다).\n' > "$f.objs.head"
+            else
+              # Secret 값을 가려야 하는가: 어느 쪽이든 data · stringData · 어노테이션이 있는 Secret(YAML을 읽지 못하면 "Secret" 글자로 판단)
+              need=0
+              for s in m p; do
+                if sc=$(yq -N "$secret_expr" "$f.$s.raw" 2> /dev/null); then
+                  sc=$(printf '%s\n' "$sc" | awk '{ s += $1 } END { print s + 0 }')
+                  if (( sc > 0 )); then need=1; fi
+                elif LC_ALL=C grep -aq Secret -- "$f.$s.raw"; then
+                  need=1
+                fi
+              done
+              if (( need )); then
+                # 두 쪽을 같은 방식으로 다시 쓴 뒤 비교한다(빈 렌더는 빈 채로) — 한쪽이라도 못 읽으면 diff를 싣지 않는다.
+                # 가림 뒤의 diff는 yq가 다시 쓴 사본끼리의 diff다(원문과 서식 · 따옴표 · 들여쓰기가 다를 수 있다)
+                for s in m p; do
+                  if [[ ! -s $f.$s.raw ]]; then
+                    : > "$f.$s.red"
+                  elif ! yq "$redact_expr" "$f.$s.raw" > "$f.$s.red" 2> /dev/null; then
+                    nd=1
+                  fi
+                done
+                if (( !nd )); then
+                  rc=0; diff -u --label "main/$us" --label "pr/$us" -- "$f.m.red" "$f.p.red" > "$f.diff" || rc=$?
+                  if (( rc > 1 )); then nd=2; fi
+                fi
+              elif [[ $t == k ]]; then
+                rc=0; diff -u --label "main/$us" --label "pr/$us" -- "$f.m.raw" "$f.p.raw" > "$f.diff" || rc=$?
+                if (( rc > 1 )); then nd=2; fi
+              else
+                diff_d "$f.m.dir" "$f.p.dir" "$us" > "$f.diff" || nd=2
+              fi
+              # diff를 싣지 못했으면 줄 수도 모른다(—) — 빈 diff의 +0/−0으로 적지 않는다
+              if (( nd )); then
+                : > "$f.diff"
+              else
+                pmo=$(pm "$f.diff"); plus=${pmo% *}; minus=${pmo#* }
+              fi
+              # 객체 단위 비교(apiVersion · kind/namespace/name — 같은 식별자가 여럿이면 나온 순서로 #2 · #3). 비교는 가리기 전의
+              # 문서로 한다
+              OM=(); OP=(); DM=(); DP=(); OAV=(); OKIND=(); ONS=(); ONAME=(); OMAP=()
+              if yq -N "$obj_expr" "$f.m.raw" > "$f.m.obj" 2> /dev/null && yq -N "$obj_expr" "$f.p.raw" > "$f.p.obj" 2> /dev/null; then
+                load_objs "$f.m.obj" OM
+                load_objs "$f.p.obj" OP
+                if (( need && !nd )) && yq -N "$obj_expr" "$f.m.red" > "$f.m.robj" 2> /dev/null \
+                  && yq -N "$obj_expr" "$f.p.red" > "$f.p.robj" 2> /dev/null; then
+                  load_objs "$f.m.robj" DM
+                  load_objs "$f.p.robj" DP
+                fi
+                : > "$f.l.add"; : > "$f.l.del"; : > "$f.l.chg"
+                for key in "${!OP[@]}"; do
+                  if [[ -z ${OM[$key]+x} ]]; then
+                    disp "$key"; note "$key"; printf -- '- 추가 %s%s\n' "$DISP" "$NOTE" >> "$f.l.add"
+                  elif [[ ${OM[$key]} != "${OP[$key]}" ]]; then
+                    disp "$key"; note "$key" chg; printf -- '- 변경 %s%s\n' "$DISP" "$NOTE" >> "$f.l.chg"
+                  fi
+                done
+                for key in "${!OM[@]}"; do
+                  if [[ -z ${OP[$key]+x} ]]; then
+                    disp "$key"; note "$key"; printf -- '- 삭제 %s%s\n' "$DISP" "$NOTE" >> "$f.l.del"
+                  fi
+                done
+                a=$(wc -l < "$f.l.add"); r=$(wc -l < "$f.l.del"); c=$(wc -l < "$f.l.chg")
+                { LC_ALL=C sort -- "$f.l.add"; LC_ALL=C sort -- "$f.l.del"; LC_ALL=C sort -- "$f.l.chg"; } > "$f.objs.md"
+                if (( a + r + c > 0 )); then
+                  printf '바뀐 객체 — 추가 %d · 삭제 %d · 변경 %d:\n\n' "$a" "$r" "$c" > "$f.objs.head"
+                else
+                  printf '객체 단위로는 같다 — 문서 순서나 서식만 다르다.\n' > "$f.objs.head"
+                fi
+              else
+                a='?' r='?' c='?'
+                if (( nd )); then
+                  printf '객체 목록을 만들지 못했다(YAML을 읽지 못했다).\n' > "$f.objs.head"
+                else
+                  printf '객체 목록을 만들지 못했다(YAML을 읽지 못했다) — diff만 싣는다.\n' > "$f.objs.head"
+                fi
+              fi
+            fi
+            # diff 블록: 울타리는 내용의 가장 긴 백틱 연속보다 길다
+            if (( nd == 1 )); then
+              printf '\nSecret이 들어 있는데 YAML을 읽지 못해 값을 가릴 수 없다 — diff를 싣지 않는다(전문에도 없다).\n' > "$f.diff.md"
+            elif (( nd == 2 )); then
+              printf '\ndiff를 만들지 못했다(diff 오류).\n' > "$f.diff.md"
+            elif [[ -s $f.diff ]]; then
+              clean "$f.diff" "$f.diff.clean"
+              fz=$(fence "$f.diff.clean")
+              { printf '\n%sdiff\n' "$fz"; cat -- "$f.diff.clean"; printf '%s\n' "$fz"; } > "$f.diff.md"
+            else
+              : > "$f.diff.md"
+            fi
+            if [[ $plus == — ]]; then dl='—'; else dl="+$plus/−$minus"; fi
+            U_ROW[i]="| \`$us\`$tl | $a | $r | $c | $dl | $st |"
+            if (( failed || missing )); then cnt=''; else cnt=" · 추가 $a · 삭제 $r · 변경 $c · $dl"; fi
+            U_SUM[i]="<code>$us</code>$tl — $st$cnt"
+            U_TITLE[i]="$us$tl — $st$cnt"
+            U_ND[i]=$nd; U_FM[i]=$sm; U_FP[i]=$sp
+          done
+
+          # ---------- 본문(body.md): 머리 · 요약 표 · 디렉터리별 <details> ----------
+          run_url=''
+          if [[ ${GITHUB_SERVER_URL:-} =~ ^https://[A-Za-z0-9.-]+$ && ${GITHUB_REPOSITORY:-} =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ \
+            && ${GITHUB_RUN_ID:-} =~ ^[0-9]+$ ]]; then
+            run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          fi
+          {
+            printf '%s\n### 렌더링 diff — main ↔ 이 PR\n\n' "$marker"
+            printf -- '- 비교: main %s (가져온 origin/main의 끝) ↔ PR head %s (렌더한 트리: merge ref %s)' \
+              "${main_tip:0:7}" "${PR_HEAD_SHA:0:7}" "${pr_tree:0:7}"
+            if [[ -n $run_url ]]; then printf ' · [실행 기록 · 아티팩트](%s)' "$run_url"; fi
+            printf '\n- 대상 디렉터리 %d개(kustomization %d · directory source %d) · 바뀐 디렉터리 %d개 · 렌더 실패 %d개' \
+              "${#UNITS[@]}" "$n_k" "$n_d" "$n_changed" "$n_failed"
+            if (( n_missing > 0 )); then printf ' · 경로 없음(양쪽) %d개' "$n_missing"; fi
+            printf '\n'
+            if (( n_bad > 0 )); then
+              printf -- '- directory source로 볼 수 없는 source.path %d개(절대 경로 · 빈 조각 · . · .. 조각)는 건너뛰었다\n' "$n_bad"
+            fi
+            printf -- '- `kustomize build --enable-helm` 결과의 비교다(Argo CD가 적용한 결과가 아니다). Secret의 `data` · `stringData` · 어노테이션 값은 싣지 않는다.\n'
+          } > "$work/head.md"
+          {
+            printf '\n| 디렉터리 | 추가 | 삭제 | 변경 | diff 줄 수(+/−) | 렌더 상태 |\n|---|---:|---:|---:|---:|---|\n'
+            for i in "${listed[@]}"; do printf '%s\n' "${U_ROW[i]}"; done
+          } > "$work/table.md"
+          # unit_md <번호> <모드> [목록 한도] — 디렉터리 하나의 <details>
+          unit_md() {
+            local i=$1 f=$work/u$1 total
+            printf '\n<details><summary>%s</summary>\n\n' "${U_SUM[i]}"
+            cat -- "$f.objs.head"
+            if [[ $2 == trunc ]]; then
+              total=$(wc -l < "$f.objs.md")
+              head -n "$3" -- "$f.objs.md"
+              if (( total > $3 )); then
+                printf -- '- … %d개 중 앞의 %d개만 싣는다(전체는 아티팩트 `render-diff`의 `full.diff`)\n' "$total" "$3"
+              fi
+            else
+              cat -- "$f.objs.md"
+            fi
+            cat -- "$f.fail.md"
+            if [[ $2 == full ]]; then cat -- "$f.diff.md"; fi
+            printf '\n</details>\n'
+          }
+          # build_body <모드: full · summary · trunc · table> [목록 한도] — 한도를 넘으면 더 짧은 모드로 다시 만든다(조용히 자르지 않는다)
+          build_body() {
+            local i
+            {
+              cat -- "$work/head.md"
+              if (( ${#listed[@]} == 0 )); then
+                printf '\n렌더 변경 없음\n'
+              else
+                cat -- "$work/table.md"
+                case $1 in
+                  summary) printf '\n**본문이 %d바이트를 넘어 디렉터리별 diff 전문을 뺐다** — 전문은 이 실행의 아티팩트 `render-diff`(`full.diff`)에 있다.\n' "$limit" ;;
+                  trunc) printf '\n**본문이 %d바이트를 넘어 디렉터리별 diff 전문을 빼고, 바뀐 객체 목록도 디렉터리마다 앞의 %d개로 잘랐다** — 전문은 이 실행의 아티팩트 `render-diff`(`full.diff`)에 있다.\n' "$limit" "$2" ;;
+                  table) printf '\n**본문이 %d바이트를 넘어 디렉터리별 diff 전문과 객체 목록을 뺐다** — 전문은 이 실행의 아티팩트 `render-diff`(`full.diff`)에 있다.\n' "$limit" ;;
+                esac
+                if [[ $1 != table ]]; then
+                  for i in "${listed[@]}"; do unit_md "$i" "$1" "${2:-0}"; done
+                fi
+              fi
+            } > "$work/body.try"
+          }
+          fits() { (( $(wc -c < "$work/body.try") <= limit )); }
+          mode=full
+          build_body full
+          if ! fits; then mode=summary; build_body summary; fi
+          if ! fits; then
+            for n in 1000 500 200 100 50 20 10 5 2 1 0; do
+              mode="trunc $n"; build_body trunc "$n"
+              if fits; then break; fi
+            done
+          fi
+          if ! fits; then mode=table; build_body table; fi
+          if ! fits; then
+            mode=header-only
+            { cat -- "$work/head.md"
+              printf '\n**요약 표도 본문 한도(%d바이트)를 넘는다** — 전부 이 실행의 아티팩트 `render-diff`(`full.diff`)에 있다.\n' "$limit"
+            } > "$work/body.try"
+          fi
+          if ! fits; then
+            printf '::error::본문을 %d바이트 안으로 줄이지 못했다\n' "$limit"
+            exit 1
+          fi
+          cp -- "$work/body.try" "$out/body.md"
+
+          # ---------- 전문(full.diff) · job 요약 ----------
+          {
+            if (( ${#listed[@]} == 0 )); then printf '# 렌더 변경 없음\n'; fi
+            for i in "${listed[@]}"; do
+              f=$work/u$i
+              printf '# ===== %s =====\n' "${U_TITLE[i]}"
+              sed 's/^/# /' "$f.objs.head" "$f.objs.md"
+              for s in m p; do
+                if [[ $s == m ]]; then ss=${U_FM[i]} lb='main 쪽'; else ss=${U_FP[i]} lb='PR 쪽'; fi
+                if [[ $ss == fail ]]; then
+                  printf '# %s 렌더 실패 — 오류 앞 50줄:\n' "$lb"
+                  head -n 50 -- "$f.$s.err" | sed 's/^/#   /'
+                fi
+              done
+              case ${U_ND[i]} in
+                1) printf '# diff를 싣지 않았다 — Secret이 들어 있는데 YAML을 읽지 못해 값을 가릴 수 없다\n' ;;
+                2) printf '# diff를 만들지 못했다(diff 오류)\n' ;;
+                *) cat -- "$f.diff" ;;
+              esac
+            done
+          } > "$out/full.diff"
+          {
+            cat -- "$work/head.md"
+            if (( ${#listed[@]} == 0 )); then printf '\n렌더 변경 없음\n'; else cat -- "$work/table.md"; fi
+          } > "$summary"
+          printf '본문 %d바이트(%s) · 전문 %d바이트 · 대상 %d · 바뀜 %d · 렌더 실패 %d · 경로 없음 %d\n' \
+            "$(wc -c < "$out/body.md")" "$mode" "$(wc -c < "$out/full.diff")" "${#UNITS[@]}" "$n_changed" "$n_failed" "$n_missing"
+          # 렌더 실패는 이 스텝을 실패시키지 않는다 — 대신 경고 주석으로 드러낸다(숫자만 — PR이 고른 글자는 싣지 않는다)
+          if (( n_failed > 0 )); then
+            printf '::warning::렌더 실패 %d개 — 코멘트 본문의 요약 표를 본다(판정은 validate의 검사 1)\n' "$n_failed"
+          fi
+
+      - name: "4 아티팩트 올리기 — render-diff(body.md · full.diff)"
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: render-diff
+          path: |
+            ${{ runner.temp }}/render-diff/body.md
+            ${{ runner.temp }}/render-diff/full.diff
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: "5 job 요약 — 본문의 요약 부분(포크 PR은 본문 전체)"
+        if: ${{ !cancelled() && steps.render.outcome == 'success' }}
+        env:
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.repository }}
+        run: |
+          # shellcheck disable=SC2016 # 작은따옴표 안의 백틱은 글자 그대로 쓴다(마크다운)
+          set -euo pipefail
+          step='5 job 요약'
+          t0=$(date -u +%s)
+          on_exit() {
+            local rc=$? t1
+            t1=$(date -u +%s)
+            printf -- '- **%s** · 시작 %s · 종료 %s · %d초 · exit %d\n' "$step" \
+              "$(date -u -d "@$t0" +%FT%TZ)" "$(date -u -d "@$t1" +%FT%TZ)" "$((t1 - t0))" "$rc" >> "$GITHUB_STEP_SUMMARY" || true
+            exit "$rc"
+          }
+          trap on_exit EXIT
+
+          # 포크 PR은 render-comment가 돌지 않는다(토큰이 읽기 전용) — 같은 내용을 여기에 남긴다(head repo가 비어도 포크로 본다)
+          if [[ $HEAD_REPO != "$BASE_REPO" ]]; then
+            {
+              printf '\n포크에서 온 PR이다 — 코멘트를 달 수 없으므로 본문 전체를 여기에 남긴다.\n\n'
+              cat -- "$RUNNER_TEMP/render-diff/body.md"
+              printf '\n\n' # 본문 끝의 </details> 뒤에 빈 줄 — 뒤 줄이 HTML 블록에 붙지 않게
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              cat -- "$RUNNER_TEMP/render-summary.md"
+              printf '\n본문 전체는 PR 코멘트(job render-comment)와 이 실행의 아티팩트 `render-diff`에 있다.\n\n'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  render-comment:
+    # 렌더링 diff 2/2 — render-diff가 만든 본문으로 PR 코멘트 하나를 갱신한다. 체크아웃하지 않고 PR의 내용을 처리하지 않는다.
+    # 같은 저장소 브랜치의 PR만(포크 PR은 토큰이 읽기 전용 — render-diff가 job 요약에 남긴다). required check가 아니다
+    needs: render-diff
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    defaults:
+      run:
+        shell: bash # = bash --noprofile --norc -eo pipefail {0}
+    steps:
+      - name: "1 아티팩트 받기 — render-diff"
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: render-diff
+          path: ${{ runner.temp }}/render-diff
+
+      - name: "2 코멘트 달기 — github-actions[bot]의 표식 코멘트 하나를 갱신(없으면 작성)"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} # 이 스텝에만 둔다
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          step='2 코멘트 달기'
+          t0=$(date -u +%s)
+          on_exit() {
+            local rc=$? t1
+            t1=$(date -u +%s)
+            printf -- '- **%s** · 시작 %s · 종료 %s · %d초 · exit %d\n' "$step" \
+              "$(date -u -d "@$t0" +%FT%TZ)" "$(date -u -d "@$t1" +%FT%TZ)" "$((t1 - t0))" "$rc" >> "$GITHUB_STEP_SUMMARY" || true
+            exit "$rc"
+          }
+          trap on_exit EXIT
+
+          marker='<!-- render-diff:validate -->'
+          body=$RUNNER_TEMP/render-diff/body.md
+          payload=$RUNNER_TEMP/render-comment.json
+          # --- 입력: PR 번호 · 저장소 이름(env) ---
+          if [[ ! $PR_NUMBER =~ ^[1-9][0-9]{0,9}$ ]]; then
+            printf '::error::PR 번호가 숫자가 아니다: %q\n' "$PR_NUMBER"
+            exit 1
+          fi
+          if [[ ! $REPO =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+            printf '::error::저장소 이름의 형식이 틀렸다: %q\n' "$REPO"
+            exit 1
+          fi
+          # --- 받은 본문을 믿지 않는다: 일반 파일(심볼릭 링크 아님) · 1–65000바이트 · 첫 줄이 표식 ---
+          if [[ -L $body || ! -f $body ]]; then
+            printf '::error::%s 이(가) 일반 파일이 아니다(없음 · 심볼릭 링크 포함) — 코멘트를 달지 않는다\n' "$body"
+            exit 1
+          fi
+          size=$(wc -c < "$body")
+          if (( size == 0 || size > 65000 )); then
+            printf '::error::본문이 %d바이트다(1–65000바이트만 받는다) — 코멘트를 달지 않는다\n' "$size"
+            exit 1
+          fi
+          first=''
+          IFS= read -r first < "$body" || true
+          if [[ $first != "$marker" ]]; then
+            printf '::error::본문의 첫 줄이 표식 %s 이(가) 아니다 — 코멘트를 달지 않는다\n' "$marker"
+            exit 1
+          fi
+          for t in gh jq; do
+            if ! command -v "$t" > /dev/null; then
+              printf '::error::%s 이(가) 러너에 없다\n' "$t"
+              exit 1
+            fi
+          done
+          # 본문은 셸을 거치지 않는다 — 파일에서 JSON을 만들어 --input으로 보낸다(명령줄 인자 · -f body=… 로 넘기지 않는다)
+          jq -n --rawfile body "$body" '{body: $body}' > "$payload"
+
+          # --- 기존 코멘트: 작성자가 github-actions[bot]이고 본문이 표식으로 시작하는 것(페이지 넘김 포함 · 가장 오래된 것부터) ---
+          list=$(gh api -X GET --paginate "repos/$REPO/issues/$PR_NUMBER/comments?per_page=100" \
+            --jq '.[] | select((.user.login // "") == "github-actions[bot]" and ((.body // "") | startswith("<!-- render-diff:validate -->"))) | [.created_at, (.id | tostring)] | @tsv')
+          mapfile -t found < <(printf '%s' "$list" | LC_ALL=C sort -t "$(printf '\t')" -k1,1 -k2,2n)
+          if (( ${#found[@]} == 0 )); then
+            url=$(gh api -X POST "repos/$REPO/issues/$PR_NUMBER/comments" --input "$payload" --jq '.html_url')
+            printf '코멘트를 새로 달았다: %s\n' "$url"
+          else
+            id=${found[0]##*$'\t'}
+            if [[ ! $id =~ ^[1-9][0-9]*$ ]]; then
+              printf '::error::코멘트 ID가 숫자가 아니다: %q\n' "$id"
+              exit 1
+            fi
+            if (( ${#found[@]} > 1 )); then
+              printf '::warning::표식 코멘트가 %d개다 — 가장 오래된 %s 하나만 갱신한다(나머지는 지우지 않는다)\n' "${#found[@]}" "$id"
+            fi
+            url=$(gh api -X PATCH "repos/$REPO/issues/comments/$id" --input "$payload" --jq '.html_url')
+            printf '코멘트를 갱신했다(%s): %s\n' "$id" "$url"
+          fi
+          printf -- '- 렌더링 diff 코멘트: %s\n' "$url" >> "$GITHUB_STEP_SUMMARY" || true
