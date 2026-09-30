@@ -1,0 +1,65 @@
+# 임시 워크플로 — VD-5 실측 V3 · V4(T047 G5). **main에 머지하지 않는다.**
+# 재는 것: ① 워크플로 토큰(GITHUB_TOKEN)이 `promote/**` 브랜치를 만들 수 있는가(ruleset `promote`의 bypass 주체)
+#          ② 워크플로 토큰이 PR을 만들 수 있는가(저장소 설정 "Actions의 PR 생성 허용")
+#          ③ 그렇게 만든 PR의 검사 실행이 승인 대기 상태로 만들어지는가(GitHub 2026-06-11 변경)
+# 만드는 브랜치는 main에서 갈라 prod overlay에 주석 한 줄만 더한다 — 이 워크플로 파일은 그 브랜치에 들어가지 않는다.
+name: vd5-promote
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  make-pr:
+    # 시험 PR 자신에서만 돈다(이 워크플로가 만든 PR에서 되풀이되지 않게)
+    if: github.head_ref == 'vd5-promote-test'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: true
+      - name: "브랜치와 PR 만들기(워크플로 토큰)"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          [[ $RUN_ID =~ ^[0-9]+$ ]]
+          branch="promote/vd5-test-${RUN_ID}"
+          f=apps/identity-admin/overlays/prod/kustomization.yaml
+          main_tip=$(git rev-parse --verify --quiet 'refs/remotes/origin/main^{commit}')
+          git switch -q -c "$branch" "$main_tip"
+          printf '# (VD-5 실측용 임시 주석 — run %s · 머지하지 않는다)\n' "$RUN_ID" >> "$f"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- "$f"
+          git commit -q -m "test(ci): VD-5 실측 — 워크플로가 만든 승격 모양의 커밋(머지하지 않는다)"
+          printf 'main=%s head=%s\n' "$main_tip" "$(git rev-parse HEAD)"
+
+          rc=0
+          git push origin "HEAD:refs/heads/$branch" 2>&1 || rc=$?
+          printf 'push rc=%s\n' "$rc"
+          if [[ $rc -ne 0 ]]; then
+            echo "::error::V4 실패 — 워크플로 토큰이 브랜치를 만들지 못했다"
+            exit 1
+          fi
+
+          rc=0
+          url=$(gh pr create --repo "$REPO" --base main --head "$branch" --draft \
+            --title "test(ci): VD-5 실측 — 워크플로 토큰이 연 PR(머지하지 않는다)" \
+            --body "워크플로 토큰이 만든 시험 PR이다. 머지하지 않는다. 실측이 끝나면 닫는다.") || rc=$?
+          printf 'pr create rc=%s url=%s\n' "$rc" "${url:-}"
+          if [[ $rc -ne 0 ]]; then
+            echo "::error::V3 실패 — 워크플로 토큰이 PR을 만들지 못했다"
+            exit 1
+          fi
