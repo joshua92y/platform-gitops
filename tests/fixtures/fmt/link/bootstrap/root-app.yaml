@@ -1,0 +1,18 @@
+# 임시 트리 원본(11.3 · 11.4 심볼릭 링크 — tests/validate.tests.sh 가 이 디렉터리(fmt/link)를 tests/.tmp/fmt-dirsource-link/ 로 복사한 뒤
+#   clusters/oci-k3s/apps/ 에 링크 셋(파일 · 디렉터리 · 대상 없음)을 만들어 --root로 준다. 링크는 커밋하지 않는다 — 체크아웃 설정(core.symlinks)에
+#   따라 일반 파일로 풀릴 수 있다). root Application — clusters/oci-k3s/apps 는 kustomization이 없는 directory source 경로다.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+spec:
+  project: platform
+  source:
+    repoURL: https://github.com/joshua92y/platform-gitops.git
+    targetRevision: main
+    path: clusters/oci-k3s/apps
+  destination: { server: https://kubernetes.default.svc, namespace: argocd }
+  syncPolicy:
+    automated: { prune: false, selfHeal: true }
+    syncOptions: [ServerSideApply=true]

@@ -1,0 +1,12 @@
+# 부정 픽스처 13.4 RBAC-subject — 주체는 이름을 다 적은 ServiceAccount뿐이다(kind ServiceAccount · name·namespace 비어 있지 않음):
+#   group-sa       Group system:serviceaccounts(모든 ServiceAccount를 포함하는 그룹)
+#   user-sa        User system:serviceaccount:reloader:reloader(ServiceAccount의 사용자 이름 표기 — 같은 계정이다)
+#   sa-no-ns       namespace 없는 ServiceAccount(RoleBinding에서는 API 서버가 바인딩의 ns로 채워 읽는다)
+#   sa-empty-name  name이 빈 ServiceAccount
+#   mixed          둘째 주체만 Group system:authenticated(주체 번호를 짚는지 본다)
+#   subjects-map   subjects가 목록이 아니라 맵(주체를 판정할 수 없다 — fail-closed. kustomize는 그대로 내보낸다)
+#   ok-sa          정상(걸리지 않는다)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - rbac.yaml

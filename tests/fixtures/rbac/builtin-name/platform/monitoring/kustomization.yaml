@@ -1,0 +1,7 @@
+# 부정 픽스처 13.3 RBAC-builtin-name — 내장 역할의 이름으로 ClusterRole을 정의한다: `view` · `system:custom`(system: 접두).
+#   13.2는 "그 이름의 ClusterRole이 렌더에 있는가"로 내장 역할을 가려내므로, 같은 이름을 함께 렌더하면 내장 역할에 거는 바인딩이
+#   "렌더된 역할"로 읽힌다 — 두 바인딩(→ view · → system:custom)은 13.2가 아니라 13.3(역할 쪽)으로 잡혀야 한다.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - rbac.yaml

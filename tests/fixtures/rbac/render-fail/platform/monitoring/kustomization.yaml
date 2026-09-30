@@ -1,0 +1,6 @@
+# 부정 픽스처 13.0 RBAC-render — 렌더에 실패하는 kustomization(없는 파일을 resources로 가리킨다)이 섞인 트리. 그 렌더에 무엇이
+#   있었을지 알 수 없으므로 합친 집합이 불완전하다 — 검사 13은 그룹 PASS 줄을 찍지 않는다(fail-closed). platform/cloudflared는 정상 렌더다.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - missing.yaml

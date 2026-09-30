@@ -1,0 +1,16 @@
+# 부정 픽스처 11.1 FMT-list(YAML 별칭 · 파일 쪽) — items-carrier.yaml과 같은 목록 객체인데 최상위 items를 별칭(`items: *seq`)으로 적었다.
+#   yq는 별칭 노드의 종류를 `alias`로 보고하지만(태그는 빈 값) Argo의 디코더는 별칭을 목록으로 풀어 안의 RoleBinding을 적용한다 —
+#   검사 11은 문서를 explode(.)로 푼 뒤 판정한다(계약 형식별 정책 「목록 객체」 행 — 2026-09-30).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alias-carrier
+  namespace: cloudflared
+  annotations:
+    hold: &seq
+      - apiVersion: rbac.authorization.k8s.io/v1
+        kind: RoleBinding
+        metadata: { name: hidden-by-alias, namespace: cloudflared }
+        roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: cluster-admin }
+        subjects: [{ kind: ServiceAccount, name: default, namespace: cloudflared }]
+items: *seq

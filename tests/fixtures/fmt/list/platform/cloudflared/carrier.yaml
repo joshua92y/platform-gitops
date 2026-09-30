@@ -1,0 +1,7 @@
+# 부정 픽스처 11.1 FMT-list(보강 · 렌더) — 원본은 평범한 ConfigMap이다(items는 kustomization.yaml의 패치가 렌더에서만 더한다)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: render-carrier
+data:
+  key: value

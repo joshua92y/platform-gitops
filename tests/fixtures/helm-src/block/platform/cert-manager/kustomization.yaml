@@ -1,0 +1,14 @@
+# 부정 픽스처 12.1 HELM-repo(base로 끌려온 kustomization · 보강) — 이 kustomization의 helmCharts는 허용 쌍이지만, base로 끌어오는
+#   tests/vendored-base 는 파일 열거(--root 의 tests/ 제외) 밖에 있고 허용 목록 밖 저장소의 차트를 쓴다.
+#   --enable-helm으로 이 디렉터리를 빌드하면 base의 차트도 받는다 — 그래서 12.1은 base로 끌려온 kustomization까지 보고,
+#   base가 걸리면 이 kustomization도 검사 1이 렌더하지 않는다.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../tests/vendored-base
+helmCharts:
+  - name: cert-manager
+    repo: oci://quay.io/jetstack/charts
+    version: v1.21.1
+    releaseName: cert-manager
+    namespace: cert-manager

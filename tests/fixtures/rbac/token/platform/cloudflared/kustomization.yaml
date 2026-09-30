@@ -1,0 +1,13 @@
+# 부정 픽스처 13.1 RBAC-token — 기준선(① ClusterRole argocd-application-controller · ② Role external-secrets/eso-token-create) 밖의 역할이
+#   ServiceAccount 토큰 발급 규칙(apiGroups ∋ ""|* · verbs ∋ create|* · resources ∋ serviceaccounts/token|serviceaccounts/*|*|*/*|*/token — 규칙 하나 안에서)을 가진다:
+#   ⓐ Role sa-token — 둘째 규칙이 serviceaccounts/token create(첫째 규칙은 무해 — 규칙 번호를 짚는지 본다)
+#   ⓑ Role core-wild — apiGroups [""] + resources ["*"] + verbs ["*"]
+#   ⓒ Role sa-subwild — resources ["serviceaccounts/*"]
+#   ⓓ ClusterRole all-wild — apiGroups ["*"] + resources ["*/*"]
+#   ⓗ 다른 컴포넌트(이 렌더)가 기준선 ②와 같은 이름 external-secrets/eso-token-create로 넓은 규칙(core 그룹 · 모든 리소스 · 모든 동사)을 정의
+#   ⓘ Role any-token — resources ["*/token"](모든 리소스의 token 하위 리소스 — Kubernetes RBAC ResourceMatches는 `*/<subresource>`를
+#     와일드카드로 읽는다: serviceaccounts/token이 맞는다). resources에 이것 하나뿐이라 이 원소만으로 토큰 발급 규칙이 된다
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - rbac.yaml

@@ -1,0 +1,12 @@
+# 임시 트리 원본(11.3 · 11.4 심볼릭 링크) — directory source 경로의 정상 Application(일반 파일). 링크가 아닌 이 파일 하나만 11.4의 대상이다.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-cloudflared
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "60" }
+spec:
+  project: platform
+  source: { repoURL: https://github.com/joshua92y/platform-gitops.git, targetRevision: main, path: platform/cloudflared }
+  destination: { server: https://kubernetes.default.svc, namespace: cloudflared }
+  syncPolicy: { syncOptions: [ServerSideApply=true] }

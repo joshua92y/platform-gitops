@@ -1,0 +1,22 @@
+# 부정 픽스처 11.4 FMT-dirsource-kind(보강) — kind·apiVersion은 Application이지만 최상위 items가 목록이다.
+#   Argo는 kind와 무관하게 items 목록을 풀어 원소(Role)를 적용하고 이 Application은 버린다(IsList) — "이 경로에는 Application만"이
+#   성립하지 않는다. 같은 파일은 11.1(파일 단위 목록 객체)에도 걸린다.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-dragonfly
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "30" }
+spec:
+  project: platform
+  source: { repoURL: https://github.com/joshua92y/platform-gitops.git, targetRevision: main, path: platform/dragonfly }
+  destination: { server: https://kubernetes.default.svc, namespace: data }
+  syncPolicy: { syncOptions: [ServerSideApply=true] }
+items:
+  - apiVersion: rbac.authorization.k8s.io/v1
+    kind: Role
+    metadata: { name: hidden-in-app-items, namespace: argocd }
+    rules:
+      - apiGroups: [""]
+        resources: [secrets]
+        verbs: [get]

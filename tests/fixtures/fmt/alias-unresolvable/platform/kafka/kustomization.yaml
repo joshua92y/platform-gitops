@@ -1,0 +1,9 @@
+# 부정 픽스처 11.0 · 7.3 · 12.1(fail-closed — 풀지 못하는 kustomization) — 병합 키가 문자열 앵커를 가리킨다. YAML 구문은 맞아 파싱(검사 0)은
+#   되지만 explode(.)가 멈춘다. base 추출(7.3 ⓐ)과 차트 출처 사전 판정(12.1)은 문서를 explode(.)로 푼 뒤 읽으므로 둘 다 판정할 수 없다 —
+#   조용히 건너뛰지 않고 FAIL한다(kustomize도 이 문서를 거부한다 — 적용되지 않는 문서지만, 판정할 수 없는 것을 통과시키지 않는다).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+commonAnnotations:
+  note: &s ../../secrets/data
+<<: *s
+resources: []

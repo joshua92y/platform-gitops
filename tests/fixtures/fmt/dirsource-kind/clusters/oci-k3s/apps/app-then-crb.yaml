@@ -1,0 +1,21 @@
+# 부정 픽스처 11.4 FMT-dirsource-kind — 첫 문서는 정상 Application, **둘째 문서**가 ClusterRoleBinding이다(문서 #2만 걸려야 한다).
+#   첫 문서의 source.path(platform/cloudflared)에는 kustomization이 있으므로 그 경로는 directory source가 아니다.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-cloudflared
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "60" }
+spec:
+  project: platform
+  source: { repoURL: https://github.com/joshua92y/platform-gitops.git, targetRevision: main, path: platform/cloudflared }
+  destination: { server: https://kubernetes.default.svc, namespace: cloudflared }
+  syncPolicy: { syncOptions: [ServerSideApply=true] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: smuggled-admin
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: cluster-admin }
+subjects:
+  - { kind: ServiceAccount, name: default, namespace: argocd }

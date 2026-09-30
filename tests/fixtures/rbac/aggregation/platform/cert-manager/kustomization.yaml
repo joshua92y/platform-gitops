@@ -1,0 +1,5 @@
+# 부정 픽스처 13.6(대조군) — 기준선 이름(cert-manager-view)의 aggregate-to-* 라벨 ClusterRole은 걸리지 않는다
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - rbac.yaml

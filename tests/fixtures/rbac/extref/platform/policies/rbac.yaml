@@ -1,0 +1,56 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: { name: grant-all }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: cluster-admin }
+subjects:
+  - { kind: ServiceAccount, name: default, namespace: jt-dev }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: dev-edit, namespace: jt-dev }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: edit }
+subjects:
+  - { kind: ServiceAccount, name: default, namespace: jt-dev }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: { name: agent-view-view }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: admin }
+subjects:
+  - { kind: ServiceAccount, name: agent-view, namespace: kube-system }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: { name: agent-view-extra }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: view }
+subjects:
+  - { kind: ServiceAccount, name: default, namespace: jt-dev }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: only-in-prod, namespace: jt-prod }
+rules:
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: cross-ns, namespace: jt-dev }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: only-in-prod }
+subjects:
+  - { kind: ServiceAccount, name: default, namespace: jt-dev }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: { name: crb-to-role }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: only-in-prod }
+subjects:
+  - { kind: ServiceAccount, name: default, namespace: jt-dev }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: odd-kind, namespace: jt-dev }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Group, name: only-in-prod }
+subjects:
+  - { kind: ServiceAccount, name: default, namespace: jt-dev }

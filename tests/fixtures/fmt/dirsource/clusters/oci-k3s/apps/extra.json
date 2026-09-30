@@ -1,0 +1,11 @@
+{
+  "apiVersion": "argoproj.io/v1alpha1",
+  "kind": "Application",
+  "metadata": { "name": "platform-openfga", "namespace": "argocd", "annotations": { "argocd.argoproj.io/sync-wave": "50" } },
+  "spec": {
+    "project": "platform",
+    "source": { "repoURL": "https://github.com/joshua92y/platform-gitops.git", "targetRevision": "main", "path": "platform/openfga" },
+    "destination": { "server": "https://kubernetes.default.svc", "namespace": "identity" },
+    "syncPolicy": { "syncOptions": ["ServerSideApply=true"] }
+  }
+}

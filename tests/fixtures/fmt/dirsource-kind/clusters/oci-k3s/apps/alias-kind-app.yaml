@@ -1,0 +1,19 @@
+# 부정 픽스처 7.4(별칭으로 적은 kind — 검사 11이 별칭을 풀면서 생기는 회귀를 막는 장치) — kind를 별칭(`kind: *k`)으로 적은 multi-source
+#   Application. Argo의 디코더(go-yaml v2)는 별칭을 풀어 Application으로 적용한다. 파일 단위 검사(2 · 7.1 · 7.3 · 7.4 · 11.3)의
+#   `select(.kind == "Application")`은 별칭 노드를 문자열과 같다고 보지 않아 이 문서를 통째로 건너뛰었다(그동안은 11.4가 "kind 없음"으로 막았다).
+#   11.4가 explode(.)로 풀어 이 문서를 Application으로 받아들이므로, 같은 파일을 보는 검사들도 explode(.) 뒤에 판정한다 — 7.4가 multi-source를 건다.
+apiVersion: argoproj.io/v1alpha1
+metadata:
+  name: platform-openfga
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "50"
+    kind-note: &k Application
+kind: *k
+spec:
+  project: platform
+  sources:
+    - { repoURL: https://github.com/joshua92y/platform-gitops.git, targetRevision: main, path: platform/openfga }
+    - { repoURL: https://github.com/joshua92y/platform-gitops.git, targetRevision: attacker-branch, path: platform/openfga }
+  destination: { server: https://kubernetes.default.svc, namespace: identity }
+  syncPolicy: { syncOptions: [ServerSideApply=true] }

@@ -457,8 +457,9 @@ kubectl -n argocd get app platform-external-secrets -o jsonpath='{.status.sync.s
     컨트롤러 ClusterRole에서 그 규칙 **0건** · 나머지 차이 없음(G1 렌더와의 diff는 이 3가지뿐).
   - **머지 뒤 게이트(VD-16): 5분 안에 store 5장이 `True Valid`를 유지해야 한다.** 실패 문면은 **두 갈래**이고
     vault 4장에는 `serviceaccounts/token` 문자열이 **보이지 않는다**(폴백 문면) — 전문은 §5의 표. 하나라도 보이면 revert한다.
-  - ⚠ **이 축소를 지키는 자동 검사는 없다** — `tests/validate.sh`에 `serviceaccounts/token`을 보는 검사가 없어
-    렌더 grep = 1이 유일한 그물이다. **T047 후보: validate에 렌더 grep = 1 고정**(값만 `true`로 되돌아가는 회귀를 막는다).
+  - 이 축소는 **`tests/validate.sh` 검사 13.1(`RBAC-token`)이 본다**(T047) — 모든 렌더에서 ServiceAccount 토큰 발급 규칙을 가진 역할은
+    기준선 둘뿐이어야 하고(이 Role이 ② — 토큰 발급 규칙 하나 · `resourceNames` = `eso-*` 5개 집합), 값이 `true`로 되돌아가 컨트롤러
+    ClusterRole에 그 규칙이 다시 생기면 기준선 밖의 역할로 FAIL한다(설명은 `../../tests/README.md` 「검사 13」).
 - ~~**G3**~~ **완료** — 이 오퍼레이터를 처음으로 **쓰는** 쪽이 생겼다: `secrets/cert-manager/`의 ExternalSecret 1장(원본)을
   `platform/secrets/`(Application `platform-secrets`)가 적용해, T042의 운영자 수동 Secret `cloudflare-dns-token`을
   **삭제 없이 인수**한다(`creationPolicy: Orphan` — ownerReference를 만들지 않는다). 소비자 컴포넌트가 아니라 별도

@@ -1,0 +1,10 @@
+# 부정 픽스처 4a IMG-entry — 기존 4a IMG-newTag가 통째로 건너뛰는 항목(name: "" — 기존 추출의 name 칸이 비면 그 줄을 건너뛴다)
+#   #1 name: "" + newTag: v1 + 형식이 틀린 digest — 기존 코드는 이 항목에서 아무것도 찍지 않았다(newTag 금지가 통과했다).
+#   새 판정이 name(빈 값) · digest(형식) · 키(newTag)를 모두 찍어야 한다 — 기존 코드의 줄(4a IMG-newTag)은 여전히 없다
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: []
+images:
+  - name: ""
+    newTag: v1
+    digest: sha256:abc

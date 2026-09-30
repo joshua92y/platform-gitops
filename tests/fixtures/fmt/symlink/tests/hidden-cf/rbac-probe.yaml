@@ -1,0 +1,8 @@
+# 임시 트리 원본(11.5 ⓑ의 내용) — 링크된 컴포넌트(platform/cloudflared → tests/hidden-cf)가 렌더하는 cluster-admin 바인딩(symlink-probe의 모양).
+#   링크가 아닌 자리에 두면 13.2가 건다 — 링크 뒤에서는 어느 렌더에도 나타나지 않는다.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: probe-grant-all
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: cluster-admin }
+subjects: [{ kind: ServiceAccount, name: default, namespace: cloudflared }]

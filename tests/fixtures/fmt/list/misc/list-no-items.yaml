@@ -1,0 +1,5 @@
+# 부정 픽스처 11.1 FMT-list — `kind: List`는 items가 없어도 금지다(계약 §validate.yml 4 「(T047) 형식별 정책」 목록 객체 행)
+apiVersion: v1
+kind: List
+metadata:
+  name: empty-list

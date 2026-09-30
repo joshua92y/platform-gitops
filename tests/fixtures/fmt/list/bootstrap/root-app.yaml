@@ -1,0 +1,17 @@
+# 부정 픽스처 11.1 FMT-list — root Application(app-of-apps 진입점). clusters/oci-k3s/apps 에는 kustomization이 없으므로
+#   Argo는 그 경로를 directory source로 읽는다(목록 객체를 풀어 적용한다).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+spec:
+  project: platform
+  source:
+    repoURL: https://github.com/joshua92y/platform-gitops.git
+    targetRevision: main
+    path: clusters/oci-k3s/apps
+  destination: { server: https://kubernetes.default.svc, namespace: argocd }
+  syncPolicy:
+    automated: { prune: false, selfHeal: true }
+    syncOptions: [ServerSideApply=true]

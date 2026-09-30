@@ -1,0 +1,29 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: { name: agg-parent }
+aggregationRule:
+  clusterRoleSelectors:
+    - matchLabels: { example.com/aggregate-to-agg-parent: "true" }
+rules: []
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: extra-view
+  labels:
+    rbac.authorization.k8s.io/aggregate-to-view: "true"
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: extra-false
+  labels:
+    rbac.authorization.k8s.io/aggregate-to-edit: "false"
+rules:
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [get]

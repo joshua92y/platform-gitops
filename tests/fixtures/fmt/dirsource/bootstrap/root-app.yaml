@@ -1,0 +1,16 @@
+# 부정 픽스처 11.3 FMT-dirsource — root Application. clusters/oci-k3s/apps 에 kustomization이 없으므로 directory source 경로다.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+spec:
+  project: platform
+  source:
+    repoURL: https://github.com/joshua92y/platform-gitops.git
+    targetRevision: main
+    path: clusters/oci-k3s/apps
+  destination: { server: https://kubernetes.default.svc, namespace: argocd }
+  syncPolicy:
+    automated: { prune: false, selfHeal: true }
+    syncOptions: [ServerSideApply=true]

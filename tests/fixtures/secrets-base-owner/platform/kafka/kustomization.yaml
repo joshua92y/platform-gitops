@@ -1,0 +1,11 @@
+# 부정 픽스처 7.3 WAVE-secrets-base ⓐ(YAML 별칭으로 적은 base) — 소비자 컴포넌트가 secrets/data를 **별칭 항목**(`*s`)으로 포함한다.
+#   kustomize 5.8.1은 별칭을 풀어 그 base를 빌드한다(2026-09-30 실측). base 추출은 문자열 태그(!!str) 항목만 보는데 별칭 노드의 태그는 빈 값이라
+#   이 항목을 건너뛰었다 — 단일 소유(ⓐ)를 지났다. namePrefix는 렌더의 ES 이름을 바꿔 이름으로 맞추는 ⓑ도 비켜 간다(ⓐ만 남는 경로다).
+#   base 추출은 문서를 explode(.)로 푼 뒤 읽는다.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+commonAnnotations:
+  note: &s ../../secrets/data
+namePrefix: alias-
+resources:
+  - *s

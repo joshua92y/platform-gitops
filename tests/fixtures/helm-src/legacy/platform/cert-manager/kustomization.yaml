@@ -1,0 +1,8 @@
+# 부정 픽스처 12.3 HELM-legacy — 최상위 helmChartInflationGenerator(helmCharts 이전의 레거시 필드 — 허용 목록 밖에서 차트를 받는다)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+helmChartInflationGenerator:
+  - chartName: cert-manager
+    chartRepoUrl: https://charts.jetstack.io
+    chartVersion: v1.21.1
+    releaseName: legacy-cert-manager

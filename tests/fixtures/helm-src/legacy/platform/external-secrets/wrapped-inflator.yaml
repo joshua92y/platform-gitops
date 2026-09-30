@@ -1,0 +1,15 @@
+# 부정 픽스처 12.3 HELM-legacy(목록으로 감싼 레거시 생성기 — 2026-09-30 G4 리뷰 A3) — generators: 가 부르는 파일이 `kind: List`이고 그 items에
+#   kind: HelmChartInflationGenerator가 있다. kustomize는 생성기 설정 파일의 List를 풀어 생성기를 돌리는데(허용 목록 밖 저장소에서 차트를 받는다),
+#   최상위 문서의 kind만 보던 판정은 List만 보고 지나갔다. 12.3은 문서를 explode(.)로 푼 뒤 모든 맵에서 kind를 찾는다.
+#   (이 파일은 파일 열거 안에 있어 11.1도 목록 객체로 건다 — 열거 밖(tests/ · 캐시 자리 charts/)에 두면 12.3만 본다.)
+apiVersion: v1
+kind: List
+items:
+  - apiVersion: builtin
+    kind: HelmChartInflationGenerator
+    metadata:
+      name: wrapped-external-secrets
+    name: external-secrets
+    repo: https://charts.example.invalid
+    version: 0.0.1
+    releaseName: wrapped-external-secrets

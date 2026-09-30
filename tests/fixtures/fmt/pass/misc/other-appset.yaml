@@ -1,0 +1,7 @@
+# 경계 픽스처(통과) 11.2 — kind는 ApplicationSet이지만 apiVersion이 argoproj.io/ 가 아니다(다른 API 그룹 — Argo가 만드는 것이 아니다)
+apiVersion: example.com/v1
+kind: ApplicationSet
+metadata:
+  name: not-argo
+spec:
+  members: [a]

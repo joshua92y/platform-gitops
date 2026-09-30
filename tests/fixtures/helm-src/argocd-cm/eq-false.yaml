@@ -1,0 +1,8 @@
+# 12.4 변형 eq-false — 마지막 `--enable-helm` 낱말이 `=false`다. 앞에 맨 `--enable-helm`이 있어도 pflag는 마지막 값을 쓰므로 helm이 꺼진다
+#   (낱말이 있기만 하면 통과시키던 판정은 이 설정을 통과시켰다)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  kustomize.buildOptions: "--enable-helm --load-restrictor LoadRestrictionsNone --enable-helm=false"

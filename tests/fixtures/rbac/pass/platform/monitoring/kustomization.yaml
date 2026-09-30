@@ -1,0 +1,5 @@
+# 경계 픽스처(통과) 13.2 — platform/cloudflared의 바인딩 2장이 가리키는 ClusterRole shared-reader를 이 렌더가 정의한다
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - rbac.yaml

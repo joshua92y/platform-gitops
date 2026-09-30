@@ -1,0 +1,9 @@
+# 부정 픽스처 12.1 HELM-repo(별칭으로 끌려온 base) — 파일 열거 밖(--root 의 tests/)에 있고, platform/vault 가 YAML 별칭 항목으로 끌어온다.
+#   허용 목록 밖 저장소다.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+helmCharts:
+  - name: alias-chart
+    repo: https://charts.example.invalid
+    version: 0.0.1
+    releaseName: alias

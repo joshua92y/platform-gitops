@@ -1,0 +1,10 @@
+# 경계(통과) 픽스처 4a IMG-entry — 통과해야 하는 항목: #1 name + digest · #2 name + newName + digest
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: []
+images:
+  - name: ghcr.io/joshua92y/demo-a
+    digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+  - name: ghcr.io/joshua92y/demo-b
+    newName: ghcr.io/joshua92y/demo-b
+    digest: sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210

@@ -1,0 +1,13 @@
+# 부정 픽스처 13.2 RBAC-extref — 렌더에 없는 역할을 가리키는 바인딩(validate가 규칙을 볼 수 없다)과 roleRef의 모양:
+#   ⓐ ClusterRoleBinding grant-all → ClusterRole cluster-admin(내장 — 클러스터 전체 권한)
+#   ⓑ RoleBinding jt-dev/dev-edit → ClusterRole edit(내장 — 그 ns 쓰기)
+#   ⓒ ClusterRoleBinding agent-view-view → ClusterRole admin(이름은 기준선인데 대상이 다르다 — 세 값으로 대조한다)
+#   ⓓ ClusterRoleBinding agent-view-extra → ClusterRole view(대상은 기준선인데 바인딩 이름이 다르다)
+#   ⓔ RoleBinding jt-dev/cross-ns → Role only-in-prod(그 Role은 jt-prod에만 있다 — 같은 ns의 Role이어야 한다)
+#   ⓕ ClusterRoleBinding crb-to-role → kind Role(ClusterRoleBinding은 Role을 가리킬 수 없다)
+#   ⓖ RoleBinding jt-dev/odd-kind → roleRef.kind Group(Role·ClusterRole 밖)
+#   기준선 ClusterRoleBinding vault-server-binding → system:auth-delegator(platform/vault)는 걸리지 않는다
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - rbac.yaml

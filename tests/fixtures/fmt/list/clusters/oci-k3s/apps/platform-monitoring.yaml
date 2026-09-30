@@ -1,0 +1,27 @@
+# 부정 픽스처 11.1 · 11.4(YAML 별칭 — 2026-09-30 G4 리뷰 A1의 재현 그대로) — 7.1(이름·경로·wave) · 7.4(source 키·저장소·리비전) · 2(SSA)를
+#   모두 만족하는 Application인데, 최상위 items를 별칭(`items: *seq`)으로 적었다. 앵커는 어노테이션 값에 둔다(목록 객체로 풀리면 감싼 문서는
+#   버려지므로 API 서버가 그 값을 보지 않는다). yq는 별칭 노드의 종류를 `alias`로 보고해 "items가 목록" 판정을 지났지만, Argo의 디코더
+#   (sigs.k8s.io/yaml — go-yaml v2)는 별칭을 목록으로 풀고 IsList가 참이 되어 안의 Namespace를 적용한다. 검사 11은 문서를 explode(.)로 푼 뒤
+#   판정한다. 파일 단위 검사 2 · 7.1 · 7.4는 이 문서를 정상 Application으로 본다(그 판정들의 FAIL 줄이 없어야 한다 — 막는 것은 11.1 · 11.4다).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-monitoring
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "60"
+    hold: &seq
+      - apiVersion: v1
+        kind: Namespace
+        metadata:
+          name: alias-smuggled
+spec:
+  project: platform
+  source:
+    repoURL: https://github.com/joshua92y/platform-gitops.git
+    targetRevision: main
+    path: platform/monitoring
+  destination: { server: https://kubernetes.default.svc, namespace: monitoring }
+  syncPolicy:
+    syncOptions: [ServerSideApply=true]
+items: *seq

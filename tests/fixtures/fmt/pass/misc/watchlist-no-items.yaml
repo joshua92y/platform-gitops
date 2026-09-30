@@ -1,0 +1,7 @@
+# 경계 픽스처(통과) 11.1 — kind가 List로 끝나지만 items가 없다(목록 객체가 아니다 — 가상의 CRD). `kind: List`만 items 없이도 금지다.
+apiVersion: example.com/v1
+kind: WatchList
+metadata:
+  name: favorites
+spec:
+  entries: [a, b]

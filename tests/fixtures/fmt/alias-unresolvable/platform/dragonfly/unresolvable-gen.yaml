@@ -1,0 +1,8 @@
+# 부정 픽스처 12.3(fail-closed) — platform/dragonfly의 generators:가 부르는 생성기 설정 파일인데, 병합 키가 문자열 앵커를 가리켜 explode(.)가 멈춘다.
+apiVersion: builtin
+kind: ConfigMapGenerator
+metadata:
+  name: unresolvable-gen
+  annotations:
+    note: &g just-a-string
+<<: *g

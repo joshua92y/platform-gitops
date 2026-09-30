@@ -1,0 +1,5 @@
+# 부정 픽스처 13.0(대조군) — 정상 렌더(무해한 Role 하나). 이것만 있으면 검사 13은 PASS다
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - rbac.yaml

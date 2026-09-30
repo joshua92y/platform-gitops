@@ -1,0 +1,18 @@
+# 부정 픽스처 11.1 FMT-list(보강 · 렌더) — 원본 파일(carrier.yaml)은 평범한 ConfigMap이고, 패치가 **렌더에서만** 최상위 items 목록을
+#   더한다. 파일 단위 판정은 통과하므로 렌더를 봐야 잡힌다 — Argo는 렌더 결과에도 같은 IsList 풀기를 적용한다.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: cloudflared
+resources:
+  - carrier.yaml
+patches:
+  - target: { kind: ConfigMap, name: render-carrier }
+    patch: |-
+      - op: add
+        path: /items
+        value:
+          - apiVersion: rbac.authorization.k8s.io/v1
+            kind: RoleBinding
+            metadata: { name: hidden-in-render, namespace: cloudflared }
+            roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: cluster-admin }
+            subjects: [{ kind: ServiceAccount, name: default, namespace: cloudflared }]

@@ -1,0 +1,11 @@
+# 임시 트리 원본(12.4 · 12.5) — helmCharts를 쓰는 kustomization(허용 쌍). version 0.0.1-local 은 실재하지 않는 버전이다:
+#   자기검사가 charts/external-secrets-0.0.1-local/external-secrets/ 에 작은 차트(ConfigMap 1장)를 미리 두므로 kustomize는
+#   차트를 받지 않고 그것을 쓴다(kustomize v5.8.1 chartExistsLocally) — 네트워크를 쓰지 않는다. 로컬 차트가 없으면 받기가 실패한다.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+helmCharts:
+  - name: external-secrets
+    repo: https://charts.external-secrets.io
+    version: 0.0.1-local
+    releaseName: external-secrets
+    namespace: external-secrets

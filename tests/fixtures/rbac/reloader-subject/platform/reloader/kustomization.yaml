@@ -1,0 +1,6 @@
+# 부정 픽스처 13.5(대조군) — platform/reloader 렌더 안의 ServiceAccount reloader/reloader 바인딩은 13.5에 걸리지 않는다(그 렌더 안의
+#   장수·모양은 검사 10이 본다 — 이 부분 트리에서는 Deployment가 없어 검사 10이 fail-closed로 FAIL한다. 이 픽스처의 판정 근거가 아니다).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - rbac.yaml

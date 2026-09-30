@@ -1,0 +1,50 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: sa-token, namespace: cloudflared }
+rules:
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [get]
+  - apiGroups: [""]
+    resources: [serviceaccounts/token]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: core-wild, namespace: cloudflared }
+rules:
+  - apiGroups: [""]
+    resources: ["*"]
+    verbs: ["*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: sa-subwild, namespace: cloudflared }
+rules:
+  - apiGroups: [""]
+    resources: ["serviceaccounts/*"]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: { name: all-wild }
+rules:
+  - apiGroups: ["*"]
+    resources: ["*/*"]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: eso-token-create, namespace: external-secrets }
+rules:
+  - apiGroups: [""]
+    resources: ["*"]
+    verbs: ["*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: any-token, namespace: cloudflared }
+rules:
+  - apiGroups: [""]
+    resources: ["*/token"]
+    verbs: [create]

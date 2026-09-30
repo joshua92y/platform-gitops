@@ -1,0 +1,21 @@
+# 부정 픽스처 4a IMG-digest — images 항목의 digest가 없거나 빈 값이거나, 기존 형식 검사(4a IMG-newTag)가 '없음'으로 읽는 값
+#   #1 name + newName뿐(digest 줄을 지운 모양 — 빌드는 성공하고 이미지는 고정 없는 이름이 된다) · #2 digest: "" · #3 digest: ~(null)
+#   #4 digest: false · #5 digest: "-"(#4·#5는 기존 추출이 '없음'과 같은 '-'로 읽어 형식 검사를 건너뛰던 값)
+#   #6 digest: 12345(따옴표 없는 숫자 — 문자열이 아닌 형의 형식 오류는 기존 4a IMG-newTag가 잡는다. IMG-digest는 다시 찍지 않는다)
+#   #2는 기존 4a IMG-newTag도 형식 오류로 찍는다(기존 줄은 그대로 둔다 — IMG-digest는 "빈 값"을 찍는다)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: []
+images:
+  - name: ghcr.io/joshua92y/demo-a
+    newName: ghcr.io/joshua92y/demo-a
+  - name: ghcr.io/joshua92y/demo-b
+    digest: ""
+  - name: ghcr.io/joshua92y/demo-c
+    digest: ~
+  - name: ghcr.io/joshua92y/demo-d
+    digest: false
+  - name: ghcr.io/joshua92y/demo-e
+    digest: "-"
+  - name: ghcr.io/joshua92y/demo-f
+    digest: 12345

@@ -1,0 +1,9 @@
+# 임시 트리 원본(11.5 심볼릭 링크 ⓑ 디렉터리 링크의 대상 — tests/validate.tests.sh 가 이 디렉터리(fmt/symlink)를 tests/.tmp/fmt-symlink/ 로
+#   복사한 뒤 platform/cloudflared 를 이 디렉터리(tests/hidden-cf)를 가리키는 링크로 만든다. 링크는 커밋하지 않는다 — 체크아웃 설정(core.symlinks)에
+#   따라 일반 파일로 풀릴 수 있다). 2026-09-30 수정 빌더의 재현 모양: 컴포넌트 디렉터리 자체가 링크면 kustomization 열거(find -type f)는 그 컴포넌트를
+#   세지 않는데 Argo와 kustomize는 링크를 따라 이 kustomization을 렌더한다 — 아래 cluster-admin 바인딩이 모든 검사의 시야 밖에서 적용됐다(exit 0).
+#   계약은 트리 어디든 링크를 금지한다(11.5).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - rbac-probe.yaml

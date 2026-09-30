@@ -1,0 +1,8 @@
+# 경계 픽스처(통과) 11.1 — kind가 List로 끝나고 items가 있지만 목록(시퀀스)이 아니라 맵이다(Argo·kustomize가 풀지 않는다 —
+#   kustomize resources로 넣으면 kustomize가 오류를 낸다. 여기서는 어느 kustomization에도 넣지 않는다)
+apiVersion: example.com/v1
+kind: TrackList
+metadata:
+  name: album
+items:
+  first: intro

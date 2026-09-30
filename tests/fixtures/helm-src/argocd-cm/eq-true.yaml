@@ -1,0 +1,8 @@
+# 12.4 변형 eq-true(통과) — `--enable-helm=<참값>` 낱말(pflag ParseBool의 참값: 1 · t · T · TRUE · true · True). 같은 플래그가 여럿이면 pflag는
+#   마지막 값을 쓴다 — 앞의 `=false`는 뒤의 `=true`에 진다(Argo CD는 이 값을 strings.Fields로 나눠 kustomize build 인자로 붙인다)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  kustomize.buildOptions: "--enable-helm=false --load-restrictor LoadRestrictionsNone --enable-helm=true"

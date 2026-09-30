@@ -1,0 +1,8 @@
+# 경계(통과) 픽스처 4a IMG-entry — name + newName + digest를 다른 순서로(키 순서는 판정과 무관하다)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: []
+images:
+  - digest: sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210
+    newName: ghcr.io/joshua92y/demo-a
+    name: ghcr.io/joshua92y/demo-a

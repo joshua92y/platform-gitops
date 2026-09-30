@@ -1,0 +1,5 @@
+# 경계 픽스처(통과) 13.1 · 13.6 — 기준선 ②(resourceNames는 순서를 바꿔 적었다 — 집합으로 비교한다)와 기준선 aggregate-to-* 라벨 ClusterRole 2장
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - rbac.yaml

@@ -1,0 +1,22 @@
+# 임시 트리 원본(11.3 심볼릭 링크의 대상 — 2026-09-30 G4 리뷰 A2의 재현) — 확장자가 .txt라 파일 열거(*.yaml·*.yml)에 들지 않는다.
+#   directory source 경로의 링크 `evil.yaml`이 이 파일을 가리키면 Argo는 링크를 따라 이 Application을 적용하는데, 2 · 7.1 · 7.4의 파일 열거
+#   (find -type f)는 링크를 세지 않아 다른 리비전 · kustomize 패치를 보지 못한다. 계약은 그 경로의 링크를 금지한다(11.3).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-evil
+  namespace: argocd
+spec:
+  project: platform
+  source:
+    repoURL: https://github.com/joshua92y/platform-gitops.git
+    targetRevision: attacker-branch
+    path: platform/cloudflared
+    kustomize:
+      patches:
+        - target: { kind: Deployment }
+          patch: |-
+            - op: add
+              path: /spec/replicas
+              value: 0
+  destination: { server: https://kubernetes.default.svc, namespace: cloudflared }

@@ -1,0 +1,9 @@
+# 경계 픽스처(통과) 11.4 — kustomization이 있는 경로의 Role(렌더에 나타난다 — 렌더 쪽 검사의 몫이다)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: rendered-role
+rules:
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [get]

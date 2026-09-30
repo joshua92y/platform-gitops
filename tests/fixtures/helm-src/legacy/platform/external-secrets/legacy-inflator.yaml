@@ -1,0 +1,9 @@
+# 부정 픽스처 12.3 HELM-legacy — 레거시 생성기 설정(kustomization의 generators: 가 가리킨다). 허용 목록과 대조되지 않는 저장소다.
+apiVersion: builtin
+kind: HelmChartInflationGenerator
+metadata:
+  name: legacy-external-secrets
+name: external-secrets
+repo: https://charts.example.invalid
+version: 0.0.1
+releaseName: legacy-external-secrets

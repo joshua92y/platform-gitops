@@ -1,0 +1,9 @@
+# 부정 픽스처 12.2 HELM-version — 허용 쌍이지만 version이 없다(없으면 kustomize가 받는 시점의 최신 차트를 쓴다).
+#   12.2에 걸린 kustomization은 검사 1이 렌더하지 않는다(차트를 받으러 나가지 않는다).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+helmCharts:
+  - name: external-secrets
+    repo: https://charts.external-secrets.io
+    releaseName: external-secrets
+    namespace: external-secrets

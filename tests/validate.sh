@@ -25,6 +25,14 @@
 #   3.6  ES-⑥              automountServiceAccountToken: false (apps/** · platform/cloudflared · platform/dragonfly)
 #   3.7  ES-⑦              apps/** 의 key가 (dev|prod)/(access|web)/ 접두면 FAIL(Workers 전용)
 #   4a   IMG-newTag         kustomization images[].newTag 금지(digest 형식도 검사)
+#   4a   IMG-name           (T047 · 계약 §이미지·승격 「항목마다 name과 digest」) images 항목마다 name — 없음 · 빈 값 · 문자열이 아님이면 FAIL
+#   4a   IMG-digest         images 항목마다 digest — 없음 · 빈 값(null · "")이면 FAIL. 형식 오류는 IMG-newTag가 찍으므로 다시 찍지 않는다 —
+#                           단 IMG-newTag가 보지 않는 값(그 추출이 '없음'으로 읽는 '-' · false, 그리고 IMG-newTag가 건너뛰는 name 빈 항목)은 여기서 본다
+#   4a   IMG-keys           images 항목의 키 ⊆ IMG_ENTRY_KEYS({name, newName, digest}) · 키 중복 금지. newTag는 IMG-newTag가 그 항목에 찍었으면
+#                           다시 찍지 않는다(null · false · '-' 값이나 name 빈 항목의 newTag는 여기서 찍는다)
+#   4a   IMG-shape          fail-closed: images가 목록이 아님(null은 images 없음과 같다) · 항목이 맵이 아님(앵커 별칭 포함) · 문서가 맵이 아님 ·
+#                           yq 추출 실패 · 추출 행 모양 이상. 대상 = IMG-newTag와 같은 모든 kustomization(KUST_FILES — 계약 문면은 apps/** overlay).
+#                           그룹 PASS 줄 = 4a IMG-entry(항목 0개면 대상 없음). IMG-newTag의 줄·개수·PASS 줄은 T047 이전과 같다(YQ_IMAGES의 O 행)
 #   4b   IMG-platform-digest platform/** 의 image: 줄에 @sha256 없으면 경고(WARN)
 #                           한계: `image:` 스칼라 줄만 검사한다 — helm values의 분리형 image.repository / image.tag 는 보지 않는다
 #   5.0  POL-location       Namespace·NetworkPolicy·ResourceQuota·LimitRange는 platform/policies/ 에만
@@ -60,7 +68,8 @@
 #   7.2  WAVE-dir           표에 없는 platform/<component>/ 디렉터리 금지
 #   7.3  WAVE-secrets-base  secrets/<ns>의 단일 소유·배달: (a) `secrets/` 아래와 배달자 자신(platform/secrets)을 base로
 #                           가질 수 있는 kustomization은 platform/secrets/kustomization.yaml 하나뿐(절대·저장소 밖 경로는
-#                           위치 판정 불가로 FAIL) · (b) `secrets/**` 파일의 ES와 같은 이름이 배달자 밖 소스에도 있으면 FAIL
+#                           위치 판정 불가로 FAIL · 별칭으로 적은 항목은 풀어서 본다 · base 목록을 yq로 풀어 읽지 못하면 FAIL)
+#                           · (b) `secrets/**` 파일의 ES와 같은 이름이 배달자 밖 소스에도 있으면 FAIL
 #                           · (c) `secrets/**` 파일의 ES가 platform/secrets 렌더에 없으면 죽은 선언(kustomize 있을 때) ·
 #                           (d) secrets/* 를 가리키는 Application 금지(multi-source 포함) + 배달자를 적용하는 Application 필요
 #                           · (e) (T045 G4) 변환 키 금지 — 배달자 최상위 키 = {apiVersion,kind,resources}, secrets/** 의
@@ -100,6 +109,60 @@
 #   10.0 REL-render         fail-closed: 렌더 없음(kustomize build 실패 — 차트의 `fail` 가드 포함) · Deployment 부재·중복 ·
 #                           yq 추출 실패 · 저장소 루트에서 platform/reloader 부재. 부분 트리 픽스처에 platform/reloader가 없으면 대상 없음
 #   10.0 REL-args           fail-closed: 같은 args에 제어 문자(개행·CR·탭 등)가 든 인자(10.2는 JSON으로 비교하므로 그대로 판정한다)
+#   11   FMT                (T047 · 계약 §validate.yml 4 「(T047) 형식별 정책」) Argo가 읽을 수 있는 형식마다 검사 또는 금지:
+#   11.0 FMT-alias          fail-closed: 문서를 yq explode(.)로 풀어 읽지 못했다(맵이 아닌 값을 가리키는 병합 키 등) · 풀었는데 최상위 items가
+#                           별칭으로 남았다 — 목록 객체인지 판정할 수 없다. 11.1–11.4는 앵커·별칭·병합 키(<<)를 푼 문서로 판정한다(아래 YQ_DOCS 주석 —
+#                           `items: *anchor`도 목록이다)
+#   11.1 FMT-list           목록 객체 금지 — 문서의 kind가 List(items 유무 무관)이거나 최상위 items가 목록(시퀀스)이면 FAIL. 대상 = 파일
+#                           열거(tests/·charts/ 제외)의 모든 YAML + kustomize 렌더. 계약 문면(<Kind>List + items)보다 넓은 것은 보강이다:
+#                           Argo는 kind와 무관하게 최상위 items 목록을 풀어 원소를 적용한다(check_11_formats 머리 주석)
+#   11.2 FMT-appset         kind: ApplicationSet(apiVersion argoproj.io/…) 금지 — 파일 + 렌더
+#   11.3 FMT-dirsource      directory source 경로(7.4와 같은 Application 집합의 source path 중 kustomization 파일이 없는 디렉터리 —
+#                           Argo가 렌더 없이 디렉터리째 읽는다): 바로 아래 심볼릭 링크 금지(파일 · 디렉터리 · 대상 없는 링크 — 파일 열거는 링크를
+#                           세지 않는데 Argo는 저장소 안 링크를 따라 읽는다) · *.json·*.jsonnet·*.libsonnet 금지 · 하위 디렉터리 금지 ·
+#                           절대 경로·저장소 밖 경로 FAIL(fail-closed) · 트리에 없는 경로는 건너뜀(부분 트리)
+#   11.4 FMT-dirsource-kind directory source 경로 바로 아래 *.yaml·*.yml **일반 파일**(링크는 따라가지 않는다 — 11.3이 건다)의 모든 문서 =
+#                           kind: Application(argoproj.io/…) — 빈 문서는 건너뛰고 kind 없는 문서는 FAIL(fail-closed). Application에 최상위 items
+#                           목록이 있어도 FAIL(보강 — 11.1과 같은 이유). 렌더를 보는 검사(10 · 13)가 이 경로를 보지 않아도 되는 근거다
+#   11.5 FMT-symlink        (계약 형식별 정책 「심볼릭 링크」 행) --root 트리 어디든(.git/ 제외 · 루트의 tests/ 포함) 심볼릭 링크 금지 — 파일 열거와
+#                           kustomization 열거는 링크를 세지 않는데 Argo와 kustomize는 따라 읽는다(컴포넌트 디렉터리가 링크면 모든 검사의 시야 밖에서
+#                           렌더된다): ① 작업 트리의 링크(find -type l — 파일 · 디렉터리 · 깨진 링크)마다 FAIL(트리를 다 훑지 못하면 fail-closed)
+#                           ② --root가 git 작업 트리 안이면 인덱스(git ls-files -s)의 모드 120000마다 FAIL(Windows 체크아웃 core.symlinks=false는 링크를
+#                           일반 파일로 푼다). git이 없거나 작업 트리가 아니거나 읽지 못하면 그 사실을 한 줄로 적고 ①로만 판정(①은 항상 돈다 · yq 없이 돈다)
+#   12   HELM              (T047 · 계약 §validate.yml 4 「(T047) 차트 저장소 허용 목록」·「charts/」·「--enable-helm」)
+#   12.1 HELM-repo          helmCharts[] 항목마다 (name, repo) = HELM_CHART_TABLE의 한 행(글자 단위 정확 일치 — 대소문자·끝의 '/' 포함) ·
+#                           name·repo 필수(repo 없는 로컬 차트 금지). 대상 = 모든 kustomization + 그것들이 base로 끌어오는 로컬
+#                           kustomization(파일 열거 밖 — tests/·charts/ 아래 — 도 포함. 같은 빌드에서 인플레이트되기 때문이다)
+#   12.2 HELM-version       helmCharts[] 항목마다 version이 비어 있지 않다(값은 표로 고정하지 않는다)
+#   12.3 HELM-legacy        kustomization 최상위 helmGlobals·helmChartInflationGenerator 금지 · generators·transformers가 부르는 파일(문서 안
+#                           어디든 — kind: List로 감싼 것 · 별칭 포함)과 파일 열거의 YAML에 kind: HelmChartInflationGenerator 금지 · 그 파일을
+#                           yq로 풀어 읽지 못하면 FAIL(fail-closed)
+#                           12.1–12.3은 검사 1 **전에** 판정한다(helm_src_scan) — 걸린 kustomization과 그것을 base로 끌어오는 kustomization은
+#                           검사 1이 렌더하지 않고 `1 KUST` FAIL로 남긴다(허용하지 않은 출처에서 차트를 받아 오지 않는다). 줄은 검사 12가 찍는다
+#   12.4 HELM-argocd        helmCharts를 쓰는 kustomization이 있으면 bootstrap/argocd **렌더**의 ConfigMap argocd/argocd-cm
+#                           data."kustomize.buildOptions"를 공백(Go strings.Fields와 같은 집합)으로 나눈 낱말 중 --enable-helm · --enable-helm=<값>이
+#                           pflag로 읽어 참이다: 낱말을 차례로 읽어 마지막 값이 이기고(=<참값> 1·t·T·TRUE·true·True / =<거짓값>), 참·거짓 낱말이 아닌
+#                           값이 하나라도 있으면 FAIL(pflag가 그 자리에서 멈춘다). 저장소 루트에서 bootstrap/argocd가 없으면 FAIL, 부분 트리(픽스처)
+#                           에서는 대상 없음
+#   12.5 HELM-chartsdir     이름이 charts인 디렉터리(.git · 루트 tests/ 제외)는 helmCharts를 쓰는 kustomization 바로 아래(인플레이트 캐시)에만.
+#                           캐시 안(받은 차트의 하위 차트 charts/)은 보지 않는다 — 파일 열거와 7.4의 파일 찾기가 */charts/*를 통째로
+#                           건너뛰므로 그 밖의 charts(예: pod 이름이 charts)는 모든 검사의 시야 밖이 된다. 캐시가 생기기 전후 결과가 같다
+#   13   RBAC               (T047 · 계약 §validate.yml 4 「(T047) 권한 경계 — 문자열이 아니라 규칙 구조로 본다」) kustomize **렌더 전부**를 합친 RBAC
+#                           객체(apiVersion rbac.authorization.k8s.io/… · kind Role·ClusterRole·RoleBinding·ClusterRoleBinding). 기준선 = RBAC_* 표
+#                           (2026-09-29 main 82dd85e 실측). 렌더만 보면 되는 전제 = 11.4(directory source 경로의 문서는 Application뿐) · 11.5(링크 금지 —
+#                           링크된 컴포넌트는 kustomization 열거 밖에서 렌더된다)
+#   13.1 RBAC-token         토큰 발급 규칙(규칙 하나 안에서 apiGroups ∋ ""|* · verbs ∋ create|* · resources ∋ serviceaccounts/token|serviceaccounts/*|*|*/*|*/token)을
+#                           가진 역할 = 기준선 둘: ① ClusterRole argocd-application-controller(이름만) ② Role external-secrets/eso-token-create(토큰 발급
+#                           규칙 1개 · apiGroups·resources·verbs 목록 정확 일치 · resourceNames 집합 정확 일치). 같은 이름은 나타난 것마다 판정
+#   13.2 RBAC-extref        어느 렌더에도 없는 ClusterRole을 가리키는 바인딩 = 기준선 둘(바인딩 kind·이름·대상 이름) · RoleBinding → Role은 같은 ns에
+#                           렌더된 Role만 · ClusterRoleBinding → Role 금지 · roleRef.kind는 Role·ClusterRole만
+#   13.3 RBAC-builtin-name  렌더된 ClusterRole의 이름이 cluster-admin·admin·edit·view이거나 system:으로 시작하면 FAIL(13.2의 "렌더에 있는가" 판별을 지킨다)
+#   13.4 RBAC-subject       모든 바인딩의 주체 = kind ServiceAccount + name·namespace 비어 있지 않음(User·Group 금지) · subjects는 목록
+#   13.5 RBAC-reloader-subject  주체 ServiceAccount reloader/reloader를 가진 바인딩은 platform/reloader 렌더에만(그 렌더 안의 장수·모양은 검사 10)
+#   13.6 RBAC-aggregation   aggregationRule을 가진 ClusterRole 금지 · aggregate-to-* 라벨(값 무관)을 가진 ClusterRole = 기준선 다섯
+#   13.0 RBAC-render        fail-closed: yq 추출 실패 · 추출 행의 모양 이상 · 렌더가 없는 kustomization(빌드 실패·건너뜀 — 합친 집합이 불완전) — 그룹 PASS
+#                           줄을 찍지 않는다. "기준선의 것이 있는가"(완전성)는 --root가 저장소 루트일 때만 보고(13.0이 나면 보지 않는다), 부분 트리에
+#                           RBAC 객체가 없으면 대상 없음
 #
 # 입력(환경변수 또는 인자):
 #   --root <dir>            | VALIDATE_ROOT        검사 대상 트리(기본: 저장소 루트). 저장소 밖은 거부
@@ -394,6 +457,71 @@ APP_REPO_URL='https://github.com/joshua92y/platform-gitops.git'
 APP_TARGET_REV='main'
 APP_SOURCE_KEYS='path,repoURL,targetRevision'   # 허용 키 집합(사전순 — yq `keys | sort | join(",")`의 모양)
 
+# 검사 12 — 계약 §validate.yml 4 「(T047) 차트 저장소 허용 목록」의 코드 사본: <차트 name> <repo>.
+#   kustomize helmCharts 인플레이트는 AppProject sourceRepos의 통제 밖이라(Application source는 이 저장소뿐이다) 이 표가 차트 출처의
+#   유일한 통제다. 비교는 (name, repo) 쌍의 글자 단위 정확 일치(대소문자·끝의 '/' 포함). 새 차트는 계약 표에 행을 더하는 계약 변경으로
+#   시작하고 이 표에 같은 행을 더한다. 계약 표의 "쓰는 곳" 열은 옮기지 않는다 — 검사하지 않는다(같은 차트를 다른 컴포넌트가 써도 된다 ·
+#   실제 사용처는 12.1 PASS 줄이 적는다). version 값도 표로 고정하지 않는다(차트 올림은 계약 변경이 아니다 — 12.2는 있는지만 본다).
+#   계약이 정본, 이 블록이 유일한 코드 사본이다.
+HELM_CHART_TABLE='
+cert-manager oci://quay.io/jetstack/charts
+external-secrets https://charts.external-secrets.io
+reloader https://stakater.github.io/stakater-charts
+vault https://helm.releases.hashicorp.com
+'
+# 12.4 — Argo CD 설정이 사는 kustomization 디렉터리, 그 렌더의 ConfigMap(ns/이름)과 data 키, 그 값에 있어야 할 낱말.
+#   yq 식(YQ_ARGOCD_CM)이 strenv로 읽으므로 export한다.
+HELM_ARGOCD_DIR='bootstrap/argocd'
+export HELM_ARGOCD_CM_NS='argocd' HELM_ARGOCD_CM='argocd-cm' HELM_ARGOCD_KEY='kustomize.buildOptions' HELM_ARGOCD_FLAG='--enable-helm'
+# 12.4 — 낱말 하나(Go 정규식): Argo CD가 값을 나누는 strings.Fields의 공백(unicode.IsSpace — \t \n \v \f \r 공백 U+0085 U+00A0 U+1680 U+2000–U+200A
+#   U+2028 U+2029 U+202F U+205F U+3000)이 아닌 글자의 연속. RE2의 \s는 [\t\n\f\r ]뿐이라 NBSP 등으로 붙여 쓴 `--enable-helm=false`를 한 낱말 안에 숨긴다.
+#   작은따옴표 안이므로 역슬래시는 글자 그대로 yq(strenv — 이스케이프를 다시 풀지 않는다)를 거쳐 정규식에 간다
+export HELM_ARGOCD_WORD_RE='[^\t\n\v\f\r \x{85}\x{A0}\x{1680}\x{2000}-\x{200A}\x{2028}\x{2029}\x{202F}\x{205F}\x{3000}]+'
+# 12.4 — pflag가 불리언 플래그의 `=<값>`을 읽는 strconv.ParseBool의 참·거짓 낱말(Go 표준 라이브러리 — 이 밖의 값은 오류로 인자 해석이 멈춘다)
+HELM_BOOL_TRUE='1 t T TRUE true True'
+HELM_BOOL_FALSE='0 f F FALSE false False'
+
+# 검사 13 — 계약 §validate.yml 4 「(T047) 권한 경계 — 문자열이 아니라 규칙 구조로 본다」의 코드 사본(기준선 = 2026-09-29 main 82dd85e 실측).
+#   계약이 정본, 이 블록이 유일한 코드 사본이다(README·주석의 목록은 설명이지 대조 기준이 아니다). 기준선을 바꾸는 PR은 계약 문장부터 고친다.
+# 13.1 토큰 발급 규칙의 정의 — 계약 첫째 항목 「`apiGroups`에 `""` 또는 `*`, `verbs`에 `create` 또는 `*`, `resources`에 `serviceaccounts/token` ·
+#   `*` · `*/token` 중 하나가 든 규칙」(Kubernetes RBAC의 ResourceMatches는 `*`와 `*/<subresource>`만 와일드카드로 읽는다 — `*/token`은 2026-09-30
+#   계약에 더해졌다). 초판에 있던 `serviceaccounts/*` · `*/*`는 아무것도 뜻하지 않는 문자열이지만 계약대로 엄격한 쪽으로 그것도 잡는다(목록에 둔다).
+#   규칙 **하나 안에서** 세 목록이 각각 이 집합과 겹치면 토큰 발급 규칙이다(YQ_RBAC_TOKEN_RULE). yq가 env()로 읽으므로 JSON 목록으로 export한다.
+export RBAC_TOKEN_GROUPS='["","*"]' RBAC_TOKEN_VERBS='["create","*"]' RBAC_TOKEN_RESOURCES='["serviceaccounts/token","serviceaccounts/*","*","*/*","*/token"]'
+# 13.1 토큰 발급 규칙을 가져도 되는 역할 — 같은 항목 「정확히 둘이다 — ① … ② …」: <kind> <ns(클러스터 범위는 -)> <이름> <모양>.
+#   모양 any = 이름만 본다(① — 와일드카드 규칙 · GitOps 컨트롤러의 고유 권한, 받아들인 위험) · fixed = 토큰 발급 규칙이 하나이고 그 규칙이 아래
+#   RBAC_TOKEN_FIXED_*와 같다(②). ClusterRole은 ns와 무관하게 이름으로 맞춘다
+RBAC_TOKEN_TABLE='
+ClusterRole - argocd-application-controller any
+Role external-secrets eso-token-create fixed
+'
+# ②의 모양 — 같은 항목 「`apiGroups: [""]` · `resources: [serviceaccounts/token]` · `verbs: [create]` · `resourceNames` = eso-platform·eso-dev·eso-prod·
+#   eso-data·eso-ca-reader(집합 정확 일치)」. 앞의 셋은 yq `to_json(0)`의 모양(목록 정확 일치), 넷째는 공백 구분 집합(순서·중복 무관)
+RBAC_TOKEN_FIXED_GROUPS='[""]'
+RBAC_TOKEN_FIXED_RESOURCES='["serviceaccounts/token"]'
+RBAC_TOKEN_FIXED_VERBS='["create"]'
+RBAC_TOKEN_FIXED_NAMES='eso-platform eso-dev eso-prod eso-data eso-ca-reader'
+# 13.2 어느 렌더에도 없는 ClusterRole(내장 역할 등)을 가리켜도 되는 바인딩 — 계약 둘째 항목 「정확히 둘이다」: <바인딩 kind> <바인딩 이름> <roleRef.name>
+RBAC_EXTREF_TABLE='
+ClusterRoleBinding agent-view-view view
+ClusterRoleBinding vault-server-binding system:auth-delegator
+'
+# 13.3 내장 역할의 이름 — 계약 셋째 항목 「`cluster-admin` · `admin` · `edit` · `view`이거나 `system:`으로 시작하면 실패」
+RBAC_BUILTIN_NAMES='cluster-admin admin edit view'
+RBAC_BUILTIN_PREFIX='system:'
+# 13.6 aggregate-to-* 라벨을 가져도 되는 ClusterRole — 계약 여섯째 항목 「정확히 다섯이다」(라벨 접두 rbac.authorization.k8s.io/aggregate-to-는 YQ_RBAC 안)
+RBAC_AGG_TABLE='
+cert-manager-cluster-view
+cert-manager-edit
+cert-manager-view
+external-secrets-edit
+external-secrets-view
+'
+
+# 검사 4a(T047) — 계약 §이미지·승격 「(T047) 항목마다 `name`과 `digest`가 있어야 하고, 키는 `{name, newName, digest}` 밖에 없어야 한다」의 코드 사본.
+#   계약이 정본, 이 줄이 유일한 코드 사본이다(메시지의 목록도 여기서 만든다). yq가 env()로 읽으므로 JSON 목록으로 export한다(YQ_IMAGES의 E 행)
+export IMG_ENTRY_KEYS='["name","newName","digest"]'
+
 # ExternalSecret 규약 정규식(계약 §validate.yml ExternalSecret 검사)
 RE_KEY='^(platform|dev|prod)/[a-z0-9_./-]+$'
 RE_WORKERS='^(dev|prod)/(access|web)/'
@@ -411,6 +539,7 @@ RE_LOC_SECRET_STORES='^platform/secret-stores(/|$)'
 RE_LOC_POLICIES_ALL='^platform/policies(/|$)'
 RE_CIDR='^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}/[0-9]{1,2}$'
 RE_DIGEST='^sha256:[0-9a-f]{64}$'
+RE_ARGO_API='^argoproj\.io/'   # 11.2 · 11.4 — Argo CD의 API 그룹(점까지 글자 그대로)
 RE_BOT_FILE='^apps/[^/]+/overlays/dev/kustomization\.yaml$'
 RE_BOT_LINE='^[[:space:]]*(-[[:space:]]*)?digest:[[:space:]]*sha256:[0-9a-f]{64}[[:space:]]*$'
 RE_PORT_KEY='(^|\.)(port|[a-z]+Port[A-Za-z]*)$'
@@ -455,6 +584,16 @@ norm_rel() { # <기준 디렉터리(ROOT 기준, 빈 문자열 = ROOT)> <항목>
   done
   local IFS='/'
   printf '%s' "${out[*]}"
+}
+
+# 디렉터리의 kustomization 파일(절대 경로) — kustomize와 Argo CD가 kustomization으로 보는 이름 3개(argo-cd v3.5.2 util/kustomize
+#   KustomizationNames) 중 첫 번째. 없으면 1(검사 11.3 directory source 판정 · 12.x base 추적 · 12.5 캐시 자리 판정)
+kust_file_in() { # <디렉터리(절대 경로)>
+  local kn
+  for kn in kustomization.yaml kustomization.yml Kustomization; do
+    if [[ -f "$1/$kn" ]]; then printf '%s' "$1/$kn"; return 0; fi
+  done
+  return 1
 }
 
 # -----------------------------------------------------------------------------
@@ -504,6 +643,18 @@ need_tool() {
 export YQ_SEP=$'\x1f'
 # 값 안에 쉼표가 들어갈 수 있는 목록(5.6의 cidr)은 RS(0x1e)로 잇는다 — 쉼표 join은 값 하나와 목록을 구분하지 못한다
 export YQ_SEP2=$'\x1e'
+# 앵커·별칭·병합 키(<<) — (T047 G4 리뷰 A1 · 계약 형식별 정책 「목록 객체」 행 「YAML 별칭(`items: *anchor`)으로 참조한 목록도 풀어서 본다」)
+#   yq v4.53.6은 별칭 노드의 종류를 `alias`(태그는 빈 값)로 보고하고, has()는 병합으로 들어온 키를 보지 못하며, `.kind == "…"` 비교는 별칭을 문자열로
+#   보지 않는다. Argo의 디코더(sigs.k8s.io/yaml — go-yaml v2)와 kustomize는 풀어서 읽는다 — `items: *seq`인 문서는 Argo에게 목록 객체다(2026-09-30
+#   리뷰가 실행으로 재현: 11.1 · 11.4를 지나 안의 Namespace가 적용된다). 그래서 형식 판정과 그 판정이 받아들인 문서를 다시 보는 식은 **판정 전에
+#   explode(.)로 푼다**: YQ_DOCS(11 · 12.3) · YQ_APP(2 · 7.1) · YQ_APP_SRC(7.4) · YQ_APP_PATHS(7.3 ⓓ · 11.3) · YQ_KUST_BASES(7.3 ⓐ) ·
+#   YQ_HELM_SCAN(12.1–12.3) · YQ_LEGACY_GEN(12.3). 11.4가 풀어서 `kind: *k` Application을 받아들이면 풀지 않는 2 · 7.x는 그 문서를 통째로 지나치므로
+#   (`select(.kind == "Application")`이 별칭을 보지 못한다) 같은 문서를 보는 식을 함께 푼다. 병합 키의 우선순위는 yq 기본값
+#   (--yaml-fix-merge-anchor-to-spec=false — 명시 키와 병합은 문서 순서로 뒤의 것이 이기고, 병합 목록 `<<: [*a, *b]`는 앞 원소가 이긴다)이 go-yaml v2와
+#   같다(2026-09-30 실측 4경우 · 풀지 않고 읽으면 병합 목록에서 어긋난다 — 픽스처 fmt/list/misc/merge-order-carrier.yaml이 이 의미를 고정한다).
+#   풀지 못하는 문서(맵이 아닌 값을 가리키는 병합 키 등 — go-yaml v2 · kustomize도 거부한다)는 yq가 실패하고, 그 식을 쓰는 검사가 fail-closed로 FAIL한다
+#   (11.0 FMT-alias · 7.3 ⓐ · 12.1 · 12.3 · 그 밖은 collect_rows의 "yq 추출 실패"). kustomize 렌더에는 별칭이 없다(새로 직렬화한 출력) — 파일 쪽 문제다.
+#   풀지 않는 식(YQ_ES 등 렌더로도 보는 검사 · YQ_IMAGES — 4a는 별칭 항목을 FAIL로 둔다)은 그대로다.
 
 # shellcheck disable=SC2016  # 아래 $ps·$ns·$n·$r·$c 는 yq 변수이지 셸 변수가 아니다
 # 주의: yq v4는 없는 경로를 traverse하면 그 키를 만들어 버린다(`.extract.key` 한 번이면 find 항목에도 `extract`가 생겨
@@ -512,7 +663,7 @@ YQ_ES='select(.kind == "ExternalSecret") | [ (.apiVersion // "-"), (.metadata.na
 # shellcheck disable=SC2016
 # (yq v4의 `,` 합집합은 수집자 안에서 두 번째 가지를 잃으므로 배열 셋을 `+`로 이어 붙인다)
 YQ_WL='select(.kind == "Deployment" or .kind == "StatefulSet" or .kind == "DaemonSet" or .kind == "Job" or .kind == "CronJob") | (.spec.jobTemplate.spec.template.spec // .spec.template.spec // {}) as $ps | (($ps.containers // []) + ($ps.initContainers // [])) as $cs | [ .kind, (.metadata.namespace // "-"), (.metadata.name // "-"), ($ps.automountServiceAccountToken | tostring), (([ $cs[] | (.envFrom // [])[] | .secretRef.name | select(. != null) ] + [ $cs[] | (.env // [])[] | .valueFrom.secretKeyRef.name | select(. != null) ] + [ ($ps.volumes // [])[] | .secret.secretName | select(. != null) ]) | join(",")) ] | join(strenv(YQ_SEP))'
-YQ_APP='select(.kind == "Application" and ((.apiVersion // "") | test("^argoproj.io/"))) | [ (.metadata.name // "-"), ((.metadata.annotations["argocd.argoproj.io/sync-wave"] // "-") | tostring), (.spec.source.path // ((.spec.sources // [])[0].path // "-")), ((.spec.syncPolicy.syncOptions // []) | join(";")) ] | join(strenv(YQ_SEP))'
+YQ_APP='explode(.) | select(.kind == "Application" and ((.apiVersion // "") | test("^argoproj.io/"))) | [ (.metadata.name // "-"), ((.metadata.annotations["argocd.argoproj.io/sync-wave"] // "-") | tostring), (.spec.source.path // ((.spec.sources // [])[0].path // "-")), ((.spec.syncPolicy.syncOptions // []) | join(";")) ] | join(strenv(YQ_SEP))'
 YQ_NS='select(.kind == "Namespace") | (.metadata.name // "-")'
 YQ_NP='select(.kind == "NetworkPolicy") | [ (.metadata.namespace // "-"), (.metadata.name // "-") ] | join(strenv(YQ_SEP))'
 # shellcheck disable=SC2016
@@ -534,19 +685,33 @@ YQ_NP_EGRESS_PORTS='select(.kind == "NetworkPolicy") | (.metadata.namespace // "
 # shellcheck disable=SC2016
 YQ_LR='select(.kind == "LimitRange") | (.metadata.namespace // "-") as $ns | (.metadata.name // "-") as $n | (.spec.limits // [])[] | [ $ns, $n, (.type // "-"), ((.default.cpu // "-") | tostring), ((.max.cpu // "-") | tostring) ] | join(strenv(YQ_SEP))'
 YQ_POLICY_KINDS='select(.kind == "Namespace" or .kind == "NetworkPolicy" or .kind == "ResourceQuota" or .kind == "LimitRange") | .kind + "/" + (.metadata.name // "-")'
-YQ_IMAGES='(.images // [])[] | [ (.name // "-"), (.newName // "-"), ((.newTag // "-") | tostring), (.digest // "-") ] | join(strenv(YQ_SEP))'
-# 7.3 — kustomization의 base 참조(resources·bases·components 전부. 셋을 `+`로 잇는다: yq v4의 `,` 합집합은 수집자 안에서 가지를 잃는다)
-YQ_KUST_BASES='((.resources // []) + (.bases // []) + (.components // []))[] | select(tag == "!!str")'
+# 검사 4a — kustomization 1개 = yq 1번. 행의 첫 필드가 종류다(문서마다 D → E… → O 순서로 나온다):
+#   D  문서: 노드 종류 · 태그 · images의 노드 종류 · 태그(images 키가 없거나 문서가 맵이 아니면 none)
+#   E  images가 목록일 때 항목마다: 번호(0-기반) · 항목 노드 종류 · 태그 · name 유무 · name 태그 · digest 유무 · digest 태그 · digest(JSON) · newTag 유무 ·
+#      IMG_ENTRY_KEYS 밖 키(JSON — newTag 포함) · 같은 것(newTag 제외) · 중복 키(JSON) · 그리고 O 행과 같은 방법으로 읽은 name · newTag · digest
+#      (4a IMG-newTag가 그 항목에 이미 찍었는지를 셸이 판단한다 — 같은 결함을 두 코드가 두 번 찍지 않게)
+#   O  기존 4a IMG-newTag의 추출(T047 이전의 YQ_IMAGES 식 그대로 — 없으면 '-'): name · newName · newTag · digest. 기존 판정(줄 · 개수 · 건너뛰는
+#      항목)이 그대로이도록 식을 바꾸지 않는다 — 이 행으로는 "name 없음"과 "값이 '-'"를 구분하지 못하므로 새 판정은 E 행의 유무 필드를 쓴다
+#   ⚠ 가지(`,`)는 같은 문서 노드를 왼쪽부터 차례로 본다 — O 가지의 `.images`·`.name`·`.newTag`·`.digest`는 없는 키를 **만든다**(YQ_CSS 주석). O 가지를
+#     맨 뒤에 두지 않으면 D·E의 has()·keys·kind가 만들어진 키를 본다(2026-09-30 실측 — 모든 항목이 newTag 있음으로, 주석뿐인 문서가 맵으로 읽혔다).
+#     D·E 가지는 has()로 거른 뒤에만 traverse한다. 수집자 `[...]`는 선택되지 않은 문서마다 빈 줄을 낸다(yq_lines가 지운다)
+#   ⚠ yq v4.53.6의 `-`는 오른쪽부터 묶인다 — `a - b - c`는 `a - (b - c)`다(2026-09-30 실측: `10 - 3 - 2` = 9). 빼는 목록은 `+`로 합쳐 한 번에 뺀다
+# shellcheck disable=SC2016  # $k·$ek·$et·$ks·$hn·$hd·$ht·$nt·$dt·$dj 는 yq 변수다
+YQ_IMAGES='( [ "D", kind, tag, ((select(kind == "map") | select(has("images")) | .images | kind) // "none"), ((select(kind == "map") | select(has("images")) | .images | tag) // "none") ] | join(strenv(YQ_SEP)) ), ( select(kind == "map") | select(has("images")) | .images | select(kind == "seq") | to_entries[] | .key as $k | .value | kind as $ek | tag as $et | ((select(kind == "map") | keys | map(tostring)) // []) as $ks | ((select(kind == "map") | has("name")) // false | tostring) as $hn | ((select(kind == "map") | has("digest")) // false | tostring) as $hd | ((select(kind == "map") | has("newTag")) // false | tostring) as $ht | ((select(kind == "map") | select(has("name")) | .name | tag) // "-") as $nt | ((select(kind == "map") | select(has("digest")) | .digest | tag) // "-") as $dt | ((select(kind == "map") | select(has("digest")) | .digest | to_json(0)) // "-") as $dj | [ "E", ($k | tostring), $ek, $et, $hn, $nt, $hd, $dt, $dj, $ht, (($ks - env(IMG_ENTRY_KEYS)) | to_json(0)), (($ks - (env(IMG_ENTRY_KEYS) + ["newTag"])) | to_json(0)), ($ks | group_by(.) | map(select(length > 1) | .[0]) | to_json(0)), ((select(kind == "map") | .name) // "-"), (((select(kind == "map") | .newTag) // "-") | tostring), ((select(kind == "map") | .digest) // "-") ] | join(strenv(YQ_SEP)) ), ( (.images // [])[] | [ "O", (.name // "-"), (.newName // "-"), ((.newTag // "-") | tostring), (.digest // "-") ] | join(strenv(YQ_SEP)) )'
+# 7.3 — kustomization의 base 참조(resources·bases·components 전부. 셋을 `+`로 잇는다: yq v4의 `,` 합집합은 수집자 안에서 가지를 잃는다).
+#   별칭으로 적은 항목(`- *b`)은 풀어서 본다 — kustomize 5.8.1은 풀어서 그 base를 빌드한다(2026-09-30 실측). 풀지 않으면 별칭 노드의 태그는 빈 값이라
+#   `tag == "!!str"`이 건너뛰었다(위 「앵커·별칭·병합 키」)
+YQ_KUST_BASES='explode(.) | ((.resources // []) + (.bases // []) + (.components // []))[] | select(tag == "!!str")'
 # 7.3 — Application의 **모든** source path(단일 `.spec.source` + multi-source `.spec.sources[]`).
 #   YQ_APP(검사 2·7.1 공용)은 `.spec.sources[0]`만 보므로 두 번째 source가 검사 밖으로 빠진다 — 그 구멍을 여기서 막는다.
 # shellcheck disable=SC2016  # $n 은 yq 변수다
-YQ_APP_PATHS='select(.kind == "Application" and ((.apiVersion // "") | test("^argoproj.io/"))) | (.metadata.name // "-") as $n | (([.spec.source.path] + [(.spec.sources // [])[].path]) | map(select(. != null)))[] | [ $n, . ] | join(strenv(YQ_SEP))'
+YQ_APP_PATHS='explode(.) | select(.kind == "Application" and ((.apiVersion // "") | test("^argoproj.io/"))) | (.metadata.name // "-") as $n | (([.spec.source.path] + [(.spec.sources // [])[].path]) | map(select(. != null)))[] | [ $n, . ] | join(strenv(YQ_SEP))'
 # 7.4 — Application 1개 = 1행: 이름 · `spec.source` 유무 · `spec.sources` 유무 · `spec.sourceHydrator` 유무 · 최상위 `operation` 유무 ·
 #   source 키 집합(정렬) · repoURL · targetRevision.
 #   ⚠ yq v4가 없는 경로를 traverse하면 그 키를 만들어 버리므로 유무(`has`)와 `keys`는 source를 traverse하기 **전에** 바인딩한다.
 #   spec·source가 맵이 아니면 has/keys가 실패한다 → collect_rows가 "yq 추출 실패"로 FAIL(fail-closed).
 # shellcheck disable=SC2016  # $ho·$sp·$s·$hs·$hss·$hh·$sk 는 yq 변수다
-YQ_APP_SRC='select(.kind == "Application" and ((.apiVersion // "") | test("^argoproj.io/"))) | (has("operation") | tostring) as $ho | (.spec // {}) as $sp | (($sp | has("source")) | tostring) as $hs | (($sp | has("sources")) | tostring) as $hss | (($sp | has("sourceHydrator")) | tostring) as $hh | ($sp.source // {}) as $s | (($s | keys | sort) | join(",")) as $sk | [ (.metadata.name // "-"), $hs, $hss, $hh, $ho, $sk, (($s.repoURL // "-") | tostring), (($s.targetRevision // "-") | tostring) ] | join(strenv(YQ_SEP))'
+YQ_APP_SRC='explode(.) | select(.kind == "Application" and ((.apiVersion // "") | test("^argoproj.io/"))) | (has("operation") | tostring) as $ho | (.spec // {}) as $sp | (($sp | has("source")) | tostring) as $hs | (($sp | has("sources")) | tostring) as $hss | (($sp | has("sourceHydrator")) | tostring) as $hh | ($sp.source // {}) as $s | (($s | keys | sort) | join(",")) as $sk | [ (.metadata.name // "-"), $hs, $hss, $hh, $ho, $sk, (($s.repoURL // "-") | tostring), (($s.targetRevision // "-") | tostring) ] | join(strenv(YQ_SEP))'
 YQ_HELM_COUNT='(.helmCharts // []) | length'
 # shellcheck disable=SC2016
 YQ_HELM_LEAVES='(.helmCharts // [])[] | (.name // "-") as $c | (.valuesInline // {}) | [.. | select(tag == "!!int" or tag == "!!str") | {"p": (path | join(".")), "v": (. | tostring)}] | .[] | [ $c, .p, .v ] | join(strenv(YQ_SEP))'
@@ -562,6 +727,55 @@ YQ_CSS_VAULT='select(.kind == "ClusterSecretStore") | select((.spec.provider // 
 YQ_CSS_COND='select(.kind == "ClusterSecretStore") | (.spec.conditions // []) as $c | ([$c[] | keys[]] | unique | sort | join(",")) as $ckeys | [ (.metadata.name // "-"), (($c | length) | tostring), $ckeys, ([$c[] | (.namespaces // [])[]] | join(",")) ] | join(strenv(YQ_SEP))'
 # shellcheck disable=SC2016
 YQ_CSS_K8S='select(.kind == "ClusterSecretStore") | select((.spec.provider // {}) | has("kubernetes")) | .spec.provider.kubernetes as $k | ($k.auth // {}) as $a | (($a | keys | sort) | join(",")) as $akeys | ($a.serviceAccount // {}) as $sa | (($sa | keys | sort) | join(",")) as $sakeys | ($k.server // {}) as $srv | [ (.metadata.name // "-"), ($k.remoteNamespace // "-"), ($srv.url // "-"), (($srv.caProvider // {}).namespace // "-"), $akeys, ($sa.name // "-"), ($sa.namespace // "-"), $sakeys ] | join(strenv(YQ_SEP))'
+# 검사 11 · 12.3 — 문서 1개 = 1행: 순번(1-기반) · 노드 종류(map|seq|scalar) · 태그 · kind 키 유무 · kind · apiVersion · 최상위 items의
+#   노드 종류(없으면 -) · metadata.name. 맵이 아닌 문서(빈 문서 = scalar + !!null)에서는 키를 traverse하지 않는다(yq v4는 시퀀스 문서의
+#   `.kind`에서 오류로 멈춘다). 태그가 아니라 노드 종류(`kind` 연산자)로 보므로 커스텀 태그(`--- !Foo {…}`)가 붙은 맵도 맵이다.
+#   문서를 explode(.)로 푼 뒤 본다(위 「앵커·별칭·병합 키」 — `items: *seq`의 items는 seq, `<<: *m`으로 들인 items도 보인다). 풀지 못하면 yq가 실패하고
+#   (collect_doc_rows → 11.0), 풀었는데 items 종류가 alias로 남으면 11.1이 11.0으로 건다(fail-closed — yq v4.53.6의 explode는 풀거나 실패한다: 실측)
+YQ_DOCS='explode(.) | [ ((document_index + 1) | tostring), kind, tag, ((select(kind == "map") | has("kind")) // false | tostring), ((select(kind == "map") | .kind | select(kind == "scalar")) // "-" | tostring), ((select(kind == "map") | .apiVersion | select(kind == "scalar")) // "-" | tostring), ((select(kind == "map") | select(has("items")) | .items | kind) // "-"), ((select(kind == "map") | .metadata | select(kind == "map") | .name | select(kind == "scalar")) // "-" | tostring) ] | join(strenv(YQ_SEP))'
+# 12.1–12.3 사전 판정 — kustomization 파일 1개 = yq 1번. 행의 첫 필드가 종류다:
+#   K  최상위: helmGlobals 유무 · helmChartInflationGenerator 유무 · helmCharts 태그(없으면 none)
+#   E  helmCharts 항목: 번호(1-기반) · name 유무 · name · repo 유무 · repo · version 유무 · version(항목이 맵이 아니면 유무 false · 값 '')
+#   G  generators·transformers의 문자열 항목(레거시 생성기 설정 파일이나 kustomization 디렉터리를 가리킬 수 있다)
+#   B  resources·bases·components의 문자열 항목(base로 끌려오는 kustomization — 같은 --enable-helm 빌드에서 그 helmCharts도 인플레이트된다)
+#   최상위의 `,`는 가지를 모두 낸다(수집자 `[...]` 안에서만 두 번째 가지를 잃는다). 선택되지 않은 가지가 빈 줄을 낼 수 있어 빈 줄은 버린다.
+#   문서를 explode(.)로 푼 뒤 본다(위 「앵커·별칭·병합 키」 — 병합으로 들인 helmGlobals · 별칭으로 적은 base 항목 `- *b`도 보인다: kustomize 5.8.1은
+#   풀어서 그 base의 helmCharts까지 인플레이트한다 — 2026-09-30 실측). ⚠ yq v4.53.6에서 `,`는 `|`보다 느슨하게 묶인다(`a | b, c` = `(a | b), c` —
+#   2026-09-30 실측) — 네 가지를 괄호로 감싸 모두 푼 문서에서 돌게 한다. (괄호가 없어도 오늘은 결과가 같다: explode(.)는 문서 노드를 제자리에서
+#   바꾸므로 뒤 가지도 푼 문서를 본다 — 2026-09-30 실측 · 변이 M6b가 살아남은 이유. 그 부수 효과에 기대지 않으려고 괄호를 둔다.)
+#   풀지 못하면 yq가 실패한다(helm_src_scan이 12.1로 FAIL — fail-closed)
+# shellcheck disable=SC2016  # $k 는 yq 변수다
+YQ_HELM_SCAN='explode(.) | ( ( [ "K", (has("helmGlobals") | tostring), (has("helmChartInflationGenerator") | tostring), ((select(has("helmCharts")) | .helmCharts | tag) // "none") ] | join(strenv(YQ_SEP)) ), ( select(has("helmCharts") and (.helmCharts | tag) == "!!seq") | .helmCharts | to_entries[] | .key as $k | .value | [ "E", (($k + 1) | tostring), ((select(kind == "map") | has("name")) // false | tostring), ((select(kind == "map") | .name) // "" | tostring), ((select(kind == "map") | has("repo")) // false | tostring), ((select(kind == "map") | .repo) // "" | tostring), ((select(kind == "map") | has("version")) // false | tostring), ((select(kind == "map") | .version) // "" | tostring) ] | join(strenv(YQ_SEP)) ), ( ((.generators // []) + (.transformers // []))[] | select(tag == "!!str") | "G" + strenv(YQ_SEP) + . ), ( ((.resources // []) + (.bases // []) + (.components // []))[] | select(tag == "!!str") | "B" + strenv(YQ_SEP) + . ) )'
+# 12.3 — generators·transformers가 가리키는 파일에 레거시 생성기 설정이 있는가. 문서를 explode(.)로 푼 뒤 **모든 맵**(`..` — 최상위 문서뿐 아니라
+#   `kind: List`의 items 안 등)에서 kind가 HelmChartInflationGenerator인 것의 kind를 낸다(2026-09-30 G4 리뷰 A3 — kustomize는 생성기 설정 파일의 List를
+#   풀어 생성기를 돌린다. 최상위 kind만 보면 List로 감싼 생성기를 지나친다). has("kind")로 거른 뒤에만 .kind를 읽는다(없는 키를 만들지 않게 — YQ_CSS
+#   주석). 문자열 리터럴이 아니라 .kind를 낸다(리터럴은 선택되지 않은 문서마다에도 나온다 — 검사 10 주석). 풀지 못하면 yq가 실패한다(12.3 FAIL)
+YQ_LEGACY_GEN='explode(.) | .. | select(kind == "map") | select(has("kind")) | select((.kind | tostring) == "HelmChartInflationGenerator") | .kind'
+# 12.4 — 렌더의 ConfigMap argocd/argocd-cm 1개 = 1행: data에서 그 키의 개수(0|1) · 값(JSON 한 줄 — 줄바꿈이 든 블록 값도 한 줄로
+#   이스케이프된다) · 값을 낱말(HELM_ARGOCD_WORD_RE — Go strings.Fields와 같은 공백으로 나눈 조각)로 나눠 `--enable-helm` · `--enable-helm=…`인
+#   낱말만 순서대로(각각 JSON 문자열 · 공백 하나로 잇는다 — 낱말에는 공백이 없고 JSON은 제어 문자를 이스케이프하므로 US·줄바꿈도 없다). Argo CD는
+#   이 값을 strings.Fields로 나눠 kustomize 인자로 붙인다(argo-cd v3.5.2 util/kustomize parseKustomizeBuildOptions) — 글자 포함(`--enable-helmfoo`)이
+#   아니라 낱말이다. 참·거짓 판정(pflag — 마지막 값 · 읽지 못하는 값)은 셸이 한다(check_12_helm — yq v4.53.6에는 if가 없다)
+# shellcheck disable=SC2016  # $d·$e 는 yq 변수다
+YQ_ARGOCD_CM='select(kind == "map") | select(((.kind // "") | tostring) == "ConfigMap" and ((.metadata.name // "") | tostring) == strenv(HELM_ARGOCD_CM) and ((.metadata.namespace // "") | tostring) == strenv(HELM_ARGOCD_CM_NS)) | (.data // {}) as $d | ($d | to_entries | map(select(.key == strenv(HELM_ARGOCD_KEY)))) as $e | [ (($e | length) | tostring), (($e[0].value // "") | tostring | to_json(0)), ([ ($e[0].value // "") | tostring | match(strenv(HELM_ARGOCD_WORD_RE); "g") | .string | select(test("^" + strenv(HELM_ARGOCD_FLAG) + "(=|$)")) ] | map(to_json(0)) | join(" ")) ] | join(strenv(YQ_SEP))'
+# 13.1 — 규칙(맵) 하나가 토큰 발급 규칙인가: apiGroups · verbs · resources가 각각 RBAC_TOKEN_* 집합과 겹친다(교집합 = a - (a - b)). 목록이 아니거나
+#   없는 필드는 빈 목록이다(토큰 발급 규칙이 아니다 — API 서버도 받지 않는다). apiGroups의 원소 null은 ""로 읽는다(API 서버가 JSON null을 빈
+#   문자열로 풀어 core 그룹이 된다). ⚠ `X as $v | …`를 셋 이어 `and`로 묶으면 yq v4.53.6이 앞 바인딩을 잃고 거짓을 낸다(2026-09-30 실측) —
+#   조건마다 바인딩을 괄호 안에 가둔다.
+# shellcheck disable=SC2016  # $ag·$vb·$rs 는 yq 변수다
+YQ_RBAC_TOKEN_RULE='((((((.apiGroups | select(kind == "seq")) // []) | map(. // "")) as $ag | ($ag - ($ag - env(RBAC_TOKEN_GROUPS))) | length) > 0) and ((((.verbs | select(kind == "seq")) // []) as $vb | ($vb - ($vb - env(RBAC_TOKEN_VERBS))) | length) > 0) and ((((.resources | select(kind == "seq")) // []) as $rs | ($rs - ($rs - env(RBAC_TOKEN_RESOURCES))) | length) > 0))'
+# 검사 13 — RBAC 문서 하나에서 여러 행(첫 필드가 종류). 대상 = 맵 문서 중 apiVersion이 rbac.authorization.k8s.io/로 시작하고 kind가 넷 중 하나.
+#   R 역할: kind · ns(없으면 -) · 이름 · 규칙 수 · aggregationRule 키 유무 · aggregate-to-* 라벨 키 목록(JSON) · 토큰 발급 규칙 수
+#   T 토큰 발급 규칙(역할의 규칙마다): kind · ns · 이름 · 규칙 번호(1-기반) · apiGroups · resources · verbs(JSON — 목록이 아니면 []) ·
+#     resourceNames 키 유무 · resourceNames(정렬·중복 제거 JSON)
+#   B 바인딩: kind · ns · 이름 · roleRef.kind · roleRef.name(없으면 -) · subjects 태그(없으면 none) · 주체 수(목록일 때)
+#   S 주체(바인딩의 subjects 목록 원소마다): kind · ns · 이름 · 주체 번호 · 노드 종류 · 주체 kind(없으면 -) · name · namespace(없으면 빈 값)
+#   ⚠ yq v4.53.6의 두 함정(검사 10 주석): 문자열 리터럴은 선택되지 않은 문서에도 나온다 · 수집자 `[...]`는 선택되지 않은 문서마다 빈 결과(빈 줄 —
+#   src_extract가 지운다). 그래서 모든 행은 수집자 `[ "R", … ] | join`으로 만들고, 셸이 행마다 종류·구분자 수를 확인한다(아니면 13.0). 또
+#   `빈 스트림 as $v | $w…`처럼 **변수로 시작하는** 식은 빈 문맥에서도 값을 낸다(2026-09-30 실측) — T·S 행은 문서의 경로(.rules · .subjects)에서
+#   출발한다. has()는 그 키를 traverse하기 전에 바인딩한다(없는 경로를 traverse하면 키가 생긴다 — YQ_CSS 주석).
+# shellcheck disable=SC2016  # $kk·$k·$ns·$n·$ar·$al·$rules·$ti·$hrn·$st·$rr·$si 는 yq 변수다
+YQ_RBAC='select(kind == "map") | select(((.apiVersion // "") | tostring | test("^rbac\\.authorization\\.k8s\\.io/")) and (((.kind // "") | tostring) as $kk | ($kk == "Role" or $kk == "ClusterRole" or $kk == "RoleBinding" or $kk == "ClusterRoleBinding"))) | (.kind | tostring) as $k | (((.metadata | select(kind == "map") | .namespace | select(kind == "scalar")) // "-") | tostring) as $ns | (((.metadata | select(kind == "map") | .name | select(kind == "scalar")) // "-") | tostring) as $n | ( ( select($k == "Role" or $k == "ClusterRole") | (has("aggregationRule") | tostring) as $ar | ([ ((.metadata | select(kind == "map") | .labels | select(kind == "map") | keys) // [])[] | tostring | select(test("^rbac\\.authorization\\.k8s\\.io/aggregate-to-")) ] | to_json(0)) as $al | ((.rules | select(kind == "seq")) // []) as $rules | ( ([ "R", $k, $ns, $n, ($rules | length | tostring), $ar, $al, ($rules | map(select(kind == "map") | select('"$YQ_RBAC_TOKEN_RULE"')) | length | tostring) ] | join(strenv(YQ_SEP))), (.rules | select(kind == "seq") | to_entries[] | select(.value | kind == "map") | select(.value | '"$YQ_RBAC_TOKEN_RULE"') | .key as $ti | .value | (has("resourceNames") | tostring) as $hrn | [ "T", $k, $ns, $n, (($ti + 1) | tostring), (((.apiGroups | select(kind == "seq")) // []) | to_json(0)), (((.resources | select(kind == "seq")) // []) | to_json(0)), (((.verbs | select(kind == "seq")) // []) | to_json(0)), $hrn, (((.resourceNames | select(kind == "seq")) // []) | map(tostring) | sort | unique | to_json(0)) ] | join(strenv(YQ_SEP))) ) ), ( select($k == "RoleBinding" or $k == "ClusterRoleBinding") | ((select(has("subjects")) | .subjects | tag) // "none") as $st | ((.roleRef | select(kind == "map")) // {}) as $rr | ( ([ "B", $k, $ns, $n, (($rr.kind // "-") | tostring), (($rr.name // "-") | tostring), $st, (((.subjects | select(kind == "seq")) // []) | length | tostring) ] | join(strenv(YQ_SEP))), (.subjects | select(kind == "seq") | to_entries[] | .key as $si | .value | [ "S", $k, $ns, $n, (($si + 1) | tostring), kind, (((select(kind == "map") | .kind) // "-") | tostring), (((select(kind == "map") | .name) // "") | tostring), (((select(kind == "map") | .namespace) // "") | tostring) ] | join(strenv(YQ_SEP))) ) ) )'
 
 yq_lines() { # <expr> <file> — 빈 줄 제거·CR 제거. 실패 시 비영 상태
   yq -N "$1" "$2" | tr -d '\r' | sed '/^[[:space:]]*$/d'
@@ -606,7 +820,7 @@ collect_rows() {
 printf 'platform-gitops validate — 대상: %s\n' "$ROOT"
 if [[ $ONLY_AUTHOR == 1 ]]; then
   # 실행은 맨 아래 「실행」 절(검사 6 하나 + 별도 문구의 요약). 여기서는 모드만 알린다
-  printf '모드: --only-author — 작성자 검사만 실행(검사 6). 도구 확인·파일 수집·다른 검사(0–5 · 7–10)는 하지 않는다 — 이 결과는 전체 검사 통과가 아니다\n'
+  printf '모드: --only-author — 작성자 검사만 실행(검사 6). 도구 확인·파일 수집·다른 검사(0–5 · 7–13)는 하지 않는다 — 이 결과는 전체 검사 통과가 아니다\n'
 else
   if [[ $SKIP_TOOLS == 1 ]]; then
     printf '모드: VALIDATE_SKIP_TOOLS=1 (없는 도구가 필요한 검사는 SKIP — CI 기준 불완전)\n'
@@ -657,6 +871,146 @@ else
 fi
 
 # -----------------------------------------------------------------------------
+# 검사 12 사전 판정(12.1–12.3) — 검사 1 **전에** 돈다. 출력하지 않고 결과만 모은다(FAIL·PASS 줄은 check_12_helm이 검사 번호 순서대로 찍는다).
+#   허용하지 않은 출처에서 차트를 받아 오는 것 자체가 막아야 할 일이다: 걸린 kustomization은 검사 1이 렌더하지 않는다(`1 KUST` FAIL로 남는다).
+#   대상 = 모든 kustomization(KUST_FILES) + 그것들이 base(resources·bases·components)나 generators·transformers로 끌어오는 로컬
+#   kustomization(파일 열거 밖 — tests/·charts/ 아래 — 도 포함): `kustomize build --enable-helm`은 끌려온 kustomization의 helmCharts도
+#   같은 빌드에서 인플레이트한다. 끌려온 쪽이 걸리면 끌어온 쪽도 렌더하지 않는다(전파 — 사유 `base <디렉터리>`).
+#   generators·transformers가 부르는 로컬 파일이 kind: HelmChartInflationGenerator이면 그 kustomization도 걸린다(12.3 — --enable-helm
+#   빌드는 레거시 생성기로 허용 목록 밖의 차트를 받는다. --enable-helm 없는 빌드는 kustomize가 "must specify --enable-helm"으로 멈춘다).
+#   원격 base(URL · git@)는 따라가지 않는다 — 그 내용은 저장소 밖이다(tests/README.md 「검사 12가 보지 않는 것」).
+# -----------------------------------------------------------------------------
+declare -A HELM_BLOCK=() HELM_NCH=() HELM_ALLOW=()   # 걸린 kustomization(절대 경로) → 사유 · kustomization → helmCharts 항목 수 · 허용 목록
+HELM_F1=(); HELM_F2=(); HELM_F3=()                    # 코드별 FAIL 메시지(check_12_helm이 찍는다)
+HELM_USE=''; HELM_NENT=0; HELM_NKUST=0; HELM_NEXTRA=0; HELM_NUSER=0
+helm_block() { # <kustomization 절대 경로> <사유> — 사유는 " · "로 잇고 같은 사유는 한 번만
+  local cur=${HELM_BLOCK[$1]:-}
+  [[ " · $cur · " == *" · $2 · "* ]] || HELM_BLOCK[$1]="${cur:+$cur · }$2"
+}
+helm_uses() { # <kustomization 절대 경로> — helmCharts 항목이 1개 이상이면 0 · 없으면 1 · 읽지 못하면 2(사전 판정 값이 있으면 그것을 쓴다)
+  local n=${HELM_NCH[$1]:-}
+  if [[ -z $n ]]; then
+    n=$(yq -N "$YQ_HELM_COUNT" "$1" 2>/dev/null | tr -d '\r') || return 2
+  fi
+  [[ $n =~ ^[0-9]+$ ]] || return 2
+  [[ $n -gt 0 ]]
+}
+helm_src_scan() {
+  [[ ${TOOL_OK[yq]:-0} == 1 ]] || return 0   # yq가 없으면 검사 12가 need_tool로 SKIP/FAIL한다(여기서는 판정하지 못한다)
+  local c r kf rk kdir out gen typ n hn nm hr rp hv ver nk x ref dep changed
+  local -a queue=()
+  local -A seen=() listed=() deps=()
+  while read -r c r; do
+    [[ -n $c ]] || continue
+    HELM_ALLOW[$c]=$r
+  done <<< "$HELM_CHART_TABLE"
+  for kf in "${KUST_FILES[@]}"; do listed[$kf]=1; queue+=("$kf"); done
+  while [[ ${#queue[@]} -gt 0 ]]; do
+    kf=${queue[0]}; queue=("${queue[@]:1}")
+    [[ -z ${seen[$kf]:-} ]] || continue
+    seen[$kf]=1; HELM_NKUST=$((HELM_NKUST + 1))
+    [[ -n ${listed[$kf]:-} ]] || HELM_NEXTRA=$((HELM_NEXTRA + 1))
+    rk=$(rel "$kf"); kdir=$(dirname "$rk"); [[ $kdir != . ]] || kdir=''
+    HELM_NCH[$kf]=0
+    if ! out=$(yq -N "$YQ_HELM_SCAN" "$kf" 2>/dev/null | tr -d '\r' | sed '/^[[:space:]]*$/d'); then
+      HELM_F1+=("$rk: yq로 읽지 못했다 — 차트 출처를 판정할 수 없다(fail-closed · 검사 1은 렌더하지 않는다)")
+      helm_block "$kf" 12.1
+      continue
+    fi
+    nk=0
+    # K행: n=helmGlobals 유무 hn=helmChartInflationGenerator 유무 nm=helmCharts 태그 · E행: n=번호 hn=name 유무 nm=name hr=repo 유무
+    #   rp=repo hv=version 유무 ver=version · G·B행: n=항목
+    while IFS="$YQ_SEP" read -r typ n hn nm hr rp hv ver; do
+      case $typ in
+        K)
+          nk=$((nk + 1))
+          if [[ $n == true ]]; then
+            HELM_F3+=("$rk: 최상위 키 'helmGlobals' 금지 — helmCharts 밖의 차트 설정(전역 chartHome·configHome · 레거시 생성기)은 허용 목록 대조와 인플레이트 캐시 자리(12.5)를 벗어난다")
+            helm_block "$kf" 12.3
+          fi
+          if [[ $hn == true ]]; then
+            HELM_F3+=("$rk: 최상위 키 'helmChartInflationGenerator' 금지 — helmCharts 밖의 차트 설정(전역 chartHome·configHome · 레거시 생성기)은 허용 목록 대조와 인플레이트 캐시 자리(12.5)를 벗어난다")
+            helm_block "$kf" 12.3
+          fi
+          case $nm in
+            none|'!!seq'|'!!null') ;;
+            *) HELM_F1+=("$rk: helmCharts가 목록이 아니다(태그 $nm) — 항목을 판정할 수 없다(fail-closed)"); helm_block "$kf" 12.1 ;;
+          esac ;;
+        E)
+          HELM_NENT=$((HELM_NENT + 1)); HELM_NCH[$kf]=$((${HELM_NCH[$kf]} + 1))
+          if [[ $hn != true || -z $nm ]]; then
+            x="$rk helmCharts #$n"
+            HELM_F1+=("$x: name 없음 — (이름, 저장소) 쌍을 허용 목록과 대조할 수 없다")
+            helm_block "$kf" 12.1
+          else
+            x="$rk helmCharts #$n '$nm'"
+            if [[ $hr != true || -z $rp ]]; then
+              HELM_F1+=("$x: repo 없음 — repo 없는 항목(<kustomization>/charts/ 아래의 로컬 차트를 그대로 쓴다)은 금지")
+              helm_block "$kf" 12.1
+            elif [[ -z ${HELM_ALLOW[$nm]+set} ]]; then
+              HELM_F1+=("$x: repo '$rp' — (이름, 저장소) 쌍이 허용 목록에 없다(새 차트는 계약 표에 행을 더하는 계약 변경으로 시작한다)")
+              helm_block "$kf" 12.1
+            elif [[ $rp != "${HELM_ALLOW[$nm]}" ]]; then
+              HELM_F1+=("$x: repo '$rp' ≠ 허용 목록의 '${HELM_ALLOW[$nm]}'(이름·저장소 쌍 — 글자 단위 정확 일치: 대소문자·끝의 '/' 포함)")
+              helm_block "$kf" 12.1
+            else
+              HELM_USE+="${HELM_USE:+ · }${kdir:-.} → $nm"
+            fi
+          fi
+          if [[ $hv != true ]]; then
+            HELM_F2+=("$x: version 없음 — 없으면 kustomize가 받는 시점의 최신 차트를 쓴다(값은 표로 고정하지 않지만 있어야 한다)")
+            helm_block "$kf" 12.2
+          elif [[ -z $ver ]]; then
+            HELM_F2+=("$x: version이 빈 값 — 없으면 kustomize가 받는 시점의 최신 차트를 쓴다(값은 표로 고정하지 않지만 있어야 한다)")
+            helm_block "$kf" 12.2
+          fi ;;
+        G|B)
+          # 원격(URL · git@)은 따라가지 않는다. 절대 경로와 저장소 밖 경로는 건너뛴다(base 항목은 7.3이 위치 판정 불가로 FAIL한다)
+          case $n in *://*|git@*|/*) continue ;; esac
+          r=$(norm_rel "$kdir" "$n")
+          [[ -n $r ]] || continue
+          if [[ -d "$ROOT/$r" ]]; then
+            ref=$(kust_file_in "$ROOT/$r") || continue
+            deps[$kf]+="$ref"$'\n'
+            [[ -n ${seen[$ref]:-} ]] || queue+=("$ref")
+          elif [[ $typ == G && -f "$ROOT/$r" ]]; then
+            # 풀어 읽지 못하는 파일은 레거시 생성기인지 판정할 수 없다 — 조용히 지나가지 않는다(fail-closed · YQ_LEGACY_GEN 주석)
+            if ! gen=$(yq -N "$YQ_LEGACY_GEN" "$ROOT/$r" 2>/dev/null | tr -d '\r' | sed '/^[[:space:]]*$/d'); then
+              HELM_F3+=("$rk: generators·transformers 항목 '$n'(→ $r)를 yq로 풀어 읽지 못했다 — 레거시 생성기(kind: HelmChartInflationGenerator)인지 판정할 수 없다(fail-closed · 앵커·병합 키를 풀 수 없거나 YAML로 읽히지 않는다)")
+              helm_block "$kf" 12.3
+            elif [[ -n $gen ]]; then
+              HELM_F3+=("$rk: generators·transformers 항목 '$n'(→ $r)가 kind: HelmChartInflationGenerator — 레거시 생성기 금지(helmCharts 허용 목록 밖에서 차트를 받는다)")
+              helm_block "$kf" 12.3
+            fi
+          fi ;;
+        *)
+          HELM_F1+=("$rk: yq 추출 행을 해석할 수 없다(종류 '$typ' — 값에 줄바꿈 등) — fail-closed")
+          helm_block "$kf" 12.1 ;;
+      esac
+    done <<< "$out"
+    if [[ $nk -ne 1 ]]; then
+      HELM_F1+=("$rk: 최상위 문서 ${nk}개 — kustomization은 문서 하나여야 한다(판정할 수 없다 — fail-closed)")
+      helm_block "$kf" 12.1
+    fi
+    [[ ${HELM_NCH[$kf]} -eq 0 ]] || HELM_NUSER=$((HELM_NUSER + 1))
+  done
+  # 전파(고정점까지) — 걸린 kustomization을 끌어오는 kustomization도 렌더하지 않는다
+  changed=1
+  while [[ $changed == 1 ]]; do
+    changed=0
+    for kf in "${!seen[@]}"; do
+      [[ -z ${HELM_BLOCK[$kf]:-} ]] || continue
+      while IFS= read -r dep; do
+        [[ -n $dep && -n ${HELM_BLOCK[$dep]:-} ]] || continue
+        helm_block "$kf" "base $(dirname "$(rel "$dep")")"
+        changed=1
+        break
+      done <<< "${deps[$kf]:-}"
+    done
+  done
+}
+
+# -----------------------------------------------------------------------------
 # 검사 1 — kustomize build + kubeconform (렌더링 결과는 이후 검사에도 원본으로 추가)
 # -----------------------------------------------------------------------------
 check_1_kustomize() {
@@ -666,6 +1020,12 @@ check_1_kustomize() {
   local -a flags
   for kfile in "${KUST_FILES[@]}"; do
     dir=$(dirname "$kfile"); rdir=$(rel "$dir")
+    # (T047) 차트 출처 판정(12.1–12.3 — helm_src_scan)에 걸린 kustomization은 빌드하지 않는다: --enable-helm 빌드가 허용하지 않은 출처의
+    #   차트를 받아 온다. 이 kustomization의 렌더는 없고, 이 FAIL로 결과는 이미 실패다(판정 내용은 검사 12가 찍는다)
+    if [[ -n ${HELM_BLOCK[$kfile]:-} ]]; then
+      fail "1 KUST" "kustomize build 건너뜀: $rdir — 차트 출처 판정(${HELM_BLOCK[$kfile]})에 걸렸다: 허용하지 않은 출처의 차트를 받아 오지 않는다(검사 12)"
+      continue
+    fi
     flags=()
     has_helm=0
     if grep -Eq '^[[:space:]]*helmCharts:' "$kfile"; then has_helm=1; fi
@@ -848,24 +1208,37 @@ check_3_workloads() {
 }
 
 # -----------------------------------------------------------------------------
-# 검사 4 — images[].newTag 금지(4a) · platform/** image: digest 경고(4b)
+# 검사 4 — images[].newTag 금지(4a) · images 항목의 name · digest · 키(4a IMG-entry — T047) · platform/** image: digest 경고(4b)
 # -----------------------------------------------------------------------------
+# KUST_FILES와 같은 순서의 YQ_IMAGES 출력 · 종료 코드 — check_4_images가 채우고 두 판정(4a IMG-newTag · 4a IMG-entry)이 읽는다
+IMG_OUT=(); IMG_RC=()
 check_4_images() {
   header 4 "images[].newTag 금지 · platform/** image: @sha256 경고"
-  local fails_before=$N_FAIL n=0 kfile rk name newtag digest f line val
+  local fails_before=$N_FAIL n=0 kfile rk name newtag digest f line val i out rc typ
   if need_tool "4a IMG-newTag" yq; then
+    IMG_OUT=(); IMG_RC=()
     for kfile in "${KUST_FILES[@]}"; do
-      rk=$(rel "$kfile")
-      while IFS="$YQ_SEP" read -r name _ newtag digest; do
+      rc=0
+      out=$(yq_lines "$YQ_IMAGES" "$kfile") || rc=$?
+      IMG_OUT+=("$out"); IMG_RC+=("$rc")
+    done
+    # 4a IMG-newTag — O 행만 읽는다(T047 이전과 같은 판정 · 줄 · 개수. yq가 실패하면 그 전까지 나온 행으로 판정하던 것도 같다 — 실패 자체는 4a IMG-shape가 찍는다)
+    for i in "${!KUST_FILES[@]}"; do
+      rk=$(rel "${KUST_FILES[$i]}")
+      while IFS="$YQ_SEP" read -r typ name _ newtag digest; do
+        [[ $typ == O ]] || continue
         [[ -n $name ]] || continue
         n=$((n + 1))
         [[ $newtag == "-" ]] || fail "4a IMG-newTag" "$rk images[$name]: newTag='$newtag' 금지(digest만)"
         if [[ $digest != "-" && ! $digest =~ $RE_DIGEST ]]; then
           fail "4a IMG-newTag" "$rk images[$name]: digest '$digest' 형식 오류(sha256:<64 hex>)"
         fi
-      done < <(yq_lines "$YQ_IMAGES" "$kfile" || true)
+      done <<< "${IMG_OUT[$i]}"
     done
     finish_group "4a IMG-newTag" "kustomization images ${n}개 항목 newTag 없음" "$fails_before"
+    check_4a_entries
+  else
+    need_tool "4a IMG-entry" yq || true
   fi
   # 4b — platform/** 의 `image:` 스칼라 줄(따옴표 허용). digest 없으면 WARN(FAIL 아님)
   local warned=0 total=0
@@ -883,6 +1256,101 @@ check_4_images() {
     done < <(grep -E '^[[:space:]]*(-[[:space:]]*)?image:[[:space:]]*[^[:space:]]' "$f" || true)
   done
   pass "4b IMG-platform-digest" "platform/** image: 줄 ${total}개 중 digest 없는 줄 ${warned}개(경고만)"
+}
+
+# 4a IMG-entry(T047 · 계약 §이미지·승격 「(T047) 항목마다 name과 digest」) — images 항목마다 name · digest 필수 · 키 ⊆ IMG_ENTRY_KEYS · 키 중복 금지 ·
+#   fail-closed(IMG-shape). YQ_IMAGES의 D·E 행을 읽는다(O 행은 4a IMG-newTag의 몫). 그룹 PASS 줄은 이 판정의 FAIL만 센다 — 4a IMG-newTag의 PASS 줄은
+#   이 판정과 무관하게 전과 같이 찍힌다(그래서 IMG-newTag의 finish_group 뒤에 돈다).
+#   기존 코드가 이미 찍는 결함(newTag · 비어 있지 않은 digest의 형식 오류)은 다시 찍지 않는다. 그 판단은 E 행에 실은 기존 방식의 name·newTag·digest로
+#   한다 — 기존 코드는 그 name이 빈 항목(name: "" · 목록·맵 name)을 통째로 건너뛰고, 값이 null·false·'-'인 digest·newTag를 '없음'으로 읽는다.
+#   그 항목·값은 여기서 찍는다(빈틈을 남기지 않는다). ""인 digest는 기존 코드도 형식 오류로 찍지만 여기서도 "빈 값"으로 찍는다(계약 문면의 "빈 값").
+#   보지 않는 것은 tests/README.md 「검사 4a가 보지 않는 것」.
+check_4a_entries() {
+  local fb=$N_FAIL ne=0 nk=0 i rk line typ nsep cont had lbl x keystxt oldseen
+  local dk dtg ik it idx ek et hn nt hd dt dj ht xall xnot dups oname onewtag odigest
+  keystxt=${IMG_ENTRY_KEYS//\"/}; keystxt=${keystxt#\[}; keystxt=${keystxt%\]}; keystxt="{${keystxt//,/, }}"
+  for i in "${!KUST_FILES[@]}"; do
+    rk=$(rel "${KUST_FILES[$i]}")
+    if [[ ${IMG_RC[$i]} != 0 ]]; then
+      fail "4a IMG-shape" "$rk: yq 추출 실패 — images 항목을 판정할 수 없다(fail-closed)"
+      continue
+    fi
+    cont=none; had=0
+    while IFS= read -r line; do
+      [[ -n $line ]] || continue
+      typ=${line%%"$YQ_SEP"*}
+      [[ $typ != O ]] || continue
+      nsep=${line//[!$YQ_SEP]/}; nsep=${#nsep}
+      case "$typ:$nsep" in
+        D:4)
+          # 문서 — 노드 종류 · 태그 · images의 노드 종류 · 태그
+          IFS=$YQ_SEP read -r typ dk dtg ik it <<< "$line"
+          cont=none
+          if [[ $dk != map ]]; then
+            if [[ $dk != scalar || $dtg != '!!null' ]]; then   # 빈 문서(주석뿐)는 images 없음
+              fail "4a IMG-shape" "$rk: 문서가 맵이 아니다($dk · 태그 ${dtg:--}) — images를 판정할 수 없다(fail-closed)"
+            fi
+          elif [[ $ik == seq ]]; then
+            cont=seq
+          elif [[ $ik != none && ( $ik != scalar || $it != '!!null' ) ]]; then   # images: null은 images 없음과 같다(kustomize도 빈 목록으로 읽는다)
+            fail "4a IMG-shape" "$rk: images가 목록이 아니다($ik · 태그 ${it:--}) — 항목을 판정할 수 없다(kustomize는 images를 목록으로만 읽는다 · fail-closed)"
+          fi ;;
+        E:15)
+          IFS=$YQ_SEP read -r typ idx ek et hn nt hd dt dj ht xall xnot dups oname onewtag odigest <<< "$line"
+          if [[ $cont != seq || ! $idx =~ ^[0-9]+$ || ! $hn =~ ^(true|false)$ || ! $hd =~ ^(true|false)$ || ! $ht =~ ^(true|false)$ \
+                || $xall != \[* || $xnot != \[* || $dups != \[* ]]; then
+            fail "4a IMG-shape" "$rk: yq 추출 행의 모양이 기대와 다르다(항목 행 — 필드 값) — fail-closed"
+            continue
+          fi
+          ne=$((ne + 1)); had=1
+          lbl="$rk images #$((idx + 1))"
+          if [[ $hn == true && $nt == '!!str' && -n $oname ]]; then lbl+=" '$oname'"; fi
+          if [[ $ek != map ]]; then
+            fail "4a IMG-shape" "$lbl: 항목이 맵이 아니다($ek · 태그 ${et:--}) — name·digest를 판정할 수 없다(앵커 별칭도 판정하지 않는다 · fail-closed)"
+            continue
+          fi
+          # 4a IMG-name — kustomize는 name과 같은 이미지만 바꾼다
+          if [[ $hn != true ]]; then
+            fail "4a IMG-name" "$lbl: name 없음 — kustomize는 name이 가리키는 이미지만 바꾸므로 이 항목은 아무 이미지도 고정하지 않는다"
+          elif [[ $nt != '!!str' ]]; then
+            fail "4a IMG-name" "$lbl: name이 문자열이 아니다(태그 $nt)"
+          elif [[ -z $oname ]]; then
+            fail "4a IMG-name" "$lbl: name이 빈 값"
+          fi
+          # 기존 4a IMG-newTag가 이 항목을 판정했는가 — 기존 코드는 O 행의 name이 빈 항목을 건너뛴다(E 행의 oname이 같은 값이다)
+          oldseen=0
+          if [[ -n $oname ]]; then oldseen=1; fi
+          # 4a IMG-digest — 없음 · 빈 값. 형식 오류는 기존 코드가 찍지 않은 것만(기존 코드는 '-'·false를 '없음'으로 읽고 name 빈 항목을 건너뛴다)
+          if [[ $hd != true ]]; then
+            fail "4a IMG-digest" "$lbl: digest 없음 — 이미지 고정이 풀린다(태그 없는 이름은 latest로 풀린다 · 계약 §이미지·승격)"
+          elif [[ $dt == '!!null' ]]; then
+            fail "4a IMG-digest" "$lbl: digest가 빈 값(null) — 이미지 고정이 풀린다"
+          elif [[ $dt == '!!str' && -z $odigest ]]; then
+            fail "4a IMG-digest" "$lbl: digest가 빈 값 — 이미지 고정이 풀린다"
+          elif ! [[ $dt == '!!str' && $odigest =~ $RE_DIGEST ]] && ! [[ $oldseen == 1 && $odigest != "-" && ! $odigest =~ $RE_DIGEST ]]; then
+            fail "4a IMG-digest" "$lbl: digest $dj(태그 $dt) — 문자열 sha256:<64 hex>가 아니다(기존 형식 검사 4a IMG-newTag가 보지 않는 값: '-'·false는 없음으로 읽히고 name이 빈 항목은 건너뛴다)"
+          fi
+          # 4a IMG-keys — newTag는 기존 코드가 이 항목에 찍었으면 빼고 본다(값이 null·false·'-'이거나 name 빈 항목이면 기존 코드는 찍지 않았다)
+          if [[ $oldseen == 1 && $onewtag != "-" ]]; then x=$xnot; else x=$xall; fi
+          if [[ $x != '[]' ]]; then
+            fail "4a IMG-keys" "$lbl: 키 $x — 항목의 키는 ${keystxt}만(계약 §이미지·승격)"
+          fi
+          if [[ $dups != '[]' ]]; then
+            fail "4a IMG-keys" "$lbl: 키 중복 $dups — yq와 kustomize는 뒤의 값을 쓴다(앞의 값을 읽은 사람과 다르게 읽힌다)"
+          fi ;;
+        *)
+          fail "4a IMG-shape" "$rk: yq 추출 행의 모양이 기대와 다르다(종류 '${typ:0:12}' · 구분자 ${nsep}개) — 값에 줄바꿈·구분 문자가 든 이름 등(fail-closed)" ;;
+      esac
+    done <<< "${IMG_OUT[$i]}"
+    if [[ $had == 1 ]]; then nk=$((nk + 1)); fi
+  done
+  if [[ $N_FAIL -eq $fb ]]; then
+    if [[ $ne -eq 0 ]]; then
+      pass "4a IMG-entry" "kustomization images 항목 0개 — 대상 없음"
+    else
+      pass "4a IMG-entry" "kustomization images ${ne}개 항목(kustomization ${nk}개): 항목마다 name(문자열)·digest 있음 · 키 ⊆ $keystxt"
+    fi
+  fi
 }
 
 # -----------------------------------------------------------------------------
@@ -1481,14 +1949,18 @@ check_7_sync_wave() {
   #   디렉터리 단위 완전성((c)의 보완 · kustomize 없이도 도는 그물)은 **실제 저장소 루트에서는 항상** 본다.
   #   부분 트리 예외(배달자 구조를 쓰지 않는 픽스처)는 `--root`가 저장소 루트가 아닐 때만 적용한다.
   local f3=$N_FAIL nref=0 nown=0 nself=0 ndir=0 nin=0 nskip=0 owner=0 owner_rendered=0 napp_owner=0 nkey=0
-  local nes_src=0 nes_render=0 kfile rk kdir entry r rd sdir msg3 i p ns name app apath kallow extra
+  local nes_src=0 nes_render=0 kfile rk kdir entry r rd sdir msg3 i p ns name app apath kallow extra bases
   local -A SEC_INCLUDED=() ES_FILE_SRC=() ES_FILE_NS=() ES_OWNER_RENDER=() ES_FOREIGN=()
   if [[ -f "$ROOT/$SECRETS_OWNER_KUST" ]]; then owner=1; fi
   if need_tool "7.3 WAVE-secrets-base" yq; then
-    # (a) base 참조
+    # (a) base 참조. 항목은 문서를 explode(.)로 푼 뒤 읽는다(YQ_KUST_BASES) — 풀어 읽지 못하면 위치를 판정할 수 없으므로 FAIL(fail-closed)
     for kfile in "${KUST_FILES[@]}"; do
       rk=$(rel "$kfile"); kdir=$(dirname "$rk")
       [[ $kdir != . ]] || kdir=''
+      if ! bases=$(yq_lines "$YQ_KUST_BASES" "$kfile"); then
+        fail "7.3 WAVE-secrets-base" "$rk: base 항목(resources·bases·components)을 yq로 풀어 읽지 못했다 — secrets/ 아래를 가리키는지 판정할 수 없다(fail-closed · 맵이 아닌 문서 · 풀 수 없는 앵커·병합 키 등)"
+        continue
+      fi
       while IFS= read -r entry; do
         [[ -n $entry ]] || continue
         case "$entry" in *://*|git@*) continue ;; esac   # 원격 base는 경로 판정 대상이 아니다
@@ -1514,7 +1986,7 @@ check_7_sync_wave() {
         else
           fail "7.3 WAVE-secrets-base" "$rk: base '$entry'(→ $r) — secrets/ 아래를 base로 가질 수 있는 kustomization은 $SECRETS_OWNER_KUST 하나뿐이다(단일 소유 — 두 Application이 한 ExternalSecret을 각자 적용하면 소유권이 갈린다)"
         fi
-      done < <(yq_lines "$YQ_KUST_BASES" "$kfile" || true)
+      done <<< "$bases"
     done
 
     # (e) 변환 키 금지 — 배달자와 `secrets/**`의 kustomization은 base를 묶기만 한다(계약 §validate.yml 4 · T045 G4)
@@ -1615,11 +2087,11 @@ check_7_sync_wave() {
 #   (c) 7.4 APP-source-operation — Application **최상위** `operation`(spec 밖). `operation.sync.source`·`revision`·`manifests`로 한 번의
 #       동기화 source를 바꾼다(2026-09-28 범위 한정 검증 DV-1 — types.go 필드 판독, 컨트롤러 동작은 라이브 미실측). Git에 선언하는
 #       필드가 아니므로 키가 있으면(빈 맵 포함) FAIL한다.
-#   ⚠ 이 목록이 Argo의 모든 우회 경로를 덮는다고 주장하지 않는다 — 전 확장자·전 렌더 열거는 T047에서 다룬다.
-# 보지 않는 것(코드로 확인한 사각): kustomization이 없는 디렉터리(root가 읽는 clusters/oci-k3s/apps 등)의 `kind: List`로 감싼
-#   Application(파일 단위 추출은 최상위 문서의 kind만 본다 — Argo directory source와 kustomize 렌더는 List를 풀므로 kustomize 디렉터리는
-#   렌더 쪽에서 보인다), `.json`·`.jsonnet` 매니페스트의 Application(파일 열거가 *.yaml·*.yml뿐인데 Argo directory source는 둘도 읽는다),
-#   ApplicationSet의 template(kind가 Application인 문서만 본다).
+#   ⚠ 이 목록이 Argo의 모든 우회 경로를 덮는다고 주장하지 않는다 — 형식별 정책(T047)은 검사 11 · 12.5가 맡는다.
+# 7.4 혼자서는 보지 못하던 사각(코드로 확인)은 검사 11 · 12.5가 막는다(T047): `kind: List`로 감싼 Application과 kind와 무관한 최상위
+#   items 목록(11.1 — 파일 단위 추출은 최상위 문서의 kind만 본다), directory source 경로의 `.json`·`.jsonnet`(11.3 — 파일 열거가
+#   *.yaml·*.yml뿐인데 Argo directory source는 둘도 읽는다), ApplicationSet의 template(11.2 — kind가 Application인 문서만 본다),
+#   경로에 `/charts/`가 든 곳의 `.argocd-source*.yaml`(12.5 — 이름이 charts인 디렉터리는 인플레이트 캐시 자리에만 있을 수 있다).
 check_7_app_source() {
   header 7.4 "Application source 덮어쓰기 금지 — spec.source 키 = {${APP_SOURCE_KEYS//,/, }} · multi-source·sourceHydrator 금지 · repoURL·targetRevision 고정 · .argocd-source*.yaml 금지"
   local f4=$N_FAIL n=0 nsf=0 i name hs hss hh ho sk repo rev x p
@@ -1865,8 +2337,8 @@ check_9_clustersecretstores() {
 # 한계: 라이브 — Application `status.resources`의 ClusterRole·ClusterRoleBinding 0과 Role `reloader-role` ns 집합, Deployment 인자는
 #   모노레포 하네스 `reloader-2`가 본다. kind별 개수와 Reloader 시작 로그(실제로 감시하는 ns)는 상시 라이브 가드가 없다 — VD-9 판정 ⑥에서
 #   한 번 실측했다(platform/reloader/README.md §3 판정 기록 · `reloader-2`는 개수와 로그를 보지 않는다).
-#   정적으로 보지 않는 것: **다른 컴포넌트 렌더**가 ServiceAccount reloader/reloader에 주는 RoleBinding·ClusterRoleBinding과 그 안의
-#   Reloader(T047 후보 — 전 렌더 교차 검사), `reloader-metadata-role`의 규칙 내용(와일드카드만 본다), `stakater/reloader`가 아닌
+#   정적으로 보지 않는 것: **다른 컴포넌트 렌더**가 ServiceAccount reloader/reloader에 주는 RoleBinding·ClusterRoleBinding(검사 13.5가
+#   전 렌더 교차로 본다)과 그 안의 Reloader(이미지 — 여전히 보지 않는다), `reloader-metadata-role`의 규칙 내용(와일드카드만 본다), `stakater/reloader`가 아닌
 #   이름으로 다시 올린 이미지를 **같은 파드의 두 번째 컨테이너**로 넣는 경우(두 번째 Deployment로 올리면 10.3의 개수가 잡는다),
 #   `reloader-role` 4장을 **똑같이** 넓힌 규칙(서로 같은지만 본다 — README §1의 20줄 대조가 잡는다), 이름이 `reloader-role`이 아닌
 #   Role의 규칙 내용(와일드카드만 본다 — 개수·ns를 유지한 채 바꿔 넣는 경우 포함).
@@ -2130,6 +2602,580 @@ check_10_reloader() {
 }
 
 # -----------------------------------------------------------------------------
+# 검사 11 — 형식별 정책(계약 §validate.yml 4 「(T047) 형식별 정책」 — Argo가 읽을 수 있는 형식마다 "검사한다" 또는 "금지한다")
+#
+# 계약 표의 행 ↔ 막는 곳: 목록 객체(--root 트리의 모든 YAML) → 11.1 · ApplicationSet(파일 + 렌더) → 11.2 · directory source 경로의
+#   *.json·*.jsonnet·*.libsonnet과 하위 디렉터리 → 11.3 · directory source 경로 YAML의 kind(Application만) → 11.4 · 심볼릭 링크(트리 어디든) → 11.5
+#   (directory source 경로 바로 아래의 링크는 11.3도 건다 — 코드가 달라 두 줄이 나온다). 나머지 행(*.yaml 최상위
+#   문서 · 렌더의 Application · kustomization이 가리키는 *.json)은 기존 검사(7.1 · 2 · 7.4 · 렌더 기반 검사)가 본다.
+# directory source 경로 = Application(파일 + 렌더 — 7.4와 같은 집합)의 source path 중 kustomization 파일(kust_file_in의 이름 3개)이 **없는**
+#   디렉터리. Argo는 그 경로를 렌더 없이 디렉터리째 읽는다(argo-cd v3.5.2 reposerver/repository/repository.go findManifests —
+#   `^.*\.(yaml|yml|json|jsonnet)$` · 저장소 안을 가리키는 심볼릭 링크는 따라간다 · directory.recurse가 없으면 하위 디렉터리를 읽지 않는다).
+#   그래서 11.3은 파일 열거(YAML_FILES — tests/·charts/ 제외 · 일반 파일만)가 아니라 그 디렉터리의 목록을 직접 본다. 그 목록의 **심볼릭 링크는
+#   금지**다(계약 형식별 정책 「심볼릭 링크」 행 중 이 경로 — 2026-09-30 G4 리뷰 A2): 파일 열거는 링크를 세지 않는데 Argo는 링크를
+#   따라 읽으므로, 링크된 Application은 kind 판정(11.4)만 받고 2 · 7.1 · 7.4의 판정을 지나 적용된다. 11.4는 일반 파일만 본다(링크를 따라가지 않는다).
+# 11.x의 문서 판정은 앵커·별칭·병합 키를 explode(.)로 푼 문서로 한다(YQ_DOCS · 「앵커·별칭·병합 키」 주석). 풀지 못하는 문서는 11.0 FMT-alias가 건다.
+# 11.1 보강 — 계약 문면(`kind: List` · `<Kind>List` + items)보다 넓다(2026-09-29 소스 판독 · kustomize 실측): Argo는 kind와 무관하게
+#   최상위 items가 목록이면 그 원소를 풀어 적용하고 감싼 문서는 버린다(repository.go GenerateManifests `case obj.IsList():` —
+#   apimachinery v0.36.1 Unstructured.IsList는 items가 []interface{}인지만 본다. directory source와 kustomize 렌더에 똑같이 걸린다).
+#   kustomize 5.8.1은 `<Kind>List`만 풀고 그 밖의 kind는 items를 그대로 내보낸다 — `kind: ConfigMap` + `items: [Role]`은 렌더에서 ConfigMap으로
+#   보이는데 Argo는 Role을 적용한다. 그래서 11.1은 kind와 무관한 최상위 items 목록을 파일과 렌더 양쪽에서 금지하고(계약의 <Kind>List + items를
+#   포함), 11.4는 directory source 경로의 Application에 items 목록이 있어도 FAIL한다.
+# 보지 않는 것은 tests/README.md 「검사 11이 보지 않는 것」.
+# -----------------------------------------------------------------------------
+DOC_ROWS=''; DOC_ROWS_DONE=0
+collect_doc_rows() { # 검사 11 · 12.3 공용: 모든 소스(파일 + 렌더)의 문서 1개 = 1행(YQ_DOCS — "idx<US>행") — 한 번만 모은다.
+  #   yq 실패(문서를 explode(.)로 풀지 못함 · YAML로 읽지 못함)는 11.0 FAIL(fail-closed — 목록 객체인지 판정할 수 없다). 11.1의 그룹 구간 안에서
+  #   부르므로 11.1 PASS 줄도 나오지 않는다
+  local i rows line
+  if [[ $DOC_ROWS_DONE == 0 ]]; then
+    DOC_ROWS=''
+    for ((i = 0; i < SRC_N; i++)); do
+      if ! rows=$(src_extract "$i" "$YQ_DOCS"); then
+        fail "11.0 FMT-alias" "${SRC_LABEL[$i]}: yq로 문서를 풀어 읽지 못했다(explode — 맵이 아닌 값을 가리키는 병합 키 등 · 또는 YAML로 읽히지 않는다) — 목록 객체인지 · kind가 무엇인지 판정할 수 없다(fail-closed)"
+        continue
+      fi
+      [[ -n $rows ]] || continue
+      while IFS= read -r line; do
+        DOC_ROWS+="${i}${YQ_SEP}${line}"$'\n'
+      done < <(printf '%s\n' "$rows")
+    done
+    DOC_ROWS_DONE=1
+  fi
+}
+check_11_formats() {
+  header 11 "형식별 정책 — 목록 객체 · ApplicationSet · directory source 경로(심볼릭 링크 · .json·.jsonnet·.libsonnet · 하위 디렉터리 · Application만)"
+  # 11.5(심볼릭 링크)는 yq가 필요 없다 — yq가 없어도 돈다
+  need_tool "11 FMT" yq || { check_11_symlinks; return 0; }
+  local i idx nk tg hk kd av ik nm why x nf=0 nr=0 nd=0
+  for ((i = 0; i < SRC_N; i++)); do
+    if [[ ${SRC_KIND[$i]} == file ]]; then nf=$((nf + 1)); else nr=$((nr + 1)); fi
+  done
+
+  # 11.1 목록 객체 — 파일 + 렌더. kind: List는 items가 없어도, 그 밖의 kind는 최상위 items가 목록(시퀀스)이면 FAIL
+  local f1=$N_FAIL
+  collect_doc_rows
+  while IFS="$YQ_SEP" read -r i idx nk tg hk kd av ik nm; do
+    [[ -n $i && $nk == map ]] || continue
+    nd=$((nd + 1))
+    if [[ $ik == alias ]]; then
+      fail "11.0 FMT-alias" "${SRC_LABEL[$i]} 문서 #$idx kind '$kd': 최상위 items가 풀리지 않은 별칭으로 남았다 — 목록 객체인지 판정할 수 없다(fail-closed · Argo의 디코더는 별칭을 풀어 읽는다)"
+      continue
+    fi
+    why=''
+    if [[ $kd == List ]]; then why='kind: List — items 유무와 무관'
+    elif [[ $ik == seq && $kd == *List ]]; then why='<Kind>List + 최상위 items 목록'
+    elif [[ $ik == seq ]]; then why='최상위 items 목록 — Argo는 kind와 무관하게 풀어 원소를 적용한다(IsList · 보강)'
+    fi
+    [[ -z $why ]] || fail "11.1 FMT-list" "${SRC_LABEL[$i]} 문서 #$idx kind '$kd': 목록 객체 금지($why) — 파일 단위 검사는 최상위 문서의 kind만 보는데 Argo(directory source · 렌더)와 kustomize는 목록을 풀어 그 안의 Application·RBAC을 적용한다"
+  done < <(printf '%s' "$DOC_ROWS")
+  finish_group "11.1 FMT-list" "목록 객체(kind: List · 최상위 items 목록) 없음 — 문서 ${nd}개(YAML 파일 ${nf}개 · 렌더 ${nr}개)" "$f1"
+
+  # 11.2 ApplicationSet — 같은 행(파일 + 렌더). kind만 같고 API 그룹이 다른 객체는 Argo가 만들지 않는다
+  local f2=$N_FAIL
+  while IFS="$YQ_SEP" read -r i idx nk tg hk kd av ik nm; do
+    [[ -n $i && $nk == map && $kd == ApplicationSet && $av =~ $RE_ARGO_API ]] || continue
+    fail "11.2 FMT-appset" "${SRC_LABEL[$i]} 문서 #$idx ApplicationSet/$nm(apiVersion '$av'): ApplicationSet 금지 — template이 만드는 Application은 Git에 없어 검사할 수 없다(쓰게 되면 계약을 먼저 고친다)"
+  done < <(printf '%s' "$DOC_ROWS")
+  finish_group "11.2 FMT-appset" "ApplicationSet(argoproj.io/…) 없음 — 문서 ${nd}개(YAML 파일 ${nf}개 · 렌더 ${nr}개)" "$f2"
+
+  # 11.3 directory source 경로 — Application(파일 + 렌더 — 7.4와 같은 집합)의 source path(spec.source.path · spec.sources[].path)를
+  #   ROOT 기준으로 정규화해 고유 경로마다 판정한다: 트리에 없음(부분 트리 — 건너뜀) · kustomization 있음(렌더 쪽 검사의 몫) · 그 밖 = directory source
+  local f3=$N_FAIL app ap np d e base ep nkz=0 nmiss=0 nds=0 dslist=''
+  local -A pseen=()
+  local -a ds=() ents=()
+  collect_rows "$YQ_APP_PATHS" "11.3 FMT-dirsource" all
+  while IFS="$YQ_SEP" read -r i app ap; do
+    [[ -n $i ]] || continue
+    x="${SRC_LABEL[$i]} Application/$app"
+    if [[ $ap == /* ]]; then
+      fail "11.3 FMT-dirsource" "$x: spec.source.path '$ap' — 절대 경로 금지(directory source 여부를 판정할 수 없다 · fail-closed)"
+      continue
+    fi
+    # 끝에 조각 하나(`_`)를 붙여 정규화한다 — norm_rel은 ROOT 자신과 저장소 밖을 둘 다 빈 문자열로 돌려주므로 둘을 가르기 위해서다
+    np=$(norm_rel "" "$ap/_")
+    if [[ -z $np ]]; then
+      fail "11.3 FMT-dirsource" "$x: spec.source.path '$ap' — 저장소 밖으로 나가는 경로(판정할 수 없다 · fail-closed)"
+      continue
+    fi
+    np=${np%_}; np=${np%/}; [[ -n $np ]] || np='.'
+    [[ -z ${pseen[$np]:-} ]] || continue
+    pseen[$np]=1
+    d=$ROOT; [[ $np == . ]] || d="$ROOT/$np"
+    if [[ ! -d $d ]]; then nmiss=$((nmiss + 1)); continue; fi
+    if kust_file_in "$d" >/dev/null; then nkz=$((nkz + 1)); continue; fi
+    ds+=("$np")
+  done < <(printf '%s' "$ROWS")
+  if [[ ${#ds[@]} -gt 0 ]]; then mapfile -t ds < <(printf '%s\n' "${ds[@]}" | LC_ALL=C sort); fi
+  nds=${#ds[@]}
+  for np in "${ds[@]}"; do
+    dslist+="${dslist:+ · }$np"
+    d=$ROOT; [[ $np == . ]] || d="$ROOT/$np"
+    mapfile -d '' -t ents < <(find "$d" -mindepth 1 -maxdepth 1 -print0 | LC_ALL=C sort -z)
+    for e in "${ents[@]}"; do
+      base=${e##*/}; ep=$base; [[ $np == . ]] || ep="$np/$base"
+      # 심볼릭 링크 — 대상의 종류(파일 · 디렉터리 · 없음)와 이름(확장자)을 보기 전에 건다(링크는 하위 디렉터리로도 · .json으로도 따로 찍지 않는다)
+      if [[ -L $e ]]; then
+        fail "11.3 FMT-dirsource" "$ep: directory source 경로 $np의 심볼릭 링크 금지 — 파일 열거(find -type f)는 링크를 세지 않는데 Argo는 저장소 안을 가리키는 링크를 따라 읽는다(링크된 Application은 kind 판정만 받고 2 · 7.1 · 7.4의 판정 — SSA · 이름↔경로 · spec.source — 을 지나 적용된다. 파일 · 디렉터리 · 대상 없는 링크 모두)"
+        continue
+      fi
+      if [[ -d $e ]]; then
+        fail "11.3 FMT-dirsource" "$ep/: directory source 경로 $np의 하위 디렉터리 금지 — directory.recurse는 7.4가 금지하므로 그 아래 파일은 적용되지 않는 죽은 선언이다(파일은 경로 바로 아래에만)"
+        continue
+      fi
+      case $base in
+        *.json|*.jsonnet|*.libsonnet)
+          fail "11.3 FMT-dirsource" "$ep: directory source 경로 $np(kustomization 없음 — Argo가 디렉터리째 읽는다)에 .${base##*.} 파일 금지 — 파일 열거는 *.yaml·*.yml뿐인데 Argo directory source는 .json·.jsonnet을 읽는다(.libsonnet은 .jsonnet이 import한다)" ;;
+      esac
+    done
+  done
+  finish_group "11.3 FMT-dirsource" "directory source 경로 ${nds}개(${dslist:-없음}) — .json·.jsonnet·.libsonnet 파일·하위 디렉터리 없음 · Application source.path $((nds + nkz + nmiss))개 = directory source ${nds} · kustomization ${nkz} · 트리에 없음 ${nmiss}" "$f3"
+
+  # 11.4 directory source 경로 바로 아래 *.yaml·*.yml **일반 파일**의 모든 문서 = Application(argoproj.io/…). 빈 문서는 건너뛴다.
+  #   심볼릭 링크는 따라가지 않는다(find -type f — 기본 -P는 링크 자신의 종류를 본다). 링크는 11.3이 금지한다 — 따라가서 "Application이다"라고 세면
+  #   2 · 7.1 · 7.4가 보지 않은 문서를 받아들이는 셈이다(2026-09-30 G4 리뷰 A2)
+  local f4=$N_FAIL nyf=0 nad=0 nempty=0 rows
+  for np in "${ds[@]}"; do
+    d=$ROOT; [[ $np == . ]] || d="$ROOT/$np"
+    mapfile -d '' -t ents < <(find "$d" -mindepth 1 -maxdepth 1 -type f \( -name '*.yaml' -o -name '*.yml' \) -print0 | LC_ALL=C sort -z)
+    for e in "${ents[@]}"; do
+      base=${e##*/}; ep=$base; [[ $np == . ]] || ep="$np/$base"
+      nyf=$((nyf + 1))
+      if ! rows=$(yq -N "$YQ_DOCS" "$e" | tr -d '\r' | sed '/^[[:space:]]*$/d'); then
+        fail "11.4 FMT-dirsource-kind" "$ep: yq로 읽지 못했다(fail-closed)"
+        continue
+      fi
+      while IFS="$YQ_SEP" read -r idx nk tg hk kd av ik nm; do
+        [[ -n $idx ]] || continue
+        if [[ $nk == scalar && $tg == '!!null' ]]; then nempty=$((nempty + 1)); continue; fi
+        if [[ $nk != map ]]; then
+          fail "11.4 FMT-dirsource-kind" "$ep 문서 #$idx: 맵이 아닌 문서($nk) — kind 없음(fail-closed)"
+        elif [[ $hk != true || $kd == - || -z $kd ]]; then
+          fail "11.4 FMT-dirsource-kind" "$ep 문서 #$idx: kind 없음 — directory source 경로에는 Application(argoproj.io/…)만 둔다(fail-closed)"
+        elif [[ $kd != Application || ! $av =~ $RE_ARGO_API ]]; then
+          fail "11.4 FMT-dirsource-kind" "$ep 문서 #$idx kind '$kd'(apiVersion '$av'): directory source 경로에는 Application(argoproj.io/…)만 — Argo가 렌더 없이 그대로 적용하는 이 파일들은 렌더를 보는 검사(10 · 13 등)의 시야 밖이다"
+        elif [[ $ik == seq ]]; then
+          fail "11.4 FMT-dirsource-kind" "$ep 문서 #$idx Application/$nm: 최상위 items 목록 금지(보강) — Argo는 items 목록을 풀어 그 원소를 적용하고 이 Application은 버린다"
+        elif [[ $ik == alias ]]; then
+          fail "11.4 FMT-dirsource-kind" "$ep 문서 #$idx Application/$nm: 최상위 items가 풀리지 않은 별칭으로 남았다 — 목록 객체인지 판정할 수 없다(fail-closed)"
+        else
+          nad=$((nad + 1))
+        fi
+      done <<< "$rows"
+    done
+  done
+  finish_group "11.4 FMT-dirsource-kind" "directory source 경로 ${nds}개의 YAML 파일 ${nyf}개 · 문서 ${nad}개 모두 Application(argoproj.io/…) · 빈 문서 ${nempty}개 건너뜀" "$f4"
+
+  check_11_symlinks
+}
+
+# 11.5 심볼릭 링크 — --root 트리 어디든(계약 형식별 정책 「심볼릭 링크」 행 — .git/ 제외 · 파일 · 디렉터리 · 깨진 링크 · 루트의 tests/도 본다).
+#   파일 열거(find -type f)와 kustomization 열거는 링크를 세지 않는데 Argo와 kustomize는 저장소 안 링크를 따라 읽는다 — 컴포넌트 디렉터리 자체가
+#   링크(platform/<comp> → 다른 곳)면 그 렌더는 모든 검사의 시야 밖이다(2026-09-30 실측 — cluster-admin 바인딩이 든 링크된 컴포넌트가 exit 0).
+#   ① 작업 트리: find(기본 -P — 링크 자신의 종류를 본다 · 링크된 디렉터리 안으로 내려가지 않는다)가 찾은 링크마다 FAIL(대상 문자열 · 대상 없음 표시).
+#      find·sort의 종료 코드는 프로세스 치환을 넘어오지 않으므로 목록 끝의 원소로 받는다(치환 안은 set +e — 물려받은 errexit가 그 원소를 찍기 전에
+#      끝내지 않게). 트리를 다 훑지 못했으면 FAIL(fail-closed)
+#   ② git 인덱스: Windows 체크아웃(core.symlinks=false)은 링크를 일반 파일로 풀어 ①이 보지 못한다. --root가 git 작업 트리 안이면 그 아래 인덱스 항목
+#      (git ls-files -s — 경로는 --root 기준)의 모드 120000마다 FAIL. git이 없거나 작업 트리가 아니거나 읽지 못하면 그 사실을 한 줄로 적고 ①로만
+#      판정한다(fail-open이 아니다 — ①은 항상 돈다). Linux 체크아웃의 커밋된 링크는 ①과 ②가 둘 다 찍는다(사유가 다르다)
+#   yq가 필요 없다(검사 11의 yq 확인이 실패해도 check_11_formats가 부른다). 11.3의 directory source 경로 링크 판정은 그대로다(같은 링크가 11.3 · 11.5로
+#   두 번 찍힌다). 경로 · 대상 문자열의 제어 문자는 '?'로 바꿔 찍는다(이름의 개행이 출력 줄을 나누지 않게).
+check_11_symlinks() {
+  local f5=$N_FAIL e p t gone rc='' idxnote='' lsf line nent=0 nidx=0
+  local -a ents=()
+  mapfile -d '' -t ents < <(set +e; find "$ROOT" -mindepth 1 -path "$ROOT/.git" -prune -o -printf '%y %P\0' | LC_ALL=C sort -z
+    printf 'find-sort-rc=%s,%s\0' "${PIPESTATUS[0]}" "${PIPESTATUS[1]}")
+  if [[ ${#ents[@]} -gt 0 ]]; then rc=${ents[-1]}; unset 'ents[-1]'; fi
+  if [[ $rc != find-sort-rc=0,0 ]]; then
+    fail "11.5 FMT-symlink" "--root 트리를 다 훑지 못했다(${rc:-종료 코드를 받지 못함}) — 링크가 없다고 판정할 수 없다(fail-closed)"
+  fi
+  for e in "${ents[@]}"; do
+    nent=$((nent + 1))
+    [[ ${e:0:1} == l ]] || continue
+    p=${e:2}
+    t=$(readlink -- "$ROOT/$p" 2>/dev/null) || t='(읽지 못함)'
+    gone=''; [[ -e "$ROOT/$p" ]] || gone=' · 대상 없음'
+    fail "11.5 FMT-symlink" "${p//[[:cntrl:]]/?}: 심볼릭 링크 금지(→ '${t//[[:cntrl:]]/?}'$gone) — 파일 열거(find -type f)와 kustomization 열거는 링크를 세지 않는데 Argo와 kustomize는 저장소 안 링크를 따라 읽는다(컴포넌트 디렉터리가 링크면 그 렌더는 모든 검사의 시야 밖이다 — 파일 · 디렉터리 · 대상 없는 링크 모두)"
+  done
+
+  # ② 경로는 core.quotePath=false로 받는다(비 ASCII를 8진 이스케이프로 바꾸지 않는다 — 제어 문자 · 따옴표가 든 경로는 여전히 C 형식 한 줄이다)
+  if ! command -v git >/dev/null 2>&1; then
+    idxnote='git 없음'
+  elif [[ $(git -C "$ROOT" rev-parse --is-inside-work-tree 2>/dev/null | tr -d '\r') != true ]]; then
+    idxnote='git 작업 트리가 아니다'
+  elif ! lsf=$(git -C "$ROOT" -c core.quotePath=false ls-files -s -- . 2>/dev/null | tr -d '\r'); then
+    idxnote='git ls-files 실패'
+  else
+    while IFS= read -r line; do
+      [[ -n $line ]] || continue
+      nidx=$((nidx + 1))
+      [[ ${line%% *} == 120000 ]] || continue
+      p=${line#*$'\t'}
+      fail "11.5 FMT-symlink" "${p//[[:cntrl:]]/?}: git 인덱스의 모드 120000(심볼릭 링크) 금지 — Windows 체크아웃(core.symlinks=false)은 링크를 일반 파일로 풀어 작업 트리 판정(find -type l)이 보지 못한다(Argo의 체크아웃에서는 링크다)"
+    done <<< "$lsf"
+  fi
+  if [[ -n $idxnote ]]; then
+    printf '  11.5 git 인덱스를 보지 않았다(%s) — 작업 트리의 링크(find -type l)만으로 판정한다(core.symlinks=false 체크아웃이 일반 파일로 푼 링크는 이 실행에서 보이지 않는다)\n' "$idxnote"
+    finish_group "11.5 FMT-symlink" "심볼릭 링크 0개 — 작업 트리 항목 ${nent}개(.git 제외) · git 인덱스는 보지 않았다($idxnote — 작업 트리만으로 판정)" "$f5"
+  else
+    finish_group "11.5 FMT-symlink" "심볼릭 링크 0개 — 작업 트리 항목 ${nent}개(.git 제외) · git 인덱스 항목 ${nidx}개(모드 120000 0개)" "$f5"
+  fi
+}
+
+# -----------------------------------------------------------------------------
+# 검사 12 — 차트 출처(계약 §validate.yml 4 「(T047) 차트 저장소 허용 목록」·「charts/라는 이름의 디렉터리는 helm 인플레이트 캐시 전용이다」·
+#   「helmCharts를 쓰는 kustomization이 하나라도 있으면 … --enable-helm」)
+# 12.1–12.3의 판정은 helm_src_scan(검사 1 전)이 했다 — 여기서는 검사 번호 순서대로 찍는다. 12.4는 bootstrap/argocd **렌더**를, 12.5는
+#   디렉터리 이름을 본다(12.5는 인플레이트 캐시가 생기기 전후 결과가 같다 — 캐시 자리는 허용이고 그 안은 보지 않는다).
+# -----------------------------------------------------------------------------
+check_12_helm() {
+  header 12 "차트 출처 — helmCharts (이름, 저장소) = 허용 목록 · version · 레거시 생성기 금지 · argocd-cm --enable-helm · charts 디렉터리 = 인플레이트 캐시 자리"
+  need_tool "12 HELM" yq || return 0
+  local m i idx nk tg hk kd av ik nm nfile=0
+
+  local f1=$N_FAIL
+  for m in "${HELM_F1[@]}"; do fail "12.1 HELM-repo" "$m"; done
+  finish_group "12.1 HELM-repo" "helmCharts 항목 ${HELM_NENT}개 모두 허용 목록의 (이름, 저장소) 쌍 — kustomization ${HELM_NKUST}개 판정(열거 밖 base ${HELM_NEXTRA}개 포함)${HELM_USE:+ · 사용: $HELM_USE}" "$f1"
+
+  local f2=$N_FAIL
+  for m in "${HELM_F2[@]}"; do fail "12.2 HELM-version" "$m"; done
+  finish_group "12.2 HELM-version" "helmCharts 항목 ${HELM_NENT}개 모두 version 있음" "$f2"
+
+  # 12.3 — kustomization 쪽(최상위 키 · generators·transformers 참조)은 사전 판정, 파일 열거의 YAML 문서 kind는 여기서(검사 11과 같은 행)
+  local f3=$N_FAIL
+  for m in "${HELM_F3[@]}"; do fail "12.3 HELM-legacy" "$m"; done
+  collect_doc_rows
+  while IFS="$YQ_SEP" read -r i idx nk tg hk kd av ik nm; do
+    [[ -n $i && ${SRC_KIND[$i]} == file && $nk == map && $kd == HelmChartInflationGenerator ]] || continue
+    fail "12.3 HELM-legacy" "${SRC_LABEL[$i]} 문서 #$idx kind 'HelmChartInflationGenerator': 레거시 생성기 설정 금지 — generators:로 부르면 helmCharts 허용 목록 밖에서 차트를 받는다"
+  done < <(printf '%s' "$DOC_ROWS")
+  for ((i = 0; i < SRC_N; i++)); do
+    if [[ ${SRC_KIND[$i]} == file ]]; then nfile=$((nfile + 1)); fi
+  done
+  finish_group "12.3 HELM-legacy" "kustomization ${HELM_NKUST}개에 helmGlobals·helmChartInflationGenerator·레거시 생성기 참조 없음 · YAML 파일 ${nfile}개에 kind: HelmChartInflationGenerator 없음" "$f3"
+
+  # 12.4 — helmCharts를 쓰는 kustomization이 있으면 Argo repo-server의 kustomize 빌드 옵션에 --enable-helm(없으면 그 컴포넌트를 렌더하지 못한다).
+  #   값은 kustomize build의 인자가 되고 pflag가 읽는다(불리언 플래그): `--enable-helm`은 참, `--enable-helm=<값>`은 strconv.ParseBool(HELM_BOOL_*)로
+  #   읽으며 같은 플래그가 여럿이면 차례로 덮어써 마지막 값이 이긴다. 참·거짓 낱말이 아닌 값은 그 자리에서 오류다(kustomize build 실패 — 뒤의 낱말은
+  #   소용이 없다). 2026-09-30 G4 리뷰 B1: `--enable-helm=true`를 낱말로 보지 않던 판정은 동작하는 설정을 FAIL시켰다
+  local f4=$N_FAIL ai=-1 label rows cnt hkey='' json='' words='' verdict='' vword='' w wv v x
+  local -a warr=()
+  if [[ $HELM_NUSER -eq 0 ]]; then
+    pass "12.4 HELM-argocd" "helmCharts를 쓰는 kustomization 0개 — 대상 없음"
+  elif ! kust_file_in "$ROOT/$HELM_ARGOCD_DIR" >/dev/null; then
+    if [[ $ROOT == "$REPO_ROOT" ]]; then
+      fail "12.4 HELM-argocd" "$HELM_ARGOCD_DIR/kustomization.yaml 없음 — helmCharts를 쓰는 kustomization ${HELM_NUSER}개가 있는데 Argo CD 설정(argocd-cm)을 판정할 수 없다(fail-closed)"
+    else
+      pass "12.4 HELM-argocd" "$HELM_ARGOCD_DIR 없음 — 부분 트리(픽스처)라 대상 없음(helmCharts를 쓰는 kustomization ${HELM_NUSER}개)"
+    fi
+  elif need_tool "12.4 HELM-argocd" kustomize; then
+    for ((i = 0; i < SRC_N; i++)); do
+      if [[ ${SRC_KIND[$i]} == rendered && ${SRC_PATH[$i]} == "$HELM_ARGOCD_DIR" ]]; then ai=$i; fi
+    done
+    if [[ $ai -lt 0 ]]; then
+      fail "12.4 HELM-argocd" "$HELM_ARGOCD_DIR 렌더 결과 없음 — kustomize build가 실패했거나 건너뛰었다(검사 1 참조) · 판정할 대상이 없으므로 fail-closed"
+    else
+      label=${SRC_LABEL[$ai]}
+      x="$label ConfigMap/$HELM_ARGOCD_CM_NS/$HELM_ARGOCD_CM"
+      if ! rows=$(src_extract "$ai" "$YQ_ARGOCD_CM"); then
+        fail "12.4 HELM-argocd" "$label: yq 추출 실패($HELM_ARGOCD_CM) — fail-closed"
+      else
+        cnt=0
+        while IFS= read -r m; do
+          if [[ -n $m ]]; then cnt=$((cnt + 1)); fi
+        done <<< "$rows"
+        IFS="$YQ_SEP" read -r hkey json words <<< "$rows" || true
+        if [[ $cnt -ne 1 ]]; then
+          fail "12.4 HELM-argocd" "$label: ConfigMap $HELM_ARGOCD_CM_NS/$HELM_ARGOCD_CM ${cnt}개 — 정확히 1개여야 판정할 수 있다(fail-closed · helmCharts를 쓰는 kustomization ${HELM_NUSER}개)"
+        elif [[ $hkey == 0 ]]; then
+          fail "12.4 HELM-argocd" "$x: data.\"$HELM_ARGOCD_KEY\" 없음 — helmCharts를 쓰는 kustomization ${HELM_NUSER}개가 있는데 Argo repo-server는 $HELM_ARGOCD_FLAG 없이 빌드한다(그 Application은 렌더 실패로 굳는다)"
+        elif [[ $hkey != 1 ]]; then
+          fail "12.4 HELM-argocd" "$x: data.\"$HELM_ARGOCD_KEY\" 키 ${hkey}개 — 판정할 수 없다(fail-closed)"
+        elif [[ -z $words ]]; then
+          fail "12.4 HELM-argocd" "$x: data.\"$HELM_ARGOCD_KEY\" $json에 $HELM_ARGOCD_FLAG 낱말 없음 — helmCharts를 쓰는 kustomization ${HELM_NUSER}개가 있는데 Argo repo-server는 $HELM_ARGOCD_FLAG 없이 빌드한다(공백으로 나눈 낱말 단위 — Argo CD는 strings.Fields로 나눈다)"
+        else
+          # words = `--enable-helm`·`--enable-helm=…` 낱말의 JSON 문자열(공백 구분 — YQ_ARGOCD_CM). read -a는 경로 확장(글롭)을 하지 않는다
+          read -r -a warr <<< "$words"
+          for w in "${warr[@]}"; do
+            vword=$w; wv=${w#\"}; wv=${wv%\"}
+            if [[ $wv == "$HELM_ARGOCD_FLAG" ]]; then
+              verdict=true
+            elif [[ $wv == "$HELM_ARGOCD_FLAG="* ]]; then
+              v=${wv#"$HELM_ARGOCD_FLAG="}
+              if [[ -n $v && " $HELM_BOOL_TRUE " == *" $v "* ]]; then verdict=true
+              elif [[ -n $v && " $HELM_BOOL_FALSE " == *" $v "* ]]; then verdict=false
+              else verdict=invalid; break
+              fi
+            else
+              verdict=invalid; break
+            fi
+          done
+          if [[ $verdict == true ]]; then
+            pass "12.4 HELM-argocd" "helmCharts를 쓰는 kustomization ${HELM_NUSER}개 → $x data.\"$HELM_ARGOCD_KEY\" $json에 $HELM_ARGOCD_FLAG 있음"
+          elif [[ $verdict == false ]]; then
+            fail "12.4 HELM-argocd" "$x: data.\"$HELM_ARGOCD_KEY\" $json의 마지막 $HELM_ARGOCD_FLAG 낱말 $vword이 참이 아니다 — pflag는 같은 플래그의 마지막 값을 쓴다(참: $HELM_ARGOCD_FLAG · $HELM_ARGOCD_FLAG=<${HELM_BOOL_TRUE// /·}>). helmCharts를 쓰는 kustomization ${HELM_NUSER}개가 있는데 Argo repo-server는 helm 없이 빌드한다(그 Application은 렌더 실패로 굳는다)"
+          else
+            fail "12.4 HELM-argocd" "$x: data.\"$HELM_ARGOCD_KEY\" $json의 $HELM_ARGOCD_FLAG 낱말 $vword의 값을 pflag가 참·거짓으로 읽지 못한다(strconv.ParseBool — ${HELM_BOOL_TRUE// /·} / ${HELM_BOOL_FALSE// /·}만) — 인자 해석이 그 자리에서 멈춰 kustomize build가 실패한다(Argo repo-server가 helmCharts를 쓰는 kustomization ${HELM_NUSER}개를 렌더하지 못한다)"
+          fi
+        fi
+      fi
+    fi
+  fi
+
+  # 12.5 — 이름이 charts인 디렉터리(심볼릭 링크 포함)는 helmCharts를 쓰는 kustomization 바로 아래에만. 허용된 캐시 안은 보지 않는다
+  #   (받은 차트 안의 하위 차트 charts/ — 정렬하면 캐시가 그 안의 경로보다 먼저 온다). .git과 루트의 tests/는 보지 않는다
+  local f5=$N_FAIL cdir pd pk why a inside hu
+  local -a cds=() allowed=()
+  mapfile -d '' -t cds < <(find "$ROOT" \( -path "$ROOT/tests" -o -name .git \) -prune -o -name charts -xtype d -print0 | LC_ALL=C sort -z)
+  for cdir in "${cds[@]}"; do
+    inside=0
+    for a in "${allowed[@]}"; do
+      if [[ $cdir == "$a"/* ]]; then inside=1; break; fi
+    done
+    [[ $inside == 0 ]] || continue
+    pd=$(dirname "$cdir")
+    if pk=$(kust_file_in "$pd"); then
+      hu=0
+      helm_uses "$pk" || hu=$?
+      if [[ $hu == 0 ]]; then allowed+=("$cdir"); continue; fi
+      if [[ $hu == 2 ]]; then why="부모 $(rel "$pd")/의 kustomization을 읽지 못했다(fail-closed)"
+      else why="부모 $(rel "$pd")/의 kustomization이 helmCharts를 쓰지 않는다"
+      fi
+    else
+      why="부모 $(rel "$pd")/에 kustomization이 없다"
+    fi
+    fail "12.5 HELM-chartsdir" "$(rel "$cdir")/: 이름이 charts인 디렉터리 — $why. charts는 helmCharts를 쓰는 kustomization 바로 아래(인플레이트 캐시)에만 둔다 — 파일 열거와 7.4의 파일 찾기가 경로에 /charts/가 든 곳을 통째로 건너뛰므로 이 아래는 모든 검사의 시야 밖이다"
+  done
+  finish_group "12.5 HELM-chartsdir" "이름이 charts인 디렉터리는 인플레이트 캐시 자리(helmCharts를 쓰는 kustomization 바로 아래)에만 있다 — 캐시 안은 보지 않는다(.git · 루트 tests/ 제외)" "$f5"
+}
+
+# -----------------------------------------------------------------------------
+# 검사 13 — 권한 경계(계약 §validate.yml 4 「(T047) 권한 경계 — 문자열이 아니라 규칙 구조로 본다」 · 기준선 = 2026-09-29 main 82dd85e 실측)
+#
+# 대상: kustomize **렌더 전부**(SRC_KIND rendered)를 합친 RBAC 객체 — apiVersion이 rbac.authorization.k8s.io/로 시작하고 kind가 Role·ClusterRole·
+#   RoleBinding·ClusterRoleBinding인 문서. 검사 10은 컴포넌트 하나(platform/reloader)의 렌더 안만 본다 — 다른 컴포넌트의 렌더가 같은 계정에 권한을
+#   주거나 ServiceAccount 토큰을 발급할 수 있는 규칙을 새로 넣는 경로는 여기서 본다. 판정은 문자열 찾기가 아니라 규칙의 구조(목록의 원소)로 한다 —
+#   와일드카드와 주체 표기의 여러 형태가 같은 권한을 준다.
+# 렌더만 봐도 되는 전제: Argo가 적용하는 것은 kustomization의 렌더이거나 directory source 경로(clusters/oci-k3s/apps)의 파일이다. 뒤쪽은 11.4
+#   (FMT-dirsource-kind)가 "문서는 Application(argoproj.io/…)뿐"으로 닫는다 — 그 경로에 RBAC를 두면 11.4가 FAIL한다. 렌더 안에 숨는 경로 중
+#   목록 객체(items 안의 RBAC)는 11.1이, Application 수준에서 렌더를 바꾸는 경로(source 오버라이드 등)는 7.4가, kustomization 열거 밖에서
+#   렌더되는 링크된 컴포넌트는 11.5가 막는다. Argo가 적용하지 않는
+#   렌더(pod의 base 등)도 합쳐서 본다 — 넓게 잡는 쪽이다.
+# 추출: 렌더 하나 = yq 한 번(YQ_RBAC — 행 종류 R 역할 · T 토큰 발급 규칙 · B 바인딩 · S 주체). 모든 렌더를 모은 뒤 판정한다 — 13.2의 "렌더에 있는
+#   ClusterRole"과 "같은 ns의 Role"은 **모든 렌더를 합친** 집합이다(바인딩과 역할이 다른 컴포넌트의 렌더에 있어도 된다). 같은 객체가 여러 렌더에
+#   나타나면(base와 overlay 등) 나타난 것마다 판정·계수한다(다른 컴포넌트가 같은 이름으로 넓은 규칙을 정의하는 경로).
+# 완전성(기준선의 것이 있는가)은 --root가 저장소 루트일 때만 요구한다(검사 10과 같은 판별 — 부분 트리 픽스처는 기준선 **밖의** 것만 본다).
+#   13.0이 나면(렌더가 빠져 합친 집합이 불완전하다) 완전성은 판정하지 않는다 — 빠진 렌더에 기준선의 것이 있을 수 있다.
+# 보지 않는 것은 tests/README.md 「검사 13이 보지 않는 것」.
+# -----------------------------------------------------------------------------
+RB_O=''
+rb_obj() { # <kind> <ns> <이름> → 전역 RB_O(클러스터 범위는 kind/이름, ns 범위는 kind/ns/이름) — $(…) 없이 부르려고 전역에 둔다
+  if [[ $1 == Cluster* ]]; then RB_O="$1/$3"; else RB_O="$1/$2/$3"; fi
+}
+check_13_rbac() {
+  header 13 "권한 경계(전 렌더 합산 RBAC) — 토큰 발급 규칙 · 렌더되지 않은 역할을 가리키는 바인딩 · 내장 역할 이름 · 주체 · Reloader 주체 · 역할 집계"
+  need_tool "13 RBAC" yq || return 0
+  need_tool "13 RBAC" kustomize || return 0
+  local f0=$N_FAIL kf rdir i out line typ nsep idx a b c d e f g h j key shape ok x L O
+  local nren=0 nmiss=0 missing='' needhelm=0 bad=0 atroot=0 rows=''
+  local nrole=0 ncr=0 nbind=0 nrb=0 ncrb=0 nsubj=0 ntok=0 next=0 nrr=0 nagg=0
+  local toklist='' extlist='' agglist='' toktab='' exttab='' aggtab='' expnames='' mode
+  local -a arr=()
+  local -A have=() crset=() roleset=() tokwant=() extwant=() aggwant=() seen=() relb=()
+  # helmCharts를 쓰는 kustomization이 있으면 렌더에 helm이 필요하다(검사 1과 같은 판별 — 사전 판정에 걸린 것은 렌더하지 않으므로 빼고 센다)
+  for kf in "${KUST_FILES[@]}"; do
+    [[ -z ${HELM_BLOCK[$kf]:-} ]] || continue
+    if grep -Eq '^[[:space:]]*helmCharts:' "$kf"; then needhelm=1; break; fi
+  done
+  if [[ $needhelm == 1 ]]; then need_tool "13 RBAC" helm || return 0; fi
+  [[ $ROOT != "$REPO_ROOT" ]] || atroot=1
+
+  # 표(계약 사본) → 조회용 맵 · 메시지용 목록
+  while read -r a b c d; do
+    [[ -n $a ]] || continue
+    rb_obj "$a" "$b" "$c"; tokwant[$RB_O]=$d; toktab+="${toktab:+ · }$RB_O"
+  done <<< "$RBAC_TOKEN_TABLE"
+  while read -r a b c; do
+    [[ -n $a ]] || continue
+    extwant["$a $b $c"]=1; exttab+="${exttab:+ · }$a/$b → $c"
+  done <<< "$RBAC_EXTREF_TABLE"
+  while read -r a; do
+    [[ -n $a ]] || continue
+    aggwant[$a]=1; aggtab+="${aggtab:+ · }$a"
+  done <<< "$RBAC_AGG_TABLE"
+  mapfile -t arr < <(printf '%s\n' $RBAC_TOKEN_FIXED_NAMES | LC_ALL=C sort -u)
+  expnames=$(printf '"%s",' "${arr[@]}"); expnames="[${expnames%,}]"
+
+  # 13.0 — 렌더마다 yq 한 번. 행마다 종류와 구분자 수(R 7 · T 9 · B 7 · S 8)와 수·참거짓 필드를 확인한다(아니면 fail-closed)
+  for ((i = 0; i < SRC_N; i++)); do
+    [[ ${SRC_KIND[$i]} == rendered ]] || continue
+    nren=$((nren + 1)); have[${SRC_PATH[$i]}]=1
+    if ! out=$(src_extract "$i" "$YQ_RBAC"); then
+      fail "13.0 RBAC-render" "${SRC_LABEL[$i]}: yq 추출 실패 — 이 렌더의 RBAC를 판정할 수 없다(fail-closed)"
+      bad=1; continue
+    fi
+    while IFS= read -r line; do
+      [[ -n $line ]] || continue
+      typ=${line%%"$YQ_SEP"*}
+      nsep=${line//[!$YQ_SEP]/}; nsep=${#nsep}
+      ok=0
+      IFS=$YQ_SEP read -r typ a b c d e f g h j <<< "$line"
+      case "$typ:$nsep" in
+        R:7) [[ $d =~ ^[0-9]+$ && $g =~ ^[0-9]+$ && ( $e == true || $e == false ) && $f == \[* ]] && ok=1 ;;
+        T:9) [[ $d =~ ^[0-9]+$ && ( $h == true || $h == false ) && $e == \[* && $f == \[* && $g == \[* && $j == \[* ]] && ok=1 ;;
+        B:7) [[ $g =~ ^[0-9]+$ ]] && ok=1 ;;
+        S:8) [[ $d =~ ^[0-9]+$ ]] && ok=1 ;;
+      esac
+      if [[ $ok == 1 ]]; then
+        rows+="$i$YQ_SEP$line"$'\n'
+      else
+        fail "13.0 RBAC-render" "${SRC_LABEL[$i]}: 추출 행의 모양이 기대와 다르다(종류 '${typ:0:12}' · 구분자 ${nsep}개) — 값에 줄바꿈·구분 문자가 든 이름 등(fail-closed)"
+        bad=1
+      fi
+    done <<< "$out"
+  done
+  for kf in "${KUST_FILES[@]}"; do
+    rdir=${kf%/*}
+    if [[ $rdir == "$ROOT" ]]; then rdir='.'; else rdir=${rdir#"$ROOT"/}; fi
+    [[ -n ${have[$rdir]:-} ]] || { missing+="${missing:+ · }$rdir"; nmiss=$((nmiss + 1)); }
+  done
+  if [[ $nmiss -gt 0 ]]; then
+    fail "13.0 RBAC-render" "렌더가 없는 kustomization ${nmiss}개 [$missing] — 빌드가 실패했거나 건너뛰었다(검사 1 · 12 참조). 그 렌더의 RBAC를 볼 수 없어 합친 집합이 불완전하다(fail-closed)"
+    bad=1
+  fi
+
+  # 1차 — 역할(R)과 토큰 발급 규칙(T): 13.1 · 13.3 · 13.6, 그리고 13.2가 쓸 역할 집합(모든 렌더 합산)
+  while IFS=$YQ_SEP read -r idx typ a b c d e f g h j; do
+    [[ $typ == R || $typ == T ]] || continue
+    L=${SRC_LABEL[$idx]}
+    rb_obj "$a" "$b" "$c"; O=$RB_O; key=$O   # ClusterRole은 ns와 무관하게 이름으로 맞춘다(rb_obj가 ns를 버린다)
+    shape=${tokwant[$key]:-}
+    if [[ $typ == R ]]; then
+      # R: d=규칙 수 e=aggregationRule 유무 f=aggregate-to-* 라벨(JSON) g=토큰 발급 규칙 수
+      if [[ $a == ClusterRole ]]; then ncr=$((ncr + 1)); crset[$c]=1; else nrole=$((nrole + 1)); roleset["$b/$c"]=1; fi
+      [[ -z $shape ]] || seen["tok $key"]=1
+      if [[ $g -gt 0 ]]; then ntok=$((ntok + 1)); toklist+="${toklist:+ · }$O"; fi
+      if [[ $shape == fixed && $g -ne 1 ]]; then
+        fail "13.1 RBAC-token" "$L $O: 토큰 발급 규칙 ${g}개 ≠ 1(규칙 ${d}개 중) — 기준선 ②의 모양은 토큰 발급 규칙 하나다(늘어난 규칙은 다른 ServiceAccount의 토큰을 발급한다)"
+      fi
+      [[ $a == ClusterRole ]] || continue
+      if [[ " $RBAC_BUILTIN_NAMES " == *" $c "* || $c == "$RBAC_BUILTIN_PREFIX"* ]]; then
+        fail "13.3 RBAC-builtin-name" "$L $O: 내장 역할의 이름(${RBAC_BUILTIN_NAMES// /·} · ${RBAC_BUILTIN_PREFIX} 접두) 금지 — 13.2는 그 이름의 ClusterRole이 렌더에 있으면 \"렌더된 역할\"로 읽으므로, 내장 역할에 거는 바인딩이 13.2를 지난다(그리고 API 서버의 내장 역할을 덮어쓴다)"
+      fi
+      if [[ $e == true ]]; then
+        fail "13.6 RBAC-aggregation" "$L $O: aggregationRule 금지 — 합쳐진 결과 규칙은 렌더에 없어 볼 수 없다(라벨이 맞는 ClusterRole이 생기면 조용히 넓어진다)"
+      fi
+      if [[ $f != '[]' ]]; then
+        nagg=$((nagg + 1)); agglist+="${agglist:+ · }$c"
+        if [[ -n ${aggwant[$c]:-} ]]; then
+          seen["agg $c"]=1
+        else
+          fail "13.6 RBAC-aggregation" "$L $O: aggregate-to-* 라벨 $f — 기준선($aggtab) 밖이다(라벨 값과 무관 — \"false\"도 센다: 값이 바뀌는 순간 집계된다). 내장 view·edit·admin에 규칙이 더해진다 — agent-view-view가 view에 걸려 있으므로 view에 Secret 읽기가 더해지면 에이전트의 읽기 전용 자격이 Secret을 읽는다"
+        fi
+      fi
+    else
+      # T: d=규칙 번호 e=apiGroups f=resources g=verbs h=resourceNames 유무 j=resourceNames(정렬·중복 제거)
+      if [[ -z $shape ]]; then
+        fail "13.1 RBAC-token" "$L $O 규칙 #$d(apiGroups $e · resources $f · verbs $g): ServiceAccount 토큰 발급 규칙 — 기준선($toktab) 밖의 역할이다. 이 역할을 받은 주체는 그 ns(ClusterRole이면 클러스터 전체)의 ServiceAccount 토큰을 발급받아 그 계정의 권한으로 행동한다"
+      elif [[ $shape == fixed ]]; then
+        if [[ $e != "$RBAC_TOKEN_FIXED_GROUPS" || $f != "$RBAC_TOKEN_FIXED_RESOURCES" || $g != "$RBAC_TOKEN_FIXED_VERBS" ]]; then
+          fail "13.1 RBAC-token" "$L $O 규칙 #$d: apiGroups·resources·verbs가 기준선 ②와 다르다 — 실제 apiGroups $e · resources $f · verbs $g · 기준선 apiGroups $RBAC_TOKEN_FIXED_GROUPS · resources $RBAC_TOKEN_FIXED_RESOURCES · verbs $RBAC_TOKEN_FIXED_VERBS(목록 정확 일치 — 와일드카드·여분 원소는 다른 리소스·동사까지 준다)"
+        fi
+        if [[ $h != true ]]; then
+          fail "13.1 RBAC-token" "$L $O 규칙 #$d: resourceNames 없음 — 그 ns의 모든 ServiceAccount 토큰을 발급한다(기준선 ② $expnames)"
+        elif [[ $j == '[]' ]]; then
+          fail "13.1 RBAC-token" "$L $O 규칙 #$d: resourceNames가 빈 목록 — 제한이 없다(그 ns의 모든 ServiceAccount 토큰 발급 · 기준선 ② $expnames)"
+        elif [[ $j != "$expnames" ]]; then
+          fail "13.1 RBAC-token" "$L $O 규칙 #$d: resourceNames 집합 $j ≠ 기준선 ② $expnames(집합 정확 일치 — 더한 이름의 ServiceAccount 토큰도 발급된다)"
+        fi
+      fi
+    fi
+  done < <(printf '%s' "$rows")
+
+  # 2차 — 바인딩(B)과 주체(S): 13.2 · 13.4 · 13.5
+  while IFS=$YQ_SEP read -r idx typ a b c d e f g h j; do
+    [[ $typ == B || $typ == S ]] || continue
+    L=${SRC_LABEL[$idx]}
+    rb_obj "$a" "$b" "$c"; O=$RB_O
+    if [[ $typ == B ]]; then
+      # B: d=roleRef.kind e=roleRef.name f=subjects 태그 g=주체 수
+      nbind=$((nbind + 1))
+      if [[ $a == RoleBinding ]]; then nrb=$((nrb + 1)); else ncrb=$((ncrb + 1)); fi
+      case $d in
+        ClusterRole)
+          if [[ -n ${crset[$e]:-} ]]; then
+            :   # 어느 렌더에 있는 ClusterRole — 그 규칙은 13.1 · 13.6이 본다
+          elif [[ -n ${extwant["$a $c $e"]:-} ]]; then
+            next=$((next + 1)); extlist+="${extlist:+ · }$O → $e"; seen["ext $a $c $e"]=1
+          else
+            fail "13.2 RBAC-extref" "$L $O → ClusterRole '$e': 그 이름의 ClusterRole이 어느 렌더에도 없다(내장 역할 등 — 규칙을 볼 수 없다) · 기준선($exttab) 밖이다 — 내장 cluster-admin·admin·edit는 클러스터나 ns 전체의 쓰기 권한을 준다"
+          fi ;;
+        Role)
+          if [[ $a == ClusterRoleBinding ]]; then
+            fail "13.2 RBAC-extref" "$L $O → Role '$e': ClusterRoleBinding은 Role을 가리킬 수 없다(API 서버가 거부한다 — 선언과 적용이 갈린다)"
+          elif [[ -z ${roleset["$b/$e"]:-} ]]; then
+            fail "13.2 RBAC-extref" "$L $O → Role '$e': 같은 ns($b)의 그 Role이 어느 렌더에도 없다 — 렌더 밖 Role의 권한은 볼 수 없다(다른 ns의 같은 이름 Role은 쓰이지 않는다)"
+          else
+            nrr=$((nrr + 1))
+          fi ;;
+        *)
+          fail "13.2 RBAC-extref" "$L $O: roleRef.kind '$d' — Role·ClusterRole만 허용한다(판정할 수 없다 — fail-closed)" ;;
+      esac
+      case $f in
+        none|'!!null'|'!!seq') ;;
+        *) fail "13.4 RBAC-subject" "$L $O: subjects가 목록이 아니다(태그 $f) — 주체를 판정할 수 없다(fail-closed)" ;;
+      esac
+    else
+      # S: d=주체 번호 e=노드 종류 f=kind g=name h=namespace
+      nsubj=$((nsubj + 1))
+      x="$L $O 주체 #$d"
+      if [[ $e != map ]]; then
+        fail "13.4 RBAC-subject" "$x: 맵이 아니다(노드 $e) — 판정할 수 없다(fail-closed)"
+      elif [[ $f != ServiceAccount ]]; then
+        fail "13.4 RBAC-subject" "$x kind '$f' name '$g': 주체는 이름을 다 적은 ServiceAccount뿐이다 — User·Group은 계정을 포함하는 그룹(system:serviceaccounts[:<ns>] · system:authenticated 등)이나 계정의 사용자 이름 표기(system:serviceaccount:<ns>:<name>)로 같은 권한을 주는 경로다(사람·그룹 주체가 필요해지면 계약에 행을 더한다 — T084)"
+      else
+        [[ -n $g ]] || fail "13.4 RBAC-subject" "$x ServiceAccount: name이 비었다 — 누구에게 주는 권한인지 렌더로 알 수 없다(fail-closed)"
+        [[ -n $h ]] || fail "13.4 RBAC-subject" "$x ServiceAccount '$g': namespace가 비었다 — RoleBinding에서는 API 서버가 바인딩의 ns로 채워 읽으므로 렌더의 글자만으로는 누구인지 드러나지 않는다"
+        if [[ $g == "$REL_SA" && $h == "$REL_RELEASE_NS" ]]; then
+          if [[ ${SRC_PATH[$idx]} == "$REL_DIR" ]]; then
+            relb["$idx $O"]=1
+          else
+            fail "13.5 RBAC-reloader-subject" "$x ServiceAccount $REL_RELEASE_NS/$REL_SA: $REL_DIR 밖의 렌더가 Reloader에게 권한을 준다 — Reloader는 받은 권한만큼 Secret을 읽고 워크로드를 재시작한다(검사 10은 $REL_DIR 렌더만 본다)"
+          fi
+        fi
+      fi
+    fi
+  done < <(printf '%s' "$rows")
+
+  # 완전성 — 저장소 루트에서만 · 합친 집합이 온전할 때만
+  if [[ $atroot == 1 && $bad == 0 ]]; then
+    while read -r a b c d; do
+      [[ -n $a ]] || continue
+      rb_obj "$a" "$b" "$c"
+      [[ -n ${seen["tok $RB_O"]:-} ]] \
+        || fail "13.1 RBAC-token" "저장소 루트에 기준선의 토큰 발급 역할 $RB_O 없음 — 계약의 기준선(2026-09-29 실측)과 트리가 어긋났다(바뀐 것이 맞으면 계약과 RBAC_TOKEN_TABLE을 먼저 고친다)"
+    done <<< "$RBAC_TOKEN_TABLE"
+    while read -r a b c; do
+      [[ -n $a ]] || continue
+      [[ -n ${seen["ext $a $b $c"]:-} ]] \
+        || fail "13.2 RBAC-extref" "저장소 루트에 기준선의 바인딩 $a/$b → ClusterRole '$c' 없음 — 어느 렌더에도 없는 ClusterRole을 가리키는 바인딩으로 나타나야 한다(바뀐 것이 맞으면 계약과 RBAC_EXTREF_TABLE을 먼저 고친다)"
+    done <<< "$RBAC_EXTREF_TABLE"
+    while read -r a; do
+      [[ -n $a ]] || continue
+      [[ -n ${seen["agg $a"]:-} ]] \
+        || fail "13.6 RBAC-aggregation" "저장소 루트에 기준선의 aggregate-to-* 라벨 ClusterRole '$a' 없음 — 그 라벨을 가진 ClusterRole로 나타나야 한다(바뀐 것이 맞으면 계약과 RBAC_AGG_TABLE을 먼저 고친다)"
+    done <<< "$RBAC_AGG_TABLE"
+  fi
+
+  if [[ $atroot == 0 && $((nrole + ncr + nbind)) -eq 0 ]]; then
+    finish_group "13 RBAC" "렌더 ${nren}개에 RBAC 객체(Role·ClusterRole·RoleBinding·ClusterRoleBinding) 0개 — 부분 트리(픽스처)라 대상 없음" "$f0"
+    return 0
+  fi
+  if [[ $atroot == 1 ]]; then mode='저장소 루트 — 기준선 전부 있음'; else mode='부분 트리 — 기준선 밖의 것만 본다'; fi
+  finish_group "13 RBAC" "렌더 ${nren}개 합산($mode) — Role ${nrole} · ClusterRole ${ncr} · 바인딩 ${nbind}장(RoleBinding ${nrb} · ClusterRoleBinding ${ncrb}) · 주체 ${nsubj}개 모두 이름을 다 적은 ServiceAccount · 토큰 발급 규칙을 가진 역할 ${ntok}개(${toklist:-없음}) · 렌더되지 않은 ClusterRole을 가리키는 바인딩 ${next}장(${extlist:-없음}) · Role을 가리키는 RoleBinding ${nrr}장 모두 같은 ns의 렌더된 Role · 내장 역할 이름의 ClusterRole 0 · aggregationRule 0 · aggregate-to-* 라벨 ClusterRole ${nagg}개(${agglist:-없음}) · Reloader 주체(ServiceAccount $REL_RELEASE_NS/$REL_SA) 바인딩은 $REL_DIR 렌더에만 — 그 렌더 안 ${#relb[@]}장(장수·모양은 검사 10)" "$f0"
+}
+
+# -----------------------------------------------------------------------------
 # 실행
 # -----------------------------------------------------------------------------
 if [[ $ONLY_AUTHOR == 1 ]]; then
@@ -2149,6 +3195,7 @@ if [[ $ONLY_AUTHOR == 1 ]]; then
   exit 0
 fi
 load_wave_table
+helm_src_scan        # 12.1–12.3 사전 판정(출력 없음) — 걸린 kustomization을 검사 1이 렌더하지 않게 검사 1보다 먼저 돈다. 줄은 검사 12가 찍는다
 check_1_kustomize
 check_1b_plain
 check_2_app_ssa
@@ -2162,6 +3209,9 @@ check_7_app_source
 check_8_gitleaks
 check_9_clustersecretstores
 check_10_reloader
+check_11_formats
+check_12_helm
+check_13_rbac
 
 printf '\n== 요약 ==\n'
 printf 'PASS %d · FAIL %d · WARN %d · SKIP %d\n' "$N_PASS" "$N_FAIL" "$N_WARN" "$N_SKIP"

@@ -1,0 +1,9 @@
+# 경계 픽스처(통과) 검사 13 — rbac/pass는 두 번 쓰인다: 부분 트리(rbac-pass — 기준선 밖의 것만 본다)와, 임시 트리에 validate.sh
+#   사본을 넣어 이 트리를 **저장소 루트**로 돌리는 rbac-root-ok(기준선 전부가 있어야 한다 — 완전성). 그래서 기준선의 객체를 전부 담는다:
+#   ① ClusterRole argocd-application-controller(여기 — 와일드카드 규칙 · 이름만 본다) · ② Role external-secrets/eso-token-create ·
+#   렌더되지 않은 ClusterRole을 가리키는 바인딩 2장(platform/policies · platform/vault) · aggregate-to-* 라벨 ClusterRole 5장
+#   (platform/cert-manager 3 · platform/external-secrets 2).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - rbac.yaml

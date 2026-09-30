@@ -1,0 +1,8 @@
+# 임시 트리 원본(12.4 · 12.5) — tests/validate.tests.sh 가 이 디렉터리(helm-src/tree)를 tests/.tmp/<케이스>/ 로 복사한 뒤
+#   argocd-cm.yaml(helm-src/argocd-cm/<변형>.yaml)과 charts/ 아래(로컬 차트 · 금지된 charts 디렉터리)를 더해 --root로 준다.
+#   charts/ 는 .gitignore 대상이라 커밋되는 픽스처로 만들 수 없다. 이 디렉터리를 그대로 --root로 쓰지 않는다(argocd-cm.yaml이 없다).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: argocd
+resources:
+  - argocd-cm.yaml

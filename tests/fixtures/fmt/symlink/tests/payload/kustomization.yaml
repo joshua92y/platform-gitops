@@ -1,0 +1,6 @@
+# 임시 트리 원본(11.5 ⓐ 파일 링크의 대상) — platform/vault/kustomization.yaml 이 이 파일을 가리키는 링크가 된다. kustomization 열거(find -type f)는
+#   링크를 세지 않아 검사 1 · 12(차트 출처) · 13이 platform/vault를 렌더하지도 판정하지도 않는데, Argo와 kustomize는 링크를 따라 이 kustomization을
+#   빌드한다(여기에 허용 목록 밖의 helmCharts를 두어도 12.1이 보지 못한다 — 11.5가 막는다). 내용은 비워 둔다(네트워크를 쓰지 않는다).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: []
