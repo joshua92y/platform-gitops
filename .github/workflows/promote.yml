@@ -1,0 +1,422 @@
+# promote — prod 승격 PR을 여는 워크플로(T047 G5 · 계약 gitops-repo.md §이미지·승격 「prod 승격」 · 결정 D8 2026-09-30)
+#
+# 실행: 운영자가 main에서 dispatch한다(`gh workflow run promote.yml -f pod=<pod>` — 기본 ref가 main이다). main이 아닌 ref에서
+#       dispatch한 실행은 스텝 3이 실패시킨다(다른 브랜치에 남은 옛 promote.yml로 돌지 않게).
+#
+# 흐름(계약의 ①–⑦ — 스텝 3이 차례로 한다. 어느 단계든 실패하면 그 뒤를 하지 않는다)
+#   ① 입력 검증       pod가 ^[a-z][a-z0-9-]{0,62}$ · apps/<pod>/overlays/{dev,prod}/kustomization.yaml이 저장소 안의 일반 파일
+#   ② dev digest      dev overlay의 images 중 newName이 ghcr.io/joshua92y/<pod>인 항목의 digest — 정확히 하나 · sha256:<64hex>
+#   ③ attestation     gh attestation verify oci://ghcr.io/joshua92y/<pod>@<digest> --owner joshua92y를 **먼저** 한다 — 실패하면
+#                     여기서 끝(브랜치 · PR 없음). 출력의 요지를 job 요약에 남긴다
+#   ④ 제자리 교체     prod overlay의 같은 항목의 digest 줄에서 64자리 hex만 바꾼다(경로 lint의 제자리 교체와 같은 모양 — 들여쓰기 ·
+#                     공백 그대로). 그 항목이 없으면 중단(첫 항목은 사람 PR이 만든다) · 이미 같으면 할 일 없음(exit 0 · 브랜치 · PR
+#                     없음). 교체 뒤 git diff --numstat이 그 파일 하나 `1 1`이고 -/+ 줄이 hex 밖에서 같으며, 다시 YAML로 읽어 이
+#                     pod의 digest가 새 값 하나인지 확인한다
+#   ⑤ 브랜치          main의 끝 위에 커밋 하나(작성자 · 커미터 github-actions[bot]) → promote/prod-<pod>-<sha7>(<sha7> = 새 digest
+#                     hex의 앞 7자)을 push. 원격에 이미 있으면 실패
+#   ⑥ PR              gh pr create(본문은 파일 — dev digest · attestation 요지 · 실행 기록 링크). **auto-merge를 걸지 않는다**
+#   ⑦ 브랜치 끝 확인  PR을 연 직후 원격 브랜치의 끝이 ⑤에서 올린 커밋인지 확인한다 — 다르면 PR을 닫고 브랜치를 지운 뒤 실패한다
+#                     (닫기 코멘트 · job 요약: 이 PR을 다시 열지 말고, 이 PR의 대기 중인 검사 실행을 승인하지 않는다)
+#
+# 왜 App 토큰이 아니라 워크플로 토큰(GITHUB_TOKEN)인가(계약 D8 — D1의 근거 ①은 그대로 유효하다)
+#   App 토큰으로 PR을 열면 작성자가 봇이라 경로 lint(검사 6 — 봇은 dev overlay의 digest만)에 걸린다. lint를 넓혀 봇에게 prod를 열어
+#   주면 App 토큰이 탈취됐을 때 prod가 사람 없이 머지될 길이 생긴다. 워크플로 토큰이 연 PR의 작성자는 github-actions[bot](ID
+#   41898282)이고 경로 lint는 이 계정을 봇으로 보지 않는다 — App 토큰으로는 이 작성자를 만들 수 없으므로, 운영자가 보는 승격 PR은
+#   늘 main의 이 워크플로가 attestation을 검증한 뒤 만든 것이다. 이 저장소에는 App 자격(시크릿)을 두지 않는다.
+#
+# 승인 대기(GitHub 2026-06-11 변경 · 2026-09-30 실측 PR #40)
+#   워크플로 토큰이 연 PR의 검사 실행(validate.yml)은 승인 대기(action_required)로 만들어진다 — 운영자가 실행을 승인해야 돈다.
+#   승격마다 사람이 하는 일: 이 워크플로 실행 → 검사 실행 승인 → 렌더링 diff 코멘트 확인 → 승인 관문 승인(prod-approval의 gate
+#   job — Environment production) → 머지(squash). 롤백은 머지 커밋의 git revert PR이다.
+#
+# 남는 틈(받아들인 위험 — 모노레포 report.md)
+#   promote/** 는 ruleset branches의 제외 목록에 있다(워크플로 토큰이 브랜치를 만들 수 있게). GitHub Actions만 쓸 수 있는 이름
+#   공간은 개인 계정 저장소에서 만들 수 없어(2026-09-30 실측 — 422) 이 이름 공간은 App도 쓸 수 있다. 틈을 좁히는 것: ⑦ · 발신자
+#   판정(PR이 열린 뒤 App이 push하면 봇 규칙으로 판정 → 운영 overlay 변경은 실패) · 승인 관문. 남는 것: ⑤에서 브랜치를 올리고
+#   ⑥에서 PR을 열어 ⑦로 확인하기까지 몇 초 사이에 App 토큰으로 커밋을 끼워 넣는 것.
+#   승격 PR에 다른 커밋이 들어오면(발신자가 App이라 validate가 실패한다) PR을 닫고 다시 열지 말고 브랜치를 지운다 — 다시 열면
+#   발신자가 사람이 되어 App의 커밋이 사람 규칙으로 검사된다(⑦이 잡은 경우는 이 워크플로가 닫고 지운다).
+#
+# 규약
+# - job 권한은 contents: write(브랜치 push · ⑦의 브랜치 삭제) + pull-requests: write(PR 열기 · ⑦의 PR 닫기)뿐이다.
+# - checkout의 persist-credentials: true — ⑤ · ⑦의 git push(⑦은 브랜치 삭제)와 git ls-remote가 job 토큰을 쓴다(체크아웃이 git 설정에 남긴다).
+#   그래도 되는 이유: 이 job은 PR 쪽 코드를 실행하지 않는다 — main의 워크플로 파일로만 돌고(workflow_dispatch · main 밖의 ref는
+#   스텝 3이 거부), 체크아웃한 main의 파일은 읽고 고치기만 한다(yq · grep · sed · git — 저장소의 스크립트를 실행하지 않는다).
+# - 로직은 모두 이 파일 안에 인라인으로 둔다. `${{ }}` 값은 run: 본문에 끼워 넣지 않고 env:로만 넘긴다(입력 pod 포함).
+# - 도구는 yq 하나다(validate job 스텝 3 · render-diff job 스텝 2와 같은 버전 · sha256 — 값을 바꾸면 함께 바꾼다).
+# - 각 run 스텝은 스텝 이름 · 시작·종료 시각(UTC) · 초 · exit를 job 요약에 한 줄 남긴다(validate.yml과 같다).
+# - 끝까지 돌려 보는 것(첫 이미지의 dev → prod 승격 · attestation 검증 · 승인 대기 · 관문 · 머지)은 T115다. 오늘 pod의 overlay는
+#   빈 뼈대라(images 없음) 이 워크플로를 실행하면 ②에서 실패한다.
+name: promote
+
+on:
+  workflow_dispatch:
+    inputs:
+      pod: { description: "승격할 pod 이름(apps/<pod>)", required: true, type: string }
+
+permissions:
+  contents: read
+
+concurrency:
+  # 같은 pod의 승격은 한 번에 하나다(뒤 실행은 기다린다 — 도는 실행을 취소하지 않는다. 기다리는 실행은 하나까지: 새 dispatch가
+  # 기다리던 실행을 취소한다)
+  group: promote-${{ inputs.pod }}
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    defaults:
+      run:
+        shell: bash # = bash --noprofile --norc -eo pipefail {0}
+    steps:
+      - name: "1 checkout — main(전체 이력)"
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0 # origin/main의 끝과 HEAD를 대조하고 그 위에 커밋 하나를 올린다
+          # ⑤ · ⑦의 git push가 job 토큰을 쓴다(체크아웃이 git 설정에 남긴다). 이 job은 PR 쪽 코드를 실행하지 않는다 — 머리 주석 「규약」
+          persist-credentials: true
+
+      - name: "2 도구 설치 — yq(validate 스텝 3과 같은 버전 · sha256)"
+        env:
+          # validate job 스텝 3 · render-diff job 스텝 2의 값과 같아야 한다 — 값을 바꾸면 validate · render-diff의 값과 함께 바꾼다
+          # (render-diff 스텝 2b는 validate.yml 안의 두 job만 대조한다 — 이 파일의 값은 대조하지 않는다).
+          # linux arm64 공식 릴리스 자산의 sha256. 버전을 바꾸면 sha256도 함께 바꾼다
+          YQ_VERSION: v4.53.6
+          YQ_SHA256: 88a1016bc1d657375a35864e4f44b6f333df8ff97b559f51bba0adcb2169df09
+        run: |
+          set -euo pipefail
+          step='2 도구 설치'
+          t0=$(date -u +%s)
+          on_exit() {
+            local rc=$? t1
+            t1=$(date -u +%s)
+            printf -- '- **%s** · 시작 %s · 종료 %s · %d초 · exit %d\n' "$step" \
+              "$(date -u -d "@$t0" +%FT%TZ)" "$(date -u -d "@$t1" +%FT%TZ)" "$((t1 - t0))" "$rc" >> "$GITHUB_STEP_SUMMARY" || true
+            exit "$rc"
+          }
+          trap on_exit EXIT
+
+          bin="$RUNNER_TEMP/bin"
+          dl="$RUNNER_TEMP/dl"
+          mkdir -p "$bin" "$dl"
+          # fetch <url> <파일 이름> <sha256> — 받은 파일을 sha256으로 대조한다. 맞지 않으면 실패(설치하지 않는다)
+          fetch() {
+            if [[ ! $3 =~ ^[0-9a-f]{64}$ ]]; then
+              printf '::error::%s: sha256 값의 형식이 틀렸다: %q\n' "$2" "$3"
+              return 1
+            fi
+            curl -fsSL --retry 3 --connect-timeout 10 --max-time 120 -o "$dl/$2" "$1"
+            printf '%s  %s\n' "$3" "$dl/$2" | sha256sum -c -
+          }
+
+          fetch "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_arm64" yq "$YQ_SHA256"
+          cp "$dl/yq" "$bin/yq"
+          chmod 0755 "$bin/yq"
+
+          # --- 버전 확인: 설치한 바이너리가 기대 버전이 아니면 실패 ---
+          yq_out=$("$bin/yq" --version || true)
+          if [[ $yq_out != *mikefarah* ]]; then
+            printf '::error::yq가 mikefarah yq가 아니다: %q\n' "$yq_out"
+            exit 1
+          fi
+          if [[ ${yq_out##* } != "$YQ_VERSION" ]]; then
+            printf '::error::yq 버전 불일치: 실제 %q ≠ 기대 %s\n' "${yq_out##* }" "$YQ_VERSION"
+            exit 1
+          fi
+          printf '  %-12s %s\n' yq "${yq_out##* }"
+
+          # 다음 스텝부터 PATH 맨 앞에 온다(GITHUB_PATH는 앞에 붙인다)
+          printf '%s\n' "$bin" >> "$GITHUB_PATH"
+
+      - name: "3 승격 — 입력 검증 → dev digest → attestation 검증 → 제자리 교체 → 브랜치 → PR → 브랜치 끝 확인"
+        env:
+          POD: ${{ inputs.pod }}
+          GH_TOKEN: ${{ github.token }} # 이 스텝에만 둔다(gh attestation verify · gh pr create · gh pr close)
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          SERVER_URL: ${{ github.server_url }}
+        run: |
+          # shellcheck disable=SC2016 # 작은따옴표 안의 백틱은 글자 그대로 쓴다(마크다운)
+          set -euo pipefail
+          step='3 승격'
+          t0=$(date -u +%s)
+          on_exit() {
+            local rc=$? t1
+            t1=$(date -u +%s)
+            printf -- '- **%s** · 시작 %s · 종료 %s · %d초 · exit %d\n' "$step" \
+              "$(date -u -d "@$t0" +%FT%TZ)" "$(date -u -d "@$t1" +%FT%TZ)" "$((t1 - t0))" "$rc" >> "$GITHUB_STEP_SUMMARY" || true
+            exit "$rc"
+          }
+          trap on_exit EXIT
+
+          # ---------- 함수 ----------
+          # note <글자> — job 요약에 한 줄. 이 스크립트가 만든 글자와 형식을 확인한 값만 넣는다
+          note() { printf -- '- %s\n' "$1" >> "$GITHUB_STEP_SUMMARY" || true; }
+          # die <까닭> — 오류 주석 · 요약 한 줄 · exit 1(on_exit이 시간 줄을 남긴다). 명령 치환(서브셸) 안에서 부르지 않는다
+          die() {
+            printf '::error::%s\n' "$1"
+            note "**실패** — $1"
+            exit 1
+          }
+          # re <글자> <정규식> — 바이트 단위(LC_ALL=C) 정규식 비교(로캘에 따라 [a-z] 등이 넓어지지 않게)
+          re() {
+            local LC_ALL=C
+            [[ $1 =~ $2 ]]
+          }
+          # enc <글자> — ENC에 앞부분의 모양(허용 글자 밖의 바이트는 %XX). 형식이 틀린 값을 로그 · 요약에 실을 때만 쓴다
+          enc() {
+            local LC_ALL=C s=${1:0:200} c i
+            ENC=''
+            for ((i = 0; i < ${#s}; i++)); do
+              c=${s:i:1}
+              case $c in
+                [A-Za-z0-9_.:@+=,~/-]) ENC+=$c ;;
+                *) printf -v c '%%%02X' "'$c"; ENC+=$c ;;
+              esac
+            done
+          }
+          # fence <파일> — 파일 안의 가장 긴 백틱 연속보다 긴 울타리(최소 3개) — 내용의 어떤 줄도 울타리를 닫지 못한다
+          fence() {
+            local k
+            k=$({ LC_ALL=C grep -ao '`\+' -- "$1" || true; } | LC_ALL=C awk '{ if (length($0) > m) m = length($0) } END { print m + 0 }')
+            if (( k < 3 )); then k=2; fi
+            printf '%*s' "$((k + 1))" '' | tr ' ' '`'
+          }
+          # digest_of <파일> — DIGESTS에 images[] 중 newName이 이 pod의 이미지인 항목의 digest(줄마다 하나 — yq가 여러 문서 사이에
+          # 찍는 --- 도 한 줄로 센다 · digest가 없는 항목은 null 한 줄). yq가 파일을 읽지 못하면 1
+          digest_of() {
+            local out
+            DIGESTS=()
+            out=$(IMG=$image yq -r '.images[] | select(.newName == strenv(IMG)) | .digest' "$1") || return 1
+            if [[ -n $out ]]; then mapfile -t DIGESTS <<< "$out"; fi
+          }
+
+          # ---------- ⓪ 실행 조건 · 도구 ----------
+          if [[ ${GITHUB_REF:-} != refs/heads/main ]]; then
+            enc "${GITHUB_REF:-}"
+            die "main에서 dispatch한 실행만 승격한다(실행 ref: '$ENC')"
+          fi
+          p=$(command -v yq || true)
+          if [[ $p != "$RUNNER_TEMP/bin/yq" ]]; then die "yq → ${p:-없음} (기대 $RUNNER_TEMP/bin/yq — 스텝 2가 설치한 것)"; fi
+          command -v gh > /dev/null || die 'gh 가 러너에 없다'
+
+          # ---------- ① 입력 검증 ----------
+          if ! re "$POD" '^[a-z][a-z0-9-]{0,62}$'; then
+            enc "$POD"
+            die "입력 pod의 형식이 틀렸다(^[a-z][a-z0-9-]{0,62}\$ — 받은 값 '$ENC')"
+          fi
+          re "$REPO" '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' || die '저장소 이름(REPO)의 형식이 틀렸다'
+          re "$RUN_ID" '^[1-9][0-9]{0,19}$' || die '실행 ID(RUN_ID)가 숫자가 아니다'
+          re "$SERVER_URL" '^https://[A-Za-z0-9.-]+$' || die '서버 주소(SERVER_URL)의 형식이 틀렸다'
+          owner=joshua92y
+          image="ghcr.io/$owner/$POD"
+          dev="apps/$POD/overlays/dev/kustomization.yaml"
+          prod="apps/$POD/overlays/prod/kustomization.yaml"
+          run_url="$SERVER_URL/$REPO/actions/runs/$RUN_ID"
+          root=$(pwd -P)
+          for f in "$dev" "$prod"; do
+            if [[ -L $f || ! -f $f ]]; then die "$f 이(가) 일반 파일이 아니다(없음 · 심볼릭 링크 포함)"; fi
+            # 경로 중간의 심볼릭 링크로 다른 곳의 파일을 읽거나 고치지 않게 실제 경로를 대조한다
+            r=$(realpath -e -- "$f") || die "$f 의 실제 경로를 구하지 못했다"
+            if [[ $r != "$root/$f" ]]; then die "$f 의 실제 경로가 저장소 안의 그 경로가 아니다(경로의 심볼릭 링크)"; fi
+          done
+          # 작업 트리: HEAD = 가져온 origin/main의 끝(ref: main)이고 깨끗해야 한다 — 승격 커밋은 main의 끝 위에 하나만 올린다
+          main_tip=$(git rev-parse --verify --quiet 'refs/remotes/origin/main^{commit}') || die 'refs/remotes/origin/main 이 커밋으로 풀리지 않는다'
+          head=$(git rev-parse --verify --quiet 'HEAD^{commit}') || die 'HEAD가 커밋으로 풀리지 않는다'
+          if [[ $head != "$main_tip" ]]; then die "HEAD $head 이(가) origin/main의 끝 $main_tip 이(가) 아니다"; fi
+          if [[ -n $(git status --porcelain --untracked-files=no) ]]; then die '작업 트리에 커밋하지 않은 변경이 있다'; fi
+
+          # ---------- ② dev digest ----------
+          digest_of "$dev" || die "$dev 을(를) YAML로 읽지 못했다"
+          if (( ${#DIGESTS[@]} == 0 )); then die "$dev 에 newName이 $image 인 images 항목이 없다"; fi
+          if (( ${#DIGESTS[@]} != 1 )); then die "$dev 에서 newName이 $image 인 images 항목의 digest가 하나가 아니다(${#DIGESTS[@]}줄)"; fi
+          dev_digest=${DIGESTS[0]}
+          re "$dev_digest" '^sha256:[0-9a-f]{64}$' || die "$dev 의 $image digest가 sha256:<64자리 hex> 형식이 아니다"
+          new=${dev_digest#sha256:}
+          note "dev digest \`$dev_digest\` (\`$dev\`)"
+
+          # ---------- ③ attestation 검증 — 먼저 한다. 실패하면 여기서 끝(브랜치 · PR 없음) ----------
+          att=$RUNNER_TEMP/promote-attestation.txt
+          rc=0
+          gh attestation verify "oci://$image@$dev_digest" --owner "$owner" > "$att" 2>&1 || rc=$?
+          # 출력의 요지: 제어 문자(탭 · 개행 밖)를 지운 앞 40줄. 로그에는 워크플로 명령 해석을 막은 구간 안에 찍고, 요약 · PR 본문에는
+          # 내용의 백틱보다 긴 울타리 안에 싣는다
+          LC_ALL=C tr -d '\000-\010\013-\037\177' < "$att" | LC_ALL=C awk 'NR <= 40' > "$att.show"
+          token=$(cat /proc/sys/kernel/random/uuid 2> /dev/null || printf 'stop-%s-%s%s%s' "$(date -u +%s%N)" "$RANDOM" "$RANDOM" "$RANDOM")
+          printf '::stop-commands::%s\n' "$token"
+          cat -- "$att.show"
+          printf '::%s::\n' "$token"
+          fa=$(fence "$att.show")
+          if (( rc == 0 )); then att_word='성공'; else att_word="실패(exit $rc)"; fi
+          {
+            printf -- '- attestation 검증 %s — `gh attestation verify oci://%s@%s --owner %s`\n\n' "$att_word" "$image" "$dev_digest" "$owner"
+            printf '<details><summary>gh attestation verify 출력(앞 40줄)</summary>\n\n%s\n' "$fa"
+            cat -- "$att.show"
+            printf '%s\n\n</details>\n\n' "$fa"
+          } >> "$GITHUB_STEP_SUMMARY" || true
+          if (( rc != 0 )); then die "attestation 검증 실패(exit $rc) — oci://$image@$dev_digest · 브랜치 · PR을 만들지 않는다"; fi
+
+          # ---------- ④ prod digest · 제자리 교체 ----------
+          digest_of "$prod" || die "$prod 을(를) YAML로 읽지 못했다"
+          if (( ${#DIGESTS[@]} == 0 )); then die "$prod 에 newName이 $image 인 images 항목이 없다 — 첫 항목은 사람 PR이 만든다"; fi
+          if (( ${#DIGESTS[@]} != 1 )); then die "$prod 에서 newName이 $image 인 images 항목의 digest가 하나가 아니다(${#DIGESTS[@]}줄)"; fi
+          prod_digest=${DIGESTS[0]}
+          re "$prod_digest" '^sha256:[0-9a-f]{64}$' || die "$prod 의 $image digest가 sha256:<64자리 hex> 형식이 아니다"
+          old=${prod_digest#sha256:}
+          if [[ $old == "$new" ]]; then
+            printf '::notice::prod의 %s digest가 이미 dev와 같다(%s) — 할 일 없음(브랜치 · PR 없음)\n' "$POD" "$dev_digest"
+            note 'prod digest가 이미 dev와 같다 — 할 일 없음(브랜치 · PR 없음)'
+            exit 0
+          fi
+          # 'digest: sha256:<old>'가 든 줄이 정확히 하나이고, 그 줄이 digest 줄 형식(경로 lint와 같다 — 들여쓰기 · '- ' · 공백만)이어야 한다
+          mapfile -t hit < <(LC_ALL=C grep -n -F -e "digest: sha256:$old" -- "$prod" || true)
+          if (( ${#hit[@]} != 1 )); then die "$prod 에서 'digest: sha256:${old:0:12}…'가 든 줄이 ${#hit[@]}개다(정확히 하나여야 한다)"; fi
+          ln=${hit[0]%%:*}
+          cur=${hit[0]#*:}
+          re "$ln" '^[1-9][0-9]{0,6}$' || die '교체할 줄의 번호를 읽지 못했다'
+          re "$cur" "^[[:space:]]*(-[[:space:]]*)?digest:[[:space:]]*sha256:$old[[:space:]]*\$" \
+            || die "$prod 의 ${ln}번째 줄이 digest 줄 형식이 아니다(값 밖에 다른 글자가 있다) — 64자리 hex만 바꾸는 제자리 교체만 한다"
+          # 그 줄의 hex만 바꾼다(old · new는 64자리 hex로 확인한 값이다 — sed 식에 그대로 넣어도 된다)
+          sed -i -e "${ln}s/sha256:${old}/sha256:${new}/" -- "$prod"
+
+          # ---------- 교체 결과 확인 ----------
+          # (가) 바뀐 것은 그 파일 하나 · 1줄 삭제 1줄 추가
+          ns=$(git diff --no-ext-diff --no-textconv --no-renames --ignore-submodules=none --numstat)
+          if [[ $ns != $'1\t1\t'"$prod" ]]; then die "교체 결과가 $prod 의 한 줄 교체가 아니다(git diff --numstat)"; fi
+          # (나) -/+ 두 줄이 64자리 hex 밖에서 글자 단위로 같다(hunk 머리 뒤의 줄만 내용으로 본다)
+          mapfile -t dl < <(git diff --no-ext-diff --no-textconv --no-renames --ignore-submodules=none --no-color -U0 -- "$prod")
+          minus=()
+          plus=()
+          inhunk=0
+          for l in "${dl[@]}"; do
+            if (( ! inhunk )); then
+              if [[ $l == @@* ]]; then inhunk=1; fi
+              continue
+            fi
+            case $l in
+              @@*) die '교체 결과의 diff에 hunk가 둘 이상이다' ;;
+              -*) minus+=("${l:1}") ;;
+              +*) plus+=("${l:1}") ;;
+              \\*) ;; # \ No newline at end of file
+              *) die '교체 결과의 diff에 예상하지 못한 줄이 있다' ;;
+            esac
+          done
+          if (( ${#minus[@]} != 1 || ${#plus[@]} != 1 )); then die "교체 결과의 diff가 - 한 줄 · + 한 줄이 아니다(- ${#minus[@]} · + ${#plus[@]})"; fi
+          a=${minus[0]}
+          b=${plus[0]}
+          if [[ $a != *"$old"* || $b != *"$new"* || ${a/"$old"/} != "${b/"$new"/}" ]]; then
+            die '교체 결과의 -/+ 줄이 64자리 hex 밖에서 같지 않다'
+          fi
+          # (다) 여전히 YAML로 읽히고, 이 pod의 images 항목 digest가 dev digest 하나다
+          digest_of "$prod" || die "교체한 $prod 을(를) YAML로 읽지 못했다"
+          if (( ${#DIGESTS[@]} != 1 )) || [[ ${DIGESTS[0]} != "$dev_digest" ]]; then die "교체한 $prod 에서 읽은 digest가 dev digest 하나가 아니다"; fi
+
+          # ---------- ⑤ 커밋 · 브랜치 ----------
+          msg=$RUNNER_TEMP/promote-commit-message.txt
+          {
+            printf 'promote(%s): %s → %s\n\n' "$POD" "${old:0:12}" "${new:0:12}"
+            printf 'dev digest: %s\n' "$dev_digest"
+            printf 'prod digest(이전): %s\n' "$prod_digest"
+            printf 'attestation: gh attestation verify oci://%s@%s --owner %s — 성공\n' "$image" "$dev_digest" "$owner"
+            printf '실행 기록: %s\n' "$run_url"
+          } > "$msg"
+          git add -- "$prod"
+          # 작성자 · 커미터 = github-actions[bot]. 환경 변수로 준다 — git은 GIT_AUTHOR_* · GIT_COMMITTER_*를 user.name · user.email
+          # 설정보다 먼저 쓰므로, 러너 환경에 그 변수가 있어도 이 값으로 고정된다
+          GIT_AUTHOR_NAME='github-actions[bot]' GIT_AUTHOR_EMAIL='41898282+github-actions[bot]@users.noreply.github.com' \
+            GIT_COMMITTER_NAME='github-actions[bot]' GIT_COMMITTER_EMAIL='41898282+github-actions[bot]@users.noreply.github.com' \
+            git -c commit.gpgsign=false commit --quiet --no-verify --file="$msg"
+          commit=$(git rev-parse --verify --quiet 'HEAD^{commit}') || die '승격 커밋을 읽지 못했다'
+          parent=$(git rev-parse --verify --quiet 'HEAD^1^{commit}') || die '승격 커밋의 부모를 읽지 못했다'
+          if [[ $parent != "$main_tip" ]]; then die '승격 커밋의 부모가 main의 끝이 아니다'; fi
+          branch="promote/prod-$POD-${new:0:7}"
+          rc=0
+          git ls-remote --exit-code origin "refs/heads/$branch" > /dev/null || rc=$?
+          case $rc in
+            2) ;;
+            0) die "브랜치 $branch 이(가) 원격에 이미 있다 — 같은 digest의 승격 PR이 열려 있거나 지우지 않은 브랜치다(확인한 뒤 다시 실행한다)" ;;
+            *) die "원격 브랜치를 확인하지 못했다(git ls-remote exit $rc)" ;;
+          esac
+          git push --quiet origin "HEAD:refs/heads/$branch" || die "브랜치 $branch 을(를) 올리지 못했다"
+          note "브랜치 \`$branch\` · 커밋 \`$commit\`(main \`$main_tip\` 위에 하나)"
+
+          # ---------- ⑥ PR — auto-merge를 걸지 않는다 ----------
+          body=$RUNNER_TEMP/promote-pr-body.md
+          {
+            printf '`%s` prod 승격 — `promote.yml`이 워크플로 토큰으로 연 PR이다(계약 gitops-repo.md §이미지·승격 · T047 결정 D8).\n\n' "$POD"
+            printf -- '- 이미지: `%s`\n' "$image"
+            printf -- '- dev digest(승격할 값): `%s`\n' "$dev_digest"
+            printf -- '- prod digest(이전 값): `%s`\n' "$prod_digest"
+            printf -- '- 바뀐 것: `%s`의 digest 줄 하나(64자리 hex만)\n' "$prod"
+            printf -- '- attestation: `gh attestation verify oci://%s@%s --owner %s` 성공(출력 앞부분은 아래)\n' "$image" "$dev_digest" "$owner"
+            printf -- '- 실행 기록: %s\n\n' "$run_url"
+            printf '<details><summary>gh attestation verify 출력(앞 40줄)</summary>\n\n%s\n' "$fa"
+            cat -- "$att.show"
+            printf '%s\n\n</details>\n\n' "$fa"
+            printf '**auto-merge를 걸지 않는다.** 운영자가 렌더링 diff 코멘트를 확인하고 승인 관문을 승인한 뒤 머지한다:\n\n'
+            printf '1. 이 PR의 검사 실행을 승인한다(워크플로 토큰이 연 PR의 실행은 승인 대기로 만들어진다)\n'
+            printf '2. 렌더링 diff 코멘트(`render-comment`)를 확인한다 — 코멘트 머리의 PR head가 이 PR의 최신 커밋인가\n'
+            printf '3. 승인 관문(`prod-approval`의 `gate` job — Environment `production`)을 승인한다\n'
+            printf '4. 머지(squash)한다. 롤백은 머지 커밋의 `git revert` PR이다\n\n'
+            printf '이 PR에 이 워크플로가 올리지 않은 커밋이 들어오면(발신자가 App이라 `validate`가 실패한다) 머지하지 않는다 — PR을 닫고 **다시 열지 말고** 브랜치를 지운 뒤 승격을 다시 실행한다(다시 열면 발신자가 사람이 되어 그 커밋이 사람 규칙으로 검사된다).\n'
+          } > "$body"
+          title="promote($POD): ${new:0:12}"
+          out=$RUNNER_TEMP/promote-pr-create.txt
+          gh pr create --repo "$REPO" --base main --head "$branch" --title "$title" --body-file "$body" > "$out" \
+            || die "PR을 만들지 못했다 — 브랜치 $branch 은(는) 남아 있다(다시 실행하려면 운영자가 브랜치를 지운다)"
+          url=$({ LC_ALL=C grep -v '^[[:space:]]*$' -- "$out" || true; } | LC_ALL=C tail -n 1 | LC_ALL=C tr -d '\r')
+          num=${url##*/}
+          if ! re "$num" '^[1-9][0-9]{0,9}$' || [[ $url != "$SERVER_URL/$REPO/pull/$num" ]]; then
+            die "gh pr create의 출력이 이 저장소의 PR 주소가 아니다 — PR이 만들어졌는지 운영자가 확인한다(브랜치 $branch)"
+          fi
+
+          # ---------- ⑦ 브랜치 끝 확인 — PR을 연 직후 원격 브랜치의 끝이 ⑤에서 올린 커밋인가 ----------
+          tip=''
+          nref=0
+          if lsr=$(git ls-remote origin "refs/heads/$branch"); then
+            while IFS=$'\t' read -r s r; do
+              if [[ $r == "refs/heads/$branch" ]]; then
+                tip=$s
+                nref=$((nref + 1))
+              fi
+            done <<< "$lsr"
+          fi
+          if (( nref != 1 )) || [[ $tip != "$commit" ]]; then
+            if re "$tip" '^([0-9a-f]{40}|[0-9a-f]{64})$'; then shown=$tip; else shown='없음 또는 형식 밖'; fi
+            why="브랜치 $branch 의 끝($shown)이 이 실행이 올린 커밋 $commit 이(가) 아니다"
+            # 운영자 안내 — 닫기 코멘트와 job 요약에 싣는다. 닫은 PR의 opened 실행(발신자 github-actions[bot] · 승인 대기)은 남는다:
+            # PR이 다시 열리고 그 실행이 승인되면 끼어든 커밋이 사람 규칙으로 검사된다
+            ask='브랜치 끝이 워크플로가 올린 커밋이 아니다 — 이 PR을 다시 열지 말고, 이 PR의 대기 중인 검사 실행을 승인하지 않는다'
+            closed='닫았다'
+            # 코멘트를 달지 못하면 gh는 닫지도 않는다 — 코멘트 없이 한 번 더 닫는다
+            if ! gh pr close "$num" --repo "$REPO" \
+              --comment "승격 워크플로(실행 기록 $run_url)가 이 PR을 닫았다 — $why. $ask. 워크플로가 이어서 브랜치를 지운다(결과는 실행 기록의 job 요약 — 남아 있으면 운영자가 지운다). 확인한 뒤 승격을 다시 실행한다."; then
+              if ! gh pr close "$num" --repo "$REPO"; then
+                closed='닫지 못했다 — 운영자가 닫는다'
+                printf '::warning::PR #%s 을(를) 닫지 못했다 — 운영자가 닫는다\n' "$num"
+              fi
+            fi
+            # PR을 닫은 뒤 브랜치를 지운다(끼어든 커밋째로 — 닫은 PR이 그 커밋으로 다시 열리지 않게). 실패해도 계속한다 —
+            # 지우지 못했으면 원격에 그 브랜치가 아직 있는지 다시 본다(git ls-remote --exit-code: 2 = 없음)
+            deleted='지웠다'
+            if ! git push --quiet origin --delete "refs/heads/$branch"; then
+              rc=0
+              git ls-remote --exit-code origin "refs/heads/$branch" > /dev/null || rc=$?
+              if (( rc == 2 )); then
+                deleted='원격에 이미 없다'
+              else
+                deleted='지우지 못했다 — 운영자가 지운다'
+                printf '::warning::브랜치 %s 을(를) 지우지 못했다 — 운영자가 지운다\n' "$branch"
+              fi
+            fi
+            note "**⑦ 브랜치 끝 불일치** — $ask. PR #$num: $closed · 브랜치 \`$branch\`: $deleted"
+            die "$why — PR #$num: $closed · 브랜치: $deleted(⑦)"
+          fi
+          note "PR $url · 브랜치 \`$branch\` · 커밋 \`$commit\` — 브랜치 끝 확인(⑦) 통과"
+          printf '승격 PR: %s (브랜치 %s · 커밋 %s)\n' "$url" "$branch" "$commit"
