@@ -1,0 +1,22 @@
+# 부정 픽스처 11.2 FMT-appset — 파일의 ApplicationSet. template이 만드는 Application은 Git에 없어 검사할 수 없다
+#   (계약 §validate.yml 4 「(T047) 형식별 정책」 — 쓰게 되면 계약을 먼저 고친다)
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: generated-apps
+  namespace: argocd
+spec:
+  generators:
+    - list:
+        elements:
+          - comp: cloudflared
+  template:
+    metadata:
+      name: 'platform-{{comp}}'
+    spec:
+      project: platform
+      source:
+        repoURL: https://github.com/joshua92y/platform-gitops.git
+        targetRevision: main
+        path: 'platform/{{comp}}'
+      destination: { server: https://kubernetes.default.svc, namespace: '{{comp}}' }

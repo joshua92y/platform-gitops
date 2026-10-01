@@ -1,0 +1,4 @@
+# 부정 픽스처 4a IMG-shape — kustomization 문서가 목록(yq가 .images를 읽지 못하고 실패한다 — "yq 추출 실패" 갈래)
+- images:
+    - name: ghcr.io/joshua92y/demo
+      digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef

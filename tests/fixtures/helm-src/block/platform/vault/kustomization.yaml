@@ -1,0 +1,10 @@
+# 부정 픽스처 12.1 HELM-repo(YAML 별칭으로 끌어온 base) — resources 항목이 별칭(`*b`)이다. 앵커는 commonAnnotations의 문자열 값에 둔다
+#   (그 주석 값 하나만 모든 리소스에 붙는다 — 무해해 보이는 자리다). kustomize 5.8.1은 별칭을 풀어 tests/vendored-alias를 base로 빌드하고
+#   그 helmCharts도 인플레이트한다(2026-09-30 실측). 사전 판정은 문자열 태그(!!str) 항목만 따라가는데 별칭 노드의 태그는 빈 값이라 이 base를
+#   건너뛰었다 — 허용 목록 밖 차트가 검사 1에서 받아졌다. 사전 판정은 문서를 explode(.)로 푼 뒤 읽는다.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+commonAnnotations:
+  note: &b ../../tests/vendored-alias
+resources:
+  - *b

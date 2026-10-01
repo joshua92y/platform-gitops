@@ -1,0 +1,2 @@
+# 부정 픽스처 4a IMG-shape — kustomization 문서가 맵이 아니라 문자열(images를 판정할 수 없다)
+"images: not-a-map"

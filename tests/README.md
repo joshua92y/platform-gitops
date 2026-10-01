@@ -12,7 +12,7 @@ required check `validate`가 부르는 검사 본체와 그 자기검사(무엇�
 | 2 | 경로 lint — `bash tests/validate.base.sh --only-author`(검사 6만) | PR만 | **main의 스크립트** — 러너가 가져온 `origin/main`의 끝에 있는 `tests/validate.sh`를 `git show`로 꺼낸 사본(`pull_request.base.sha`가 아니다 — PR이 말하는 base는 확인에만 쓴다: base ref가 `main`이 아니거나 base 커밋이 main의 이력 위에 없으면 실패). diff 기준도 `origin/main`의 끝이다. PR 쪽 코드가 한 줄도 돌기 전에, 러너에 원래 있는 git · bash · coreutils만으로 돈다 |
 | 2b | 자기검사 대상 판정 | PR · push | 워크플로 파일 안의 인라인 스크립트(git · bash만 · PR 쪽 코드를 실행하기 전). main push는 항상 돌리고, PR은 `origin/main`의 끝과 head의 merge-base ↔ head에서 `tests/` 또는 `.github/` 아래가 바뀐 경우에만 돌린다(출력 `selftest=run|skip` — 숫자로 읽히지 않는 낱말이다. 식에서 없는 출력은 0으로 읽히므로 `0`·`1`을 쓰면 출력이 없을 때 자기검사가 조용히 꺼진다). 판정에 실패하면(merge-base를 못 구함 · 둘 이상) 돌리는 쪽으로 넘어진다 |
 | 3 | 도구 설치 — kustomize v5.8.1 · yq v4.53.6 · gitleaks 8.30.1 · kubeconform v0.8.0 · helm v4.3.0(linux arm64) | PR · push | 워크플로 파일 안의 인라인 스크립트(저장소의 스크립트를 부르지 않는다). 받은 파일마다 sha256 대조, 설치 뒤 버전 대조 — 어긋나면 실패 |
-| 4 | 전체 검사 — `bash tests/validate.sh`(검사 0–10) | PR · push | PR 쪽 스크립트. PR 이벤트에서는 `PR_AUTHOR`·`PR_AUTHOR_ID`·`PR_SENDER`·`PR_SENDER_ID`·`VALIDATE_HEAD_SHA`를 넘기고, 기준 커밋 `VALIDATE_BASE_SHA`는 본문이 `origin/main`의 끝에서 정한다(스텝 2와 같은 기준 — 검사 6이 한 번 더 돈다 · 무해). push에서는 작성자와 발신자가 모두 비어 검사 6은 대상 없음이다 — push 이벤트에도 `sender`는 있지만 넘기지 않는다(작성자 없이 발신자만 가면 검사 6이 입력이 어긋났다고 보고 FAIL한다) |
+| 4 | 전체 검사 — `bash tests/validate.sh`(검사 0–13) | PR · push | PR 쪽 스크립트. PR 이벤트에서는 `PR_AUTHOR`·`PR_AUTHOR_ID`·`PR_SENDER`·`PR_SENDER_ID`·`VALIDATE_HEAD_SHA`를 넘기고, 기준 커밋 `VALIDATE_BASE_SHA`는 본문이 `origin/main`의 끝에서 정한다(스텝 2와 같은 기준 — 검사 6이 한 번 더 돈다 · 무해). push에서는 작성자와 발신자가 모두 비어 검사 6은 대상 없음이다 — push 이벤트에도 `sender`는 있지만 넘기지 않는다(작성자 없이 발신자만 가면 검사 6이 입력이 어긋났다고 보고 FAIL한다) |
 | 5 | 자기검사 — `bash tests/validate.tests.sh` | **main push는 항상 · PR은 2b가 고른 경우만** | PR 쪽 스크립트. 러너가 넣는 `CI=true`로 부분 실행을 거부하고 도구 누락(helm 포함)을 실패로 본다. 4 **뒤에** 둔다 — 자기검사가 픽스처 아래 `charts/`에 풀어 둔 차트를 4의 검사 8(gitleaks 파일 스캔)이 훑지 않게 |
 | 6 | gitleaks 액션 — 커밋 히스토리 스캔 | PR · push | 액션(SHA 고정 — 액션이 자기 gitleaks를 받아 쓴다) |
 
@@ -80,14 +80,14 @@ required check `validate`가 부르는 검사 본체와 그 자기검사(무엇�
     - 승격을 **끝까지 돌려 본 것은 아니다**(오늘 pod의 overlay는 빈 뼈대 — 첫 이미지는 T074, 승격 실연은 T115). 이 워크플로는 로컬 사본(가짜 `gh` · bare 원격)으로만 검증했다 — `gh attestation verify`가 이 job의 토큰 · 권한으로 러너에서 도는지, ⑦의 브랜치 삭제가 GitHub에서 워크플로 토큰으로 되는지(이미 없는 브랜치의 삭제를 서버가 받는지 포함)도 T115에서 처음 확인한다.
 - **아직 CI가 하지 않는 것**
   - 스키마 캐시 보존(`actions/cache`) — 넣지 않았다. 캐시 없이도 전체 검사가 35초라 얻을 것이 적다.
-- **러너 실측(2026-09-29 · ubuntu-24.04-arm · 캐시 없음)**: 경로 lint 1초 · 도구 설치 2초 · 전체 검사 **35초** · 자기검사 122 케이스 **184초** · gitleaks 히스토리 3초 · job 전체 약 3분 48초. 자기검사를 건너뛰는 PR(스텝 2b가 `skip`)의 `validate` job은 **41초**다(2026-09-30 PR #40). 같은 검사가 Windows · Git Bash에서는 전체 검사 약 10분 · 자기검사 약 1시간이다(프로세스 생성 비용) — **로컬은 영향 받는 케이스만 돌리고(`VALIDATE_TESTS_ONLY`) 전체 판정은 CI가 맡는다.** 각 run 스텝은 스텝 이름 · 시작·종료 시각(UTC) · 초 · exit를 job 요약에 한 줄씩 남긴다.
+- **러너 실측(ubuntu-24.04-arm · 캐시 없음)**: 2026-09-29(검사 0–10 · 자기검사 122 케이스) — 경로 lint 1초 · 도구 설치 2초 · 전체 검사 **35초** · 자기검사 **184초** · gitleaks 히스토리 3초 · job 전체 약 3분 48초. 2026-09-30(검사 0–13 · 자기검사 164 케이스 · PR #42) — 전체 검사 **37초** · 자기검사 **278초** · job 전체 약 5분 20초. 자기검사를 건너뛰는 PR(스텝 2b가 `skip`)의 `validate` job은 **41초**다(2026-09-30 PR #40). 같은 검사가 Windows · Git Bash에서는 전체 검사 약 10분 · 자기검사 약 1시간이다(프로세스 생성 비용) — **로컬은 영향 받는 케이스만 돌리고(`VALIDATE_TESTS_ONLY`) 전체 판정은 CI가 맡는다.** 각 run 스텝은 스텝 이름 · 시작·종료 시각(UTC) · 초 · exit를 job 요약에 한 줄씩 남긴다.
 - **자기검사를 PR마다 돌리지 않는 이유**: 봇의 dev bump PR은 required check가 끝나야 자동 머지되므로 검사 시간이 그대로 배포 지연이다(dev bump → sync 5분 이내가 목표다). 봇은 `tests/`를 고칠 수 없으므로(스텝 2) 봇 PR의 검사 스크립트는 main의 것과 같고, 그것은 main push에서 이미 검증됐다. 검사를 고치는 PR(`tests/` · `.github/`)은 항상 자기검사를 거친다.
 - 로컬 실행(아래 「실행」)은 여전히 PR 전 1차 확인 수단이다 — CI는 같은 스크립트를 부를 뿐이다.
 - 이 사실은 **여기 한 곳에만** 적는다. 다른 README·주석은 이 절을 가리킨다. 그중 배선 전 상태("CI가 아직 보지 않는다 · 실행 수단은 PR 전 로컬 실행뿐")를 적은 문장(예: `bootstrap/argocd/argocd-cm.yaml` 머리 주석의 「통제 현황(실측 2026-09-09)」)은 G2 이전의 기록이다 — 이 절이 우선한다.
 
 | 파일 | 역할 |
 |---|---|
-| `validate.sh` | 검사 본체. 검사 순서·코드는 파일 머리 주석(tasks.md T033 문면 순서). sync-wave·네임스페이스·정책 세트·포트 각주·ClusterSecretStore 표는 이 파일 안의 단일 사본이 유일한 정본 사본이다 |
+| `validate.sh` | 검사 본체. 검사 순서·코드는 파일 머리 주석(tasks.md T033 문면 순서). sync-wave·네임스페이스·정책 세트·포트 각주·ClusterSecretStore 표 · 차트 저장소 허용 목록(`HELM_CHART_TABLE`) · 권한 경계 기준선(`RBAC_*`) · images 항목의 허용 키(`IMG_ENTRY_KEYS`)는 이 파일 안의 단일 사본이 유일한 정본 사본이다 |
 | `validate.tests.sh` | 자기검사. `fixtures/<case>/`마다 `validate.sh --root`를 돌려 기대 exit·메시지를 단언한다. 검사 6의 SHA 경로(merge-base ↔ HEAD · 교차 이력 · 이름 변경 · hunk 모양 · 제자리 교체 · submodule · textconv · git 밖 `--root`)와 도구 없는 PATH 케이스는 `tests/.tmp/`에 임시 git 저장소·심 디렉터리를 만들고 시작·종료 때 지운다(`.gitignore` 대상 — `--root`가 저장소 안이어야 해서 저장소 안에 둔다) |
 | `fixtures/positive/` | 계약을 만족하는 최소 완전 트리(exit 0) — 새 검사를 추가하면 이 트리도 통과해야 한다 |
 | `fixtures/<code>/` | 검사 항목별 부정 픽스처(각 항목이 실제로 FAIL 코드를 내는 최소 예시). 비밀처럼 보이는 값은 넣지 않는다(gitleaks 실패 케이스는 "대상 0개"로 만든다) |
@@ -112,7 +112,7 @@ PR_AUTHOR='<login>' PR_AUTHOR_ID=<id> PR_SENDER='<login>' PR_SENDER_ID=<id> VALI
 `validate.tests.sh`의 `run_case` 첫 인자다(검사 코드가 아니다 — 예: `app-source-`·`rel-scoped-`·`pol-webhook-src-`·`author-`). 바꾼 검사에
 걸리는 케이스와 `positive`를 함께 고르면 된다.
 
-필요 도구: `yq`(mikefarah v4) · `kustomize` · `kubeconform` · `gitleaks` (+ `helm`은 helmCharts가 있는 kustomization에만 — 자기검사의 `fixtures/pol-port`·`fixtures/rel-scoped/{typo-key,typo-parent,cloudflared,env-vars}`는 helm과 **네트워크**(차트 pull)가 필요하다. 풀린 차트는 픽스처 아래 `charts/`에 남고 `.gitignore` 대상이다). CI(`validate.yml` — 「CI 배선 상태」)는 helm을 포함한 다섯 도구를 sha256 핀으로 설치하고, PR 이벤트에서 `PR_AUTHOR`·`PR_AUTHOR_ID`·`PR_SENDER`·`PR_SENDER_ID`·`VALIDATE_BASE_SHA`·`VALIDATE_HEAD_SHA`를 넘긴다. 자기검사를 `CI=true`(또는 `VALIDATE_TESTS_REQUIRE_TOOLS=1`)로 돌리면 helm도 도구 게이트에 들어간다 — 없으면 케이스를 돌리기 전에 exit 1이다(로컬에서 두 스위치 없이 돌리면 helm 케이스만 "도구 없음" 단언으로 바뀐다). kubeconform 스키마 캐시는 `${TMPDIR:-/tmp}/kubeconform-cache`(`VALIDATE_KUBECONFORM_CACHE`로 변경 — CI는 `$RUNNER_TEMP/kubeconform-cache`) — 저장소 밖 임시 경로이며 저장소에 파일을 남기지 않는다.
+필요 도구: `yq`(mikefarah v4) · `kustomize` · `kubeconform` · `gitleaks` (+ `helm`은 helmCharts가 있는 kustomization에만 — 자기검사의 `fixtures/pol-port`·`fixtures/rel-scoped/{typo-key,typo-parent,cloudflared,env-vars}`는 helm과 **네트워크**(차트 pull)가 필요하다. 풀린 차트는 픽스처 아래 `charts/`에 남고 `.gitignore` 대상이다. 검사 12의 `helm-src-{repo,version,legacy,block}`은 helm도 네트워크도 쓰지 않고(걸린 kustomization은 렌더하지 않는다), 임시 트리 케이스 `helm-src-argocd-*`·`helm-src-root-no-argocd`·`helm-src-chartsdir`은 helm만 쓴다 — 로컬 차트를 인플레이트 캐시 자리에 미리 둔다. 검사 13의 `rbac-*`는 kustomize만 쓴다 — helm도 네트워크도 쓰지 않는다). CI(`validate.yml` — 「CI 배선 상태」)는 helm을 포함한 다섯 도구를 sha256 핀으로 설치하고, PR 이벤트에서 `PR_AUTHOR`·`PR_AUTHOR_ID`·`PR_SENDER`·`PR_SENDER_ID`·`VALIDATE_BASE_SHA`·`VALIDATE_HEAD_SHA`를 넘긴다. 자기검사를 `CI=true`(또는 `VALIDATE_TESTS_REQUIRE_TOOLS=1`)로 돌리면 helm도 도구 게이트에 들어간다 — 없으면 케이스를 돌리기 전에 exit 1이다(로컬에서 두 스위치 없이 돌리면 helm 케이스만 "도구 없음" 단언으로 바뀐다). kubeconform 스키마 캐시는 `${TMPDIR:-/tmp}/kubeconform-cache`(`VALIDATE_KUBECONFORM_CACHE`로 변경 — CI는 `$RUNNER_TEMP/kubeconform-cache`) — 저장소 밖 임시 경로이며 저장소에 파일을 남기지 않는다.
 
 ## 규칙
 
@@ -121,7 +121,7 @@ PR_AUTHOR='<login>' PR_AUTHOR_ID=<id> PR_SENDER='<login>' PR_SENDER_ID=<id> VALI
 - **부분 트리 픽스처의 exit 1은 판정 근거가 아니다.** 부정 픽스처는 대개 최소 트리라 무관한 검사(5.1 POL-ns · 5.2 POL-set 등)도 FAIL해 결함이
   없어도 exit 1이다. 근거는 그 하위 검사에 **고유한** `+[FAIL] <코드> — …` 단언과, 그 그룹의 PASS 줄이 없다는 `-[PASS] <코드>` 음성 단언이다
   (검사 7.4·10의 픽스처는 모두 이 음성 단언을 건다 — 2026-09-28 검증 V-A7). 분기 하나를 지웠을 때 어떤 픽스처가 깨지는지로 단언의 고유성을 확인한다.
-- 계약 표(sync-wave·네임스페이스·정책 세트·포트·ClusterSecretStore)를 바꾸면 `validate.sh`의 해당 표만 바꾼다 — 다른 곳에 중복 기재하지 않는다.
+- 계약 표(sync-wave·네임스페이스·정책 세트·포트·ClusterSecretStore·차트 저장소 허용 목록 `HELM_CHART_TABLE`·권한 경계 기준선 `RBAC_*`·images 항목의 허용 키 `IMG_ENTRY_KEYS`)를 바꾸면 `validate.sh`의 해당 표만 바꾼다 — 다른 곳에 중복 기재하지 않는다.
 - 검사 9가 쓰는 상수(`CSS_TABLE`·`CSS_SA_NS`·`CSS_VAULT_*`·`CSS_K8S_REMOTE_NS`·`CSS_COND_TABLE`·`CSS_COND_PLATFORM_EXCLUDE`)는 5.6의 노드 주소와 **성격이 다르다.** 노드 주소는 재이미지·재조인으로 바뀌는 런타임 값이라 다섯 곳을 함께 고쳐야 하지만, 검사 9의 값은 **계약 문면**(§ClusterSecretStore 5개 표 · §이름·인증 규약)이라 계약을 고칠 때만 함께 바꾼다. 복제본은 `validate.sh`의 그 블록 하나뿐이다(store 매니페스트 자체는 검사 대상이지 사본이 아니다).
 - 검사 5.6이 쓰는 노드 A 주소 2개(private `/32` · flannel 터널 장치 `/32`)는 여러 곳에 복제돼 있다. 노드 재이미지·재조인으로 값이 바뀌면 **아래 다섯 곳을 한 PR에서 함께** 바꾼다 — 아무것도 고치지 않으면 검사는 통과하면서 정책만 조용히 무력해지고, 일부만 고치면 5.6·자기검사가 FAIL한다. 이 목록은 **검사 5.6 관련 복제본**이다(private IP는 그 밖에 `allow-kube-api` 10장과 `policies-external.yaml`의 노드 IP 규칙에도 있다 — 전체는 `platform/policies/README.md` 상수 표의 "쓰이는 곳" 열을 따른다): ① `platform/policies/policies-common.yaml`의 `allow-apiserver-webhook` 4장 ② `tests/validate.sh`의 상수 `NODE_A_PRIVATE_CIDR`·`NODE_A_FLANNEL_CIDR` ③ `tests/fixtures/positive/platform/policies/policies-common.yaml`의 webhook 4장 ④ `tests/fixtures/pol-webhook-src/**`의 정책 픽스처 ⑤ `tests/validate.tests.sh`의 5.6 단언 문자열(빠짐·여분 목록).
 - 계약 `network-policy.md`에는 값이 없다(자리표시자뿐) — 값이 바뀌어도 계약은 고칠 것이 없고, **메커니즘이 바뀔 때만** 모노레포에서 별도 커밋으로 고친다. 모노레포 쪽 리터럴은 private IP가 `infra/oci/instances.tf`·`infra/oci/network.tf`·`infra/bootstrap/k3s-*.sh`·`infra/cloudflare/variables.tf` 등에 있고(별도 저장소·별도 커밋 — **전수는 모노레포에서 grep**한다), flannel 값은 런북·빌드 노트의 실측 기록뿐이다(`np-set-5`는 노드 객체에서 유도하므로 바꿀 상수가 없다).
@@ -138,11 +138,37 @@ PR_AUTHOR='<login>' PR_AUTHOR_ID=<id> PR_SENDER='<login>' PR_SENDER_ID=<id> VALI
 ## 한계(명시)
 
 - 검사 3(ES 규약)이 **보지 않는 것**: `target.creationPolicy`/`deletionPolicy` · `refreshInterval`/`refreshPolicy` · 어노테이션(`argocd.argoproj.io/sync-options` 포함) · `target.template` · `data[].secretKey`. 즉 인수형 ES가 `Orphan`에서 `Owner`로 뒤집혀도 검사 3은 PASS다 — 머지 전 방어선은 `platform/secrets/README.md` §2의 yq 렌더 체크, 라이브 방어선은 모노레포 하네스 `eso-4`(적용된 뒤에만 보인다)다.
+- 검사 4a(kustomization `images`)가 **보는 것**: 모든 kustomization 파일(파일 열거와 같다 — `tests/`·`charts/`·`.git/` 제외)의 `images[]` 항목.
+  계약 문장(§이미지·승격)은 `apps/<pod>/overlays/<env>`를 말하지만, 기존 `newTag` 금지가 처음부터 모든 kustomization에 걸려 있어 새 판정도 같은 범위로
+  맞췄다(`bootstrap/argocd`·`platform/**`도 본다 — 넓게 잡는 쪽이다). 실제 트리에서 `images:`를 쓰는 곳은 오늘 `bootstrap/argocd` 하나다(항목 2개 · `name` + `digest`).
+  - `4a IMG-newTag`(T033): `newTag` 금지 · 비어 있지 않은 `digest`의 형식(`sha256:` + 64자리 소문자 hex — 따옴표 없는 숫자처럼 문자열이 아닌 값도 형식 오류다).
+    줄 · 개수 · PASS 줄은 T047 이전과 같다(그 추출식은 글자 그대로 남겼다 — `validate.sh` `YQ_IMAGES`의 O 행. 새 판정은 같은 yq 호출의 D·E 행을 읽는다).
+  - (T047 G4c · 계약 「항목마다 `name`과 `digest`」) `4a IMG-name` 항목마다 `name`(비어 있지 않은 문자열) · `4a IMG-digest` 항목마다 `digest`(없음 · null ·
+    `""`이면 FAIL — digest 줄을 지운 항목은 빌드가 성공하고 이미지는 고정 없는 이름이 된다) · `4a IMG-keys` 키 ⊆ `{name, newName, digest}`(`validate.sh`의
+    `IMG_ENTRY_KEYS` — 계약의 유일한 코드 사본 · `tagSuffix`·오타 `digset` 등) · 키 중복 금지(yq와 kustomize는 뒤의 값을 쓴다 — 앞의 값을 읽은 리뷰어와 다르게
+    읽힌다) · `4a IMG-shape` fail-closed(`images`가 목록이 아님 — `images:` 뒤가 비었으면(null) `images`가 없는 것과 같이 읽는다 · 항목이 맵이 아님 · 문서가
+    맵이 아님 — 빈 문서는 제외 · yq 추출 실패 · 추출 행 모양 이상). 그룹 PASS 줄은 `4a IMG-entry`(항목 0개면 "대상 없음")이고, `4a IMG-newTag`의 PASS 줄과
+    서로 독립이다(한쪽의 FAIL이 다른 쪽 PASS 줄을 지우지 않는다).
+  - **같은 결함을 두 번 찍지 않는다**: `newTag`와 비어 있지 않은 digest의 형식 오류는 `4a IMG-newTag`가 찍는다. 단 그 추출은 없는 값을 `-`로 채워 읽어서
+    "없음"과 "값이 `-`"를 구분하지 못했고(`digest: "-"`·`digest: false`·`newTag: ~`는 없는 것으로 읽혀 통과했다), `name`이 빈 항목(`name: ""` · 목록·맵
+    `name`)은 **통째로 건너뛰었다**(그 항목의 `newTag`와 틀린 digest도 통과했다). 그 값과 항목은 새 코드가 찍는다. `digest: ""`는 두 코드가 함께 찍는다
+    (기존 줄은 바꾸지 않는다 — 새 코드는 "빈 값"을 찍는다).
+  - 픽스처: 부정 `fixtures/img-entry/{digest,name,keys,shape,mixed,skipped}` · 경계(통과) `fixtures/img-entry/{pass,none}`(`pass`는 PASS 줄을 개수까지
+    단언한다). 경계 분기는 분기를 바꾼 사본으로 변이 시험을 했다(2026-09-30 — 키 허용 목록에서 `newName` 제외 · null `images` 예외 제거 · 빈 문서 예외 제거 ·
+    `name` 값 `-`를 없음으로 읽기 · 중복 방지 둘 제거 · 새 판정을 기존 PASS 줄 앞으로 · `name` 빈 항목의 건너뜀 무시 — 모두 해당 케이스가 깨졌다).
+- 검사 4a가 **보지 않는 것**:
+  - `images` 항목의 `name`이 실제 렌더의 이미지와 **맞는지** — 맞지 않으면 kustomize는 조용히 아무것도 바꾸지 않아 렌더에 고정 없는 이미지가 남는다(검사는
+    통과한다). `name`의 오타 · 레지스트리 접두 차이(`ghcr.io/…` 유무)가 이 경우다(kustomize 5.8.1 — 빌드는 성공하고 이미지는 그대로다: 2026-09-30 실측).
+  - `images:`를 쓰지 않고 매니페스트의 `image:`에 직접 적은 이미지 — `platform/**`에는 4b의 경고(WARN)가 있지만 `apps/**`에는 그런 경고도 없다.
+  - digest가 **가리키는 이미지**(진위 · 서명 · 그 저장소의 이미지인지 — 형식만 본다. 검사 6과 같다) · `newName`의 값(계약은 `ghcr.io/joshua92y/<pod>`를
+    말하지만 값은 보지 않는다).
+  - 앵커·별칭·병합 키(`<<`)로 만든 항목의 **내용** — kustomize 5.8.1은 풀어서 읽지만(2026-09-30 실측) 검사는 풀지 않고 FAIL로 둔다(별칭 항목은 `IMG-shape`,
+    `<<` 키는 `IMG-keys` — 엄격한 쪽이다).
 - 4b(platform 이미지 digest 경고)는 `image:` **스칼라 줄만** 검사한다 — helm values의 분리형 `image.repository` / `image.tag`는 보지 않는다(Renovate `pinDigests`와 컴포넌트 태스크의 수동 병기에 맡긴다).
 - 검사 5.6(`allow-apiserver-webhook`)이 **보는 것**: `platform/policies/` 아래 원본 YAML **과 그 디렉터리의 `kustomize build` 렌더 결과**, 출발 `ipBlock` cidr 집합(값 단위 정확 일치 · 중복 금지 · 형식 검사 · `except` 금지 · ipBlock 아닌 peer와 혼합 peer 금지), 계약 포트 집합(정확 일치 · 정수 · `endPort` 금지) · `protocol`(TCP만). 렌더 쪽은 세 가지를 더 본다: `patches`·merge key로 **넓어지는** 경우, 표 밖 ns에 같은 이름이 **나타나는** 경우(`kind: List` 풀림 · ns 변경 — 5.2의 EXCLUSIVE는 원본 파일만 본다), 표의 4개 ns에서 정책이 **사라지는** 경우(이름·ns 변경).
 - 검사 5.6이 **보지 않는 것**: 그 주소가 **오늘의 노드 실물과 같은지**(리스가 바뀌면 정책은 조용히 무력해진다 — 라이브 대조는 모노레포 하네스 `np-set-5`가 노드 객체 InternalIP · `.spec.podCIDR`에서 유도해 본다), `spec.policyTypes`·`spec.podSelector`(validate 전체가 어느 정책에서도 보지 않는다), 그리고 정책이 실제로 클러스터에 적용됐는지. kustomize가 없어 검사 1이 SKIP되면 **렌더 소스가 아예 없다** — 그 사실은 5.6 PASS 줄의 "webhook 정책을 담은 소스: 원본 N · 렌더 M"에서 `M = 0`으로 드러난다.
 - 검사 7.3(`WAVE-secrets-base`)이 **보는 것**(다섯 갈래):
-  - ⓐ **base 참조**: 모든 `kustomization.yaml`의 `resources`·`bases`·`components` 항목을 경로로 정규화해 `secrets/` 아래를 가리키는 항목이 `platform/secrets/kustomization.yaml`에만 있는지 본다. **배달자 자신(`platform/secrets`)을 base로 끌어가는 전이 참조도 위반**이다(소비자 렌더에 ES가 들어간다). `secrets/<ns>/kustomization.yaml`이 자기 디렉터리 안의 파일을 가리키는 것은 위반이 아니고, 다른 ns를 가리키면 위반이다. **절대 경로(`/…`)와 저장소 밖으로 나가는 상대 경로는 위치 판정 불가로 FAIL**한다(fail-closed — 로컬에서만 렌더되고 Argo repo-server의 체크아웃 경로에서는 실패한다).
+  - ⓐ **base 참조**: 모든 `kustomization.yaml`의 `resources`·`bases`·`components` 항목을 경로로 정규화해 `secrets/` 아래를 가리키는 항목이 `platform/secrets/kustomization.yaml`에만 있는지 본다. YAML 별칭으로 적은 항목(`- *b`)도 풀어서 본다(kustomize 5.8.1은 풀어서 빌드한다 — 2026-09-30 G4 수정 · 픽스처 `secrets-base-owner`의 `platform/kafka`). 항목을 yq로 풀어 읽지 못하는 kustomization은 판정할 수 없어 FAIL이다(fail-closed). **배달자 자신(`platform/secrets`)을 base로 끌어가는 전이 참조도 위반**이다(소비자 렌더에 ES가 들어간다). `secrets/<ns>/kustomization.yaml`이 자기 디렉터리 안의 파일을 가리키는 것은 위반이 아니고, 다른 ns를 가리키면 위반이다. **절대 경로(`/…`)와 저장소 밖으로 나가는 상대 경로는 위치 판정 불가로 FAIL**한다(fail-closed — 로컬에서만 렌더되고 Argo repo-server의 체크아웃 경로에서는 실패한다).
   - ⓑ **소유자 대조(렌더 기준)**: `secrets/**` **파일**의 ExternalSecret과 **같은 이름**이 배달자 밖 소스(파일·렌더)에도 있으면 FAIL — 파일 복사본 · 전이 base · helm 렌더로 두 Application이 같은 ES를 각자 적용하는 경로를 잡는다. 이름으로 맞추는 이유는 `secrets/<ns>/kustomization.yaml`의 `namespace:` 변환기가 원본에 없던 ns를 렌더에서 채울 수 있어서다(그래서 **같은 이름을 다른 ns에 두는 트리는 구분하지 못한다**).
   - ⓒ **죽은 선언(파일 단위)**: `secrets/**` 파일의 ES가 `platform/secrets` **렌더**에 없으면 FAIL — `secrets/` 바로 아래 파일 · `secrets/<ns>/sub/` 하위 · ns kustomization에 등록하지 않은 파일이 전부 걸린다. kustomize가 없으면 이 갈래는 돌지 않고, 그 사실은 PASS 줄의 "배달자 렌더 0"으로 드러난다(5.6의 "원본 N · 렌더 M" 관례와 같다). 디렉터리 단위 완전성(YAML을 담은 `secrets/<ns>/`가 배달자에 포함됐는지)도 함께 보며, **실제 저장소 루트(`--root`가 저장소 루트)에서는 항상** 본다. 부분 트리 예외(배달자 구조를 쓰지 않는 픽스처)는 픽스처 실행에만 적용된다.
   - ⓓ **적용 주체**: `secrets` 또는 `secrets/*`를 가리키는 Application은 금지다(`.spec.source.path`와 **multi-source `.spec.sources[].path` 전부** — 7.1은 첫 source만 본다). 배달자 파일이 있으면 `source.path == platform/secrets`인 Application이 하나는 있어야 한다.
@@ -164,18 +190,17 @@ PR_AUTHOR='<login>' PR_AUTHOR_ID=<id> PR_SENDER='<login>' PR_SENDER_ID=<id> VALI
   `SyncOperation.Source` — "overrides the source definition set in the application"), `spec` 아래만 보던 7.4는 그 트리를 PASS시켰다.
   `operation`은 Git에 선언하는 필드가 아니므로(동기화를 요청하는 쪽이 쓰고 컨트롤러가 처리한 뒤 지운다) 키가 **있기만 하면** FAIL한다.
   픽스처 `fixtures/app-source/{kustomize-patches,multi-source,ref,source-file,hydrator,operation}`.
-- 검사 7.4는 **우회 경로를 전부 덮는다고 주장하지 않는다** — 아는 경로를 하나씩 막은 목록이고(검증을 돌릴 때마다 새 경로가 나왔다:
-  `.argocd-source*.yaml` → `sourceHydrator` → `operation`), 전수 열거는 T047이 맡는다(CI 배선은 T047 G2 — 「CI 배선 상태」).
+- 검사 7.4는 **우회 경로를 전부 덮는다고 주장하지 않는다** — 아는 경로를 하나씩 막은 목록이다(검증을 돌릴 때마다 새 경로가 나왔다:
+  `.argocd-source*.yaml` → `sourceHydrator` → `operation`). Argo가 읽을 수 있는 **형식**의 정책은 검사 11 · 12.5가 맡는다(T047 G4a — 아래).
 - 검사 7.4가 **보지 않는 것**: `spec.source.path`의 값(7.1이 이름 규약으로 본다), `project`·`destination`·`syncPolicy`(2가 SSA만 본다), 그리고 클러스터에
   이미 있는 Application이 Git과 같은지(root가 selfHeal로 되돌리지만, root 밖에서 `kubectl`로 만든 Application은 Git에 없으므로 이 검사 밖이다).
-  코드로 확인한 사각: kustomization이 없는 디렉터리(root가 읽는 `clusters/oci-k3s/apps` 등)에서 **`kind: List`로 감싼 Application**(파일 단위 추출은
-  최상위 문서의 kind만 본다 — Argo directory source는 List를 풀어 적용한다. kustomize 렌더는 List를 풀므로 kustomize 디렉터리는 렌더 쪽에서 보인다) ·
-  **`.json`·`.jsonnet` 파일의 Application**(파일 열거는 `*.yaml`·`*.yml`뿐인데 Argo directory source는 둘도 읽는다) · ApplicationSet의 template
-  (kind가 `Application`인 문서만 본다). 7.1·2는 파일만 추출하므로(렌더는 보지 않는다) `kind: List` 사각이 kustomize 디렉터리에서도 그대로다.
-  **경로에 `/charts/`가 든 곳의 `.argocd-source*.yaml`**도 보지 않는다(2026-09-28 DV-5): `7.4 APP-source-file`의 파일 찾기는 기존 파일 열거와
-  같은 제외 규칙(helm 캐시 `charts/`)을 쓰는데, 제외가 경로 어디에든 걸리므로 이름이 `charts`인 pod(`apps/charts/overlays/<env>`)의 source
-  경로가 통째로 빠진다. 실제 트리에 그런 pod는 없다 — **T047 후보**: 제외를 kustomization 디렉터리 바로 아래 `charts/`로 좁히거나 7.1에서
-  pod 이름 `charts`를 금지한다.
+- 7.4 혼자서는 보지 못하던 사각(코드로 확인)은 **검사 11 · 12.5가 막는다**(T047 G4a): kustomization이 없는 디렉터리(root가 읽는
+  `clusters/oci-k3s/apps` 등)의 **`kind: List`로 감싼 Application**(파일 단위 추출은 최상위 문서의 kind만 본다 — 11.1이 목록 객체를, 11.4가
+  "directory source 경로에는 Application만"을 건다) · **`.json`·`.jsonnet` 파일의 Application**(11.3이 directory source 경로에서 금지한다) ·
+  ApplicationSet의 template(11.2가 ApplicationSet 자체를 금지한다) · 7.1·2의 파일 단위 추출이 kustomize 디렉터리에서도 놓치던 `kind: List`(11.1이
+  `--root` 트리의 모든 YAML에서 금지한다) · **경로에 `/charts/`가 든 곳의 `.argocd-source*.yaml`**(2026-09-28 DV-5 — 파일 찾기가 `*/charts/*`를
+  통째로 건너뛰므로 이름이 `charts`인 pod `apps/charts/overlays/<env>`의 source 경로가 빠졌다. 12.5가 이름이 `charts`인 디렉터리를 helmCharts를
+  쓰는 kustomization 바로 아래의 인플레이트 캐시 자리로만 제한한다 — 제외 규칙은 그대로 두고, 제외되는 곳이 캐시뿐임을 보장한다).
 - 검사 6(봇 PR — 작성자 또는 이벤트 발신자가 봇)이 **막는 것**(계약 판정 규칙 ①–④):
   - 사람이 연 PR의 브랜치에 봇이 push한 경우(그 `pull_request` 이벤트의 발신자가 봇) — 작성자가 사람이어도 아래 규칙을 PR 전체(merge-base ↔ head)에 적용한다
   - 허용 파일(`apps/*/overlays/dev/kustomization.yaml`) 밖의 변경 · 파일 추가·삭제·이름/모드 변경(이름 변경 감지를 끄므로 옛 경로도 파일 목록에 나온다)
@@ -183,7 +208,7 @@ PR_AUTHOR='<login>' PR_AUTHOR_ID=<id> PR_SENDER='<login>' PR_SENDER_ID=<id> VALI
   - 제자리 교체가 아닌 변경: `-` 줄 하나 바로 뒤에 `+` 줄 하나가 오는 쌍만 허용한다 — digest 줄 삭제만 · 다른 images 항목으로 옮김 · 끼워 넣기(`- digest:` 목록 항목 삽입 · 중복 키)는 줄 형식이 맞아도 FAIL. 쌍의 두 줄이 모두 digest 줄이면 64hex 밖(들여쓰기·`- `·공백)이 같아야 한다(`    digest:`를 `  - digest:`로 바꾸면 새 images 항목이 되어 원래 항목의 고정이 풀린다). `\ No newline at end of file`은 쌍 판정에서 건너뛴다
   - 교차 이력(merge-base 둘 이상 — 하나를 골라 본 diff가 실제 머지 결과와 다를 수 있다)
   - 저장소 내용·설정으로 diff 모양 바꾸기: `--no-ext-diff`(외부 diff) · `--no-textconv`(`.gitattributes` + textconv) · `--no-renames` · `--ignore-submodules=none`(`.gitmodules`의 `ignore = all`이 gitlink 변경을 숨김) · `--no-color`
-- 검사 6이 **여전히 보지 않는 것**: digest 값의 진위·서명(attestation) · 교체된 digest가 어떤 이미지인지(형식이 맞는 다른 이미지의 digest로 바꿔도 PASS) · images 항목에 digest가 아예 없는 경우 — 이것은 검사 4a의 몫인데 **4a는 아직 digest를 요구하지 않는다**(있으면 형식만 보고, `name` 없는 항목은 건너뛴다). 보증은 이 줄 검사와 **트리 검사(4a 형식·kustomize build·②)의 결합**이며(CI에서는 base 스크립트의 `--only-author` 실행과 head 스크립트의 전체 실행 — 봇 PR이 `tests/validate.sh`를 고치면 base 실행이 FAIL하므로, 통과한 봇 PR에서는 두 실행의 규칙이 같다), 위 base ref 실행 조건이 함께 있어야 성립한다.
+- 검사 6이 **여전히 보지 않는 것**: digest 값의 진위·서명(attestation) · 교체된 digest가 어떤 이미지인지(형식이 맞는 다른 이미지의 digest로 바꿔도 PASS) · images 항목에 digest가 아예 없는 경우 — 이것은 트리 검사 4a의 몫이다(T047 G4c부터 `4a IMG-digest`가 항목마다 digest를 요구한다 — 위 「검사 4a」. 그 전의 4a는 digest가 있을 때 형식만 봤고, `name`이 빈 항목은 통째로 건너뛰었다). 보증은 이 줄 검사와 **트리 검사(4a·kustomize build·②)의 결합**이며(CI에서는 base 스크립트의 `--only-author` 실행과 head 스크립트의 전체 실행 — 봇 PR이 `tests/validate.sh`를 고치면 base 실행이 FAIL하므로, 통과한 봇 PR에서는 두 실행의 규칙이 같다), 위 base ref 실행 조건이 함께 있어야 성립한다.
 - 발신자 판정이 **여전히 막지 못하는 것**(검사 6은 이벤트 하나의 발신자만 본다 — 브랜치에 쌓인 커밋을 누가 넣었는지는 모른다):
   - **PR이 열리기 전에** 봇이 그 브랜치에 넣은 커밋 — 사람이 나중에 PR을 열면 그 이벤트(`opened`)의 발신자는 사람이라 제한 없이 통과한다. 이것은 저장소의 **브랜치 쓰기 제한 ruleset**(선언 `.github/ruleset-branches.json` — main과 `bump/**` 밖의 브랜치는 관리자만 만들고 고칠 수 있다. main은 ruleset(main)이 따로 맡는다)이 막는다. 계약이 이 빈틈을 그 ruleset에 맡긴다. App 토큰의 push가 실제로 거부되는지는 계약 「실측 범위」대로 T074·T115에서 실측한다(그때까지 "설정으로 확인 · 거부는 미실측").
   - 봇이 push한 **뒤에** 사람이 그 위에 다시 push하면 새 이벤트(`synchronize`)의 발신자는 사람이다 — 사람이 봇의 커밋을 받아서 자기 이름으로 올린 것으로 본다(그 커밋을 검토하는 책임은 사람에게 있다). 사람의 작업 브랜치(`bump/**` 밖)에서는 같은 브랜치 쓰기 제한이 봇의 첫 push부터 막는다.
@@ -207,8 +232,177 @@ PR_AUTHOR='<login>' PR_AUTHOR_ID=<id> PR_SENDER='<login>' PR_SENDER_ID=<id> VALI
   - 원본 values가 아니라 렌더를 보는 이유: 차트 기본값이 `watchGlobally: true`이고 values 스키마가 키 오타를 막지 않는다. `watchGlobaly` 한 키 오타는 차트 가드가 렌더를 멈추지만(→ 10.0), 부모 키 `reloader:` 오타처럼 두 키가 함께 빠지면 렌더는 **성공한 채** 전역 모드가 된다(→ 10.1 · 10.2 · 10.3 · 10.4 `REL-rbac-ns`·`REL-rbac-rules`).
   - 픽스처: `fixtures/rel-scoped/{typo-key,typo-parent,cloudflared,env-vars}`는 values 갈래를 실제 차트 렌더로 재현하고(helm·네트워크 필요), 나머지는 긍정 트리의 사본(`deployment.yaml`·`rbac.yaml` — `fixtures/positive/platform/reloader/`에서 `cp`)에 결함 하나를 더한 순수 매니페스트다(helm 불필요): 2026-09-22 리뷰의 `{second-deploy,command,second-container,args-newline}`, 2026-09-28 검증의 `{swallow-ns,swallow-strategy,extra-arg,var-expansion,args-order}`(10.2) · `{decoy-container,image-registry}`(10.4 REL-image의 위치·저장소 분기 — 전에는 단언이 없어 분기를 지워도 자기검사가 통과했다) · `{rb-subject,role-wildcard}`(10.4 REL-rbac-bind·rules) · `extra-kind`(10.3). 긍정 트리의 두 파일을 고치면 사본도 다시 복사한다.
 - 검사 10이 **보지 않는 것**:
-  - **다른 컴포넌트 렌더가 ServiceAccount `reloader/reloader`에 주는 RoleBinding·ClusterRoleBinding** — 검사 10은 `platform/reloader` 렌더만 보므로, 예컨대 `platform/cloudflared` 렌더에 그 SA를 주체로 하는 RoleBinding을 두면 Reloader가 그 ns의 Secret을 읽을 권한을 얻어도 PASS다(감시 목록은 10.2가 고정하므로 이 경로만으로 감시가 넓어지지는 않는다). **T047 후보**: 전 렌더(모든 kustomization) 교차 검사 — subjects에 `ServiceAccount reloader/reloader`가 든 RoleBinding·ClusterRoleBinding은 `platform/reloader` 렌더에만 있을 수 있다.
+  - **다른 컴포넌트 렌더가 ServiceAccount `reloader/reloader`에 주는 RoleBinding·ClusterRoleBinding** — 검사 10은 `platform/reloader` 렌더만 보므로, 예컨대 `platform/cloudflared` 렌더에 그 SA를 주체로 하는 RoleBinding을 두면 Reloader가 그 ns의 Secret을 읽을 권한을 얻어도 검사 10은 PASS다(감시 목록은 10.2가 고정하므로 이 경로만으로 감시가 넓어지지는 않는다). **검사 13이 본다**(13.5 `RBAC-reloader-subject` — 전 렌더(모든 kustomization) 교차 검사: subjects에 `ServiceAccount reloader/reloader`가 든 RoleBinding·ClusterRoleBinding은 `platform/reloader` 렌더에만 있을 수 있다).
   - 다른 컴포넌트 렌더에 든 Reloader 이미지, `stakater/reloader`가 아닌 이름으로 다시 올린 이미지를 **같은 파드의 두 번째 컨테이너**로 넣는 경우(두 번째 Deployment로 올리면 10.3이 잡는다), 소비자 Deployment의 `reloader.stakater.com/auto` 어노테이션 유무·위치.
   - `reloader-role`의 `rules`는 **4장이 서로 같은지만** 본다(기대 규칙 상수와 대조하지 않는다) — 4장을 **똑같이** 넓힌 경우(예: 네 장 모두에 `pods/exec` create 추가)는 PASS다. 그 경우는 `platform/reloader/README.md` §1의 20줄 대조(규칙 줄 · `uniq -c`)가 잡는다.
   - 이름이 `reloader-role`이 아닌 Role의 규칙 **내용**(`reloader-metadata-role` 포함 — 와일드카드만 본다). kind별 개수와 Role·RoleBinding ns 집합을 유지한 채 `reloader-metadata-role` 한 쌍을 다른 이름의 넓은 Role·RoleBinding(주체 `reloader/reloader`)으로 바꿔 넣는 경우도 PASS다(2026-09-28 재검증 RB-4 실측). README §1의 RoleBinding 줄 대조가 잡는다.
   - 라이브: Application `status.resources`의 ClusterRole·ClusterRoleBinding 0과 Role `reloader-role` ns 집합, Deployment 인자는 모노레포 하네스 `reloader-2`가 본다. kind별 개수와 Reloader 시작 로그(실제로 감시하는 ns)는 상시 라이브 가드가 없다 — VD-9 판정 ⑥에서 한 번 실측했다(`platform/reloader/README.md` §3 판정 기록 · `reloader-2`는 개수와 로그를 보지 않는다). Argo와의 드리프트(VD-9)는 README §3. Argo가 적용하는 렌더를 validate가 빌드한 렌더와 갈라놓는 Application 쪽 경로(`spec.source` 오버라이드 키 · 다른 리비전 · multi-source · `spec.sourceHydrator` · `.argocd-source*.yaml` · 최상위 `operation`)는 7.4가 막는다 — 전부 덮는다는 주장은 아니며, 그 사각은 「검사 7.4가 보지 않는 것」.
+- 검사 11(`FMT` — T047 G4a · 계약 §validate.yml 4 「(T047) 형식별 정책」)이 **보는 것**: Argo가 읽을 수 있는 형식마다 "검사한다" 또는 "금지한다"를 정한 계약 표의 금지 행.
+  - **앵커·별칭·병합 키(`<<`)는 풀어서 본다**(2026-09-30 G4 리뷰 A1 · 계약 「목록 객체」 행 — `items: *anchor`로 참조한 목록도 목록 객체다): yq v4.53.6은
+    별칭 노드의 종류를 `alias`로 보고하고 `has()`는 병합으로 들어온 키를 보지 못하지만, Argo의 디코더(sigs.k8s.io/yaml — go-yaml v2)는 풀어서 읽는다
+    (어노테이션 값에 앵커를 둔 `items: *seq`는 11.1 · 11.4를 지나 안의 Namespace가 적용됐다 — 리뷰가 실행으로 재현). 그래서 11.x는 문서를 `explode(.)`로 푼 뒤
+    판정하고, 같은 문서를 보는 2 · 7.1 · 7.3 · 7.4와 12.1–12.3의 추출도 푼다(11.4가 `kind: *k` Application을 받아들이는데 2 · 7.x가 풀지 않으면 그 문서를
+    통째로 지나친다). 병합 키의 우선순위(명시 키와 병합은 문서 순서로 뒤의 것이 이긴다 · `<<: [*a, *b]`는 앞 원소가 이긴다)는 yq 기본값이 go-yaml v2와 같다
+    (실측 — `fixtures/fmt/list/misc/merge-order-carrier.yaml`이 고정한다. yq를 올려 기본값이 바뀌면 이 단언이 깨진다).
+  - 11.0 `FMT-alias` fail-closed: 문서를 풀어 읽지 못한다(맵이 아닌 값을 가리키는 병합 키 등 — go-yaml v2와 kustomize도 거부한다) · 풀었는데 최상위 `items`가
+    별칭으로 남았다 — 목록 객체인지 판정할 수 없으므로 FAIL이고 11.1 PASS 줄이 없다. 같은 문서를 푸는 다른 검사도 조용히 넘어가지 않는다(2 · 7.1 · 7.4 · 11.3의
+    "yq 추출 실패" · 7.3 ⓐ · 12.1 · 12.3 — 픽스처 `fixtures/fmt/alias-unresolvable`).
+  - 11.1 `FMT-list` 목록 객체 — 파일 열거(`--root` 트리의 `*.yaml`·`*.yml` · `tests/`·`charts/`·`.git/` 제외)의 모든 문서와 모든 kustomize 렌더에서
+    `kind: List`(items 유무 무관)와 **최상위 `items`가 목록(시퀀스)인 문서**(kind 무관)를 금지한다. 뒤쪽은 계약 문면(`<Kind>List` + items)보다 넓은
+    **보강**이다(2026-09-29 소스 판독 · 실측): Argo CD v3.5.2는 kind와 무관하게 최상위 `items`가 목록이면 원소를 풀어 적용하고 감싼 문서는 버린다
+    (`reposerver/repository/repository.go` GenerateManifests `case obj.IsList():` — apimachinery `Unstructured.IsList`는 items가 목록인지만 본다.
+    directory source와 kustomize 렌더에 똑같이 걸린다). kustomize 5.8.1은 `<Kind>List`만 풀고 그 밖의 kind는 items를 그대로 내보내므로
+    `kind: ConfigMap` + `items: [Role]`은 렌더에서도 ConfigMap으로 보이는데 Argo는 Role을 적용한다(픽스처 `fmt/list`의 `misc/items-carrier.yaml`과,
+    원본은 멀쩡하고 패치가 렌더에서만 items를 더하는 `platform/cloudflared`). kind가 `List`로 끝나도 items가 없거나 맵이면 통과다(`fmt/pass`).
+  - 11.2 `FMT-appset` `kind: ApplicationSet`(apiVersion `argoproj.io/…`) — 파일 + 렌더(List가 풀린 렌더에만 나타나는 것 포함). API 그룹이 다른 같은 이름의 kind는 통과다.
+  - 11.3 `FMT-dirsource` directory source 경로 = Application(파일 + 렌더 — 7.4와 같은 집합)의 `spec.source.path`(와 `spec.sources[].path`)를 저장소 루트
+    기준으로 정규화해, 트리에 없으면 건너뛰고(부분 트리) kustomization 파일(`kustomization.yaml`·`kustomization.yml`·`Kustomization` — Argo의 판정과 같은
+    이름)이 있으면 kustomize source(렌더 쪽 검사의 몫)로, 그 밖을 directory source로 본다. 그 경로 **바로 아래**의 **심볼릭 링크**(파일 · 디렉터리 ·
+    대상 없는 링크 — 계약 「심볼릭 링크」 행 중 이 경로의 몫. 트리 어디든의 판정은 11.5가 따로 해서 같은 링크가 두 코드로 찍힌다:
+    파일 열거(`find -type f`)는 링크를 세지 않는데 Argo는 저장소 안을 가리키는 링크를 따라 읽는다. 링크된 Application은 kind 판정만 받고
+    2 · 7.1 · 7.4의 판정 — SSA · 이름↔경로 · `spec.source` — 을 지나 적용된다: 2026-09-30 G4 리뷰 A2 재현), `*.json`·`*.jsonnet`·`*.libsonnet`, 하위 디렉터리가 FAIL이다(링크는 링크로만 찍는다 — 디렉터리 링크를 하위 디렉터리로, `.json` 링크를
+    확장자로 다시 찍지 않는다). 절대 경로와 저장소 밖으로 나가는 경로는 판정할 수 없어 FAIL이다(fail-closed). 실제 트리의 directory
+    source 경로는 root가 읽는 `clusters/oci-k3s/apps` 하나다.
+  - 11.4 `FMT-dirsource-kind` directory source 경로 바로 아래 `*.yaml`·`*.yml` **일반 파일**의 모든 문서가 `kind: Application`(apiVersion `argoproj.io/…`)이어야 한다 —
+    빈 문서(주석만 · `---`만)는 건너뛰고, kind가 없거나 맵이 아닌 문서는 FAIL(fail-closed), Application이어도 최상위 `items` 목록이 있으면 FAIL(보강 —
+    11.1과 같은 이유). 심볼릭 링크는 따라가지 않는다(`find -type f`) — 링크는 11.3이 금지하고, 따라가서 Application으로 세면 2 · 7.1 · 7.4가 보지 않은 문서를
+    받아들이는 셈이다. 이 경로의 파일은 Argo가 렌더 없이 그대로 적용하므로, 렌더를 보는 검사(10 · 13)가 이 경로를 보지 않아도 되는 근거가 이 판정이다.
+  - 11.5 `FMT-symlink` **심볼릭 링크 — `--root` 트리 어디든 금지**(계약 「심볼릭 링크」 행 — `.git/` 제외 · 파일 · 디렉터리 · 깨진 링크 · 루트의 `tests/`도
+    본다): 파일 열거(`find -type f`)와 kustomization 열거는 링크를 세지 않는데 Argo와 kustomize는 저장소 안 링크를 따라 읽는다 — 컴포넌트 디렉터리 자체가
+    링크(`platform/<comp>` → 다른 곳)면 그 렌더는 **모든 검사의 시야 밖**이다(2026-09-30 실측: `cluster-admin` 바인딩이 든 링크된 컴포넌트가 exit 0).
+    ① 작업 트리 — `find -type l`(링크 자신의 종류를 본다 · 링크된 디렉터리 안으로 내려가지 않는다)이 찾은 링크마다 FAIL(대상 문자열과 "대상 없음"을
+    함께 찍는다 · 트리를 다 훑지 못하면 fail-closed). ② git 인덱스 — Windows 체크아웃(`core.symlinks=false`)은 링크를 일반 파일로 풀어 ①이 보지 못한다.
+    `--root`가 git 작업 트리 안이면 `git ls-files -s`(`--root` 아래)의 모드 `120000` 항목마다 FAIL. git이 없거나 작업 트리가 아니거나 읽지 못하면
+    그 사실을 한 줄(`11.5 git 인덱스를 보지 않았다(…)`)로 적고 ①로만 판정한다(fail-open이 아니다 — ①은 항상 돈다). yq 없이 돈다. Linux에서 커밋된
+    링크는 ①과 ②가 둘 다 찍는다. 오늘 저장소의 링크는 0개다(git 모드 120000 기준). 루트의 `tests/`도 보므로 자기검사가 `tests/.tmp/`에 만든 링크가
+    남아 있으면 실제 트리 검사가 FAIL한다 — CI는 4 전체 검사 뒤에 5 자기검사를 돌리고, 로컬에서도 둘을 같은 작업 트리에서 동시에 돌리지 않는다.
+  - PASS 줄은 본 것의 수를 적는다(문서 수 · directory source 경로 수와 이름 · 그 경로의 YAML 파일·Application 문서 수 · 건너뛴 빈 문서 수 ·
+    11.5는 작업 트리 항목 수(`.git` 제외)와 git 인덱스 항목 수).
+    픽스처: 부정 `fixtures/fmt/{list,appset,dirsource,dirsource-kind,alias-unresolvable}` · 경계(통과) `fixtures/fmt/pass`(11.1–11.4의 PASS 줄을 개수까지
+    단언한다) · 심볼릭 링크는 임시 트리 케이스 `fmt-dirsource-link`(원본 `fixtures/fmt/link/`를 `tests/.tmp/`에 복사하고 링크 셋을 만든다 — 링크는 체크아웃 설정
+    `core.symlinks`에 따라 일반 파일로 풀릴 수 있어 커밋하지 않는다)와 `fmt-symlink` · `fmt-symlink-nogit`(원본 `fixtures/fmt/symlink/` — 파일 링크 ·
+    컴포넌트 디렉터리 링크(안에 `cluster-admin` 바인딩) · 깨진 링크. nogit은 같은 트리를 `GIT_CEILING_DIRECTORIES`로 git 밖에 두고 ①이 도는지 본다),
+    인덱스 판정은 임시 git 저장소 케이스 `fmt-symlink-index`(작업 트리에는 일반 파일 · 인덱스에만 모드 `120000` — 링크를 만들지 않으므로 어느 환경에서나
+    돈다). 링크를 만들 수 없는 환경(권한 없는 Windows 등)에서는 링크 케이스가 이유를 적은
+    `[SKIP]`이고, 필터 없는 실행의 요약이 「환경 SKIP N」으로 드러낸다 — CI(`CI=true`)·`VALIDATE_TESTS_REQUIRE_TOOLS=1`에서는 SKIP하지 않고 실패한다.
+- 검사 11이 **보지 않는 것**:
+  - kustomization의 `resources`가 가리키는 **원격 URL의 내용**(렌더에 나타난 것은 11.1·11.2가 렌더 쪽에서 보지만, 원격 내용 자체의 형식은 보지 않는다).
+  - Argo가 `spec.source.directory.include`/`exclude`로 읽는 범위 — 7.4가 `directory` 키를 금지하므로 없다고 본다.
+  - 클러스터에 손으로 만든 Application(Git에 없다 — 7.4와 같다).
+  - Argo의 소스 판정 중 kustomization 말고 다른 것: directory source 경로에 **이름이 `Chart.yaml`로 끝나는 파일**이 있으면 Argo는 그 경로를 Helm
+    소스로 본다(argo-cd v3.5.2 `util/app/discovery/discovery.go`). 보통의 `Chart.yaml`은 kind가 없어 11.4에 걸리지만, kind·apiVersion을 Application으로
+    적은 Chart.yaml은 11.4를 지난다. config management plugin의 발견 규칙도 보지 않는다(이 클러스터에는 CMP가 없다).
+  - 파일에 `+argocd:skip-file-rendering`이 있으면 Argo는 그 파일을 건너뛴다 — 검사는 그 파일도 본다(더 엄격한 쪽이다).
+  - 링크의 **대상** — 파일 열거를 쓰는 다른 검사(2 · 3 · 5 · 7 등)와 kustomization 열거(검사 1)는 `find -type f`라 링크를 보지 않고 링크된 디렉터리
+    안으로도 내려가지 않는다. 컴포넌트 디렉터리(`platform/<x>`)나 directory source 경로 자신 · 그 상위가 링크인 경우(Argo와 kustomize는 저장소 안 링크를
+    따라 읽는다)는 **11.5가 막는다** — 링크 자체를 금지할 뿐 링크를 따라가 대상을 판정하지 않는다. 링크가 필요해지면 열거를 고치는 계약 변경으로 시작한다.
+  - git 인덱스를 읽을 수 없는 실행(git 밖 · git 없음)에서 `core.symlinks=false` 체크아웃이 일반 파일로 푼 링크 — ①에는 일반 파일이다. 그 실행은
+    `11.5 git 인덱스를 보지 않았다(…)` 줄로 드러난다(CI의 체크아웃은 git 작업 트리다).
+- 검사 12(`HELM` — T047 G4a · 계약 §validate.yml 4 「(T047) 차트 저장소 허용 목록」·「charts/」·「--enable-helm」)가 **보는 것**:
+  - 12.1–12.3의 대상은 모든 kustomization(파일 열거)과, 그것들이 `resources`·`bases`·`components`·`generators`·`transformers`로 끌어오는 **로컬**
+    kustomization이다(파일 열거 밖 — `tests/`·`charts/` 아래 — 도 포함한다: `kustomize build --enable-helm`은 끌려온 kustomization의 helmCharts도 같은
+    빌드에서 인플레이트한다 — 보강). PASS 줄이 "열거 밖 base N개"를 적는다. kustomization은 앵커·별칭·병합 키를 풀어 읽는다(검사 11의 「풀어서 본다」 —
+    별칭으로 적은 base 항목 `- *b`와 병합으로 들인 `helmGlobals`도 보인다. 픽스처 `helm-src/block`의 `platform/vault`). 풀어 읽지 못하는 kustomization은
+    12.1 FAIL(fail-closed — 검사 1은 렌더하지 않는다).
+  - 12.1 `HELM-repo` `helmCharts[]` 항목마다 (`name`, `repo`)가 허용 목록(`validate.sh`의 `HELM_CHART_TABLE` — 계약 표의 유일한 코드 사본)의 한 행과
+    **글자 단위로** 같다(대소문자 · 끝의 `/` 포함 — kustomize는 `oci://` 끝의 `/`를 떼고 받지만 표와 같은 글자만 인정한다). `name`·`repo`가 없으면
+    FAIL이다(repo 없는 항목은 `<kustomization>/charts/` 아래의 로컬 차트를 그대로 쓴다). 표의 "쓰는 곳" 열은 검사하지 않는다(PASS 줄이 실제 사용처를
+    적는다). kustomize helmCharts 인플레이트는 AppProject `sourceRepos`의 통제 밖이라 이 표가 차트 출처의 유일한 통제다.
+  - 12.2 `HELM-version` 항목마다 `version`이 비어 있지 않다(없으면 kustomize가 받는 시점의 최신 차트를 쓴다 — 값은 표로 고정하지 않는다).
+  - 12.3 `HELM-legacy` kustomization 최상위 `helmGlobals`·`helmChartInflationGenerator`, `generators`·`transformers`가 부르는 로컬 파일의
+    `kind: HelmChartInflationGenerator`(파일을 풀어 **문서 안의 모든 맵**에서 찾는다 — `kind: List`로 감싼 생성기도 kustomize는 풀어서 돌린다: 2026-09-30 G4
+    리뷰 A3 · 그 파일을 풀어 읽지 못하면 FAIL — fail-closed), 파일 열거의 YAML에 든 `kind: HelmChartInflationGenerator` 문서.
+  - **검사 1보다 먼저 판정한다**(`helm_src_scan` — 줄은 검사 12 자리에서 찍는다): 12.1–12.3에 걸린 kustomization과 그것을 base로 끌어오는
+    kustomization은 검사 1이 렌더하지 않고 `1 KUST — kustomize build 건너뜀: <디렉터리> — 차트 출처 판정(<사유>)에 걸렸다`로 남긴다 — 허용하지 않은
+    출처에서 차트를 받아 오는 것 자체가 막아야 할 일이다. 그래서 검사 1의 출력이 바뀌는 것은 걸린 kustomization뿐이고, 12.1–12.3 픽스처
+    (`fixtures/helm-src/{repo,version,legacy,block}`)는 helm·네트워크 없이 돈다.
+  - 12.4 `HELM-argocd` helmCharts를 쓰는 kustomization이 하나라도 있으면 `bootstrap/argocd` **렌더**의 ConfigMap `argocd/argocd-cm`의
+    `data."kustomize.buildOptions"`를 공백으로 나눈 **낱말** 중 `--enable-helm` · `--enable-helm=<값>`을 pflag처럼 읽어 참이어야 한다. Argo CD는 이 값을
+    `strings.Fields`로 나눠 kustomize 인자로 붙이므로 공백은 Go `unicode.IsSpace`의 전 집합이다(줄바꿈 · U+2028 · NBSP 포함 — 정규식 `\s`는 그중 일부라
+    그 글자로 붙여 쓴 `--enable-helm=false`를 한 낱말 안에 숨긴다: 픽스처 `eq-space`). `--enable-helmfoo`는 낱말이 아니다. 값은 pflag의 불리언 플래그 규칙을
+    따른다(2026-09-30 G4 리뷰 B1 — 전에는 `=true`를 낱말로 보지 않아 동작하는 설정을 FAIL시켰다): 맨 `--enable-helm`은 참, `=<값>`은 strconv.ParseBool의
+    참(`1`·`t`·`T`·`TRUE`·`true`·`True`)·거짓(`0`·`f`·`F`·`FALSE`·`false`·`False`)이며, 같은 플래그가 여럿이면 **마지막 값**이 이긴다. 그 밖의 값이 하나라도
+    있으면 pflag가 그 자리에서 멈춰 kustomize build가 실패하므로 FAIL이다. 검사 1은 kustomization마다 `--enable-helm`을 스스로 붙이므로 이 키가 사라져도
+    로컬·CI 렌더는 통과하고 라이브 repo-server만 멈춘다 — 그 틈을 이 판정이 막는다. `bootstrap/argocd`가 없으면 저장소 루트에서는 FAIL, 부분 트리
+    (픽스처)에서는 대상 없음이다. 렌더가 없으면(검사 1 실패 · 건너뜀) fail-closed.
+  - 12.5 `HELM-chartsdir` `--root` 트리(`.git` · 루트 `tests/` 제외)에서 이름이 `charts`인 디렉터리(심볼릭 링크 포함)는 helmCharts를 쓰는 kustomization
+    **바로 아래**(kustomize의 인플레이트 캐시 자리 — `.gitignore` 대상)에만 있을 수 있다. 캐시 안(받은 차트의 하위 차트 `charts/`)은 보지 않는다. 파일
+    열거와 7.4의 파일 찾기는 경로에 `/charts/`가 든 곳을 통째로 건너뛰는데(`-not -path '*/charts/*'` — 그대로 둔다), 이 판정이 "건너뛰는 곳은 인플레이트
+    캐시뿐"을 보장한다. 캐시 자리는 허용이고 그 안은 보지 않으므로 검사 1이 캐시를 만들기 전후 결과가 같다.
+  - 12.4·12.5 픽스처는 `tests/.tmp/`에 만드는 임시 트리다(`.gitignore`의 앵커 없는 `charts/` 때문에 이름이 `charts`인 디렉터리 아래의 파일은 커밋되는
+    픽스처로 만들 수 없다 — 원본 `fixtures/helm-src/tree/` + argocd-cm 변형 `fixtures/helm-src/argocd-cm/`). helmCharts 인플레이트는 네트워크를 쓰지
+    않는다: kustomize는 `<kustomization>/charts/<name>-<version>/<name>/`에 차트가 이미 있으면 받지 않고 그것을 쓰므로(v5.8.1 `chartExistsLocally`)
+    자기검사가 그 자리에 작은 차트(ConfigMap 1장)를 둔다(helm은 필요하다). 12.4의 PASS 경로는 실제 트리 실행이 확인한다(임시 트리 `ok` 변형도 본다).
+    argocd-cm 변형: `no-flag`·`helmfoo`·`no-key`(낱말·키 없음) · `ok`·`eq-true`(통과 — 앞의 `=false`를 뒤의 `=true`가 이긴다) · `eq-false`(앞의 맨 플래그를
+    뒤의 `=false`가 이긴다) · `eq-invalid`(`=yes` — 읽지 못하는 값) · `eq-space`(U+2028로 붙인 `=false`). 저장소 루트에서 `bootstrap/argocd`가 없는 분기는
+    `helm-src-root-no-argocd`(임시 트리의 `tests/`에 `validate.sh` 사본 — 검사 13의 `rbac-root-*`와 같은 방식)가 본다.
+- 검사 12가 **보지 않는 것**:
+  - **원격 base**(URL · `git@`)의 helmCharts — 따라가지 않는다(kustomize는 빌드 때 받아 그 helmCharts도 인플레이트한다). 지금 원격 base는
+    `bootstrap/argocd`의 install.yaml(파일 — kustomization이 아니다) 하나다.
+  - 인플레이트 캐시 자리에 **커밋된** 차트: kustomize는 캐시 자리에 차트가 있으면 저장소에서 받지 않고 그것을 쓴다 — `.gitignore`의 `charts/`를
+    `git add -f`로 넘겨 차트를 커밋하면 허용 목록의 저장소가 아닌 내용이 렌더된다(렌더를 보는 검사는 그 렌더를 본다 — 출처만 통제 밖이다). 12.5는
+    캐시 안을 보지 않는다.
+  - 차트 **내용**과 버전 태그의 가변성(kustomize helmCharts에는 digest 필드가 없다), `valuesFile`·`additionalValuesFiles`의 내용(렌더를 보는 검사가 결과를 본다).
+  - Argo CD 쪽의 다른 설정: 버전별 옵션 `kustomize.buildOptions.<버전>`·`kustomize.path.<버전>`, 라이브 argocd-cm(12.4는 Git의 렌더만 본다).
+  - 12.4의 낱말 해석 중 `--enable-helm` 밖의 pflag 규칙: 값을 받는 플래그 뒤에 `=` 없이 오는 낱말은 그 플래그의 값으로 삼켜지고(`--helm-command --enable-helm`이면
+    helm은 켜지지 않는다) `--` 뒤의 낱말은 플래그가 아니다 — 판정은 `--enable-helm` 낱말들만 보고 다른 플래그의 문법은 보지 않는다(그런 설정은 helm을 켜지
+    못하거나 인자 오류로 kustomize build를 멈춰 Argo의 렌더 실패로 드러나지만, 이 판정은 PASS로 볼 수 있다).
+- 검사 13(`RBAC` — T047 G4b · 계약 §validate.yml 4 「(T047) 권한 경계 — 문자열이 아니라 규칙 구조로 본다」)이 **보는 것**: kustomize **렌더 전부**(모든
+  kustomization — Argo가 적용하지 않는 pod의 `base` 등도 합친다: 넓게 잡는 쪽이다)의 RBAC 객체(apiVersion `rbac.authorization.k8s.io/…` · kind
+  `Role`·`ClusterRole`·`RoleBinding`·`ClusterRoleBinding`). 검사 10이 `platform/reloader` 렌더 하나의 안만 보던 것을 넘어, 다른 컴포넌트의 렌더가 같은 계정에
+  권한을 주거나 토큰 발급 규칙을 새로 넣는 경로를 본다. 판정은 문자열 찾기가 아니라 **규칙의 구조**(목록의 원소)다 — 와일드카드와 주체 표기의 여러 형태가 같은
+  권한을 준다. 렌더마다 yq 한 번으로 역할·토큰 발급 규칙·바인딩·주체를 행으로 뽑아 **모든 렌더를 모은 뒤** 판정한다. 기준선은 2026-09-29 main `82dd85e`
+  실측값이고, `validate.sh`의 `RBAC_*` 표가 계약의 유일한 코드 사본이다.
+  - **렌더만 봐도 되는 전제**: Argo가 적용하는 것은 kustomization의 렌더이거나 directory source 경로(`clusters/oci-k3s/apps`)의 파일이다. 뒤쪽은 11.4가
+    "문서는 Application(`argoproj.io/…`)뿐"으로 닫는다 — 그 경로에 RBAC를 두면 11.4가 FAIL한다. 렌더 안에 숨는 목록 객체(items 안의 RBAC)는 11.1이,
+    Application 수준에서 렌더를 바꾸는 경로(source 오버라이드 등)는 7.4가, kustomization 열거 밖에서 렌더되는 링크된 컴포넌트는 11.5가 막는다.
+  - 13.1 `RBAC-token` **토큰 발급 규칙** — 규칙 **하나 안에서** `apiGroups` ∋ `""`·`*` 그리고 `verbs` ∋ `create`·`*` 그리고 `resources` ∋
+    `serviceaccounts/token`·`*`·`*/token`(Kubernetes RBAC의 `ResourceMatches`는 `*`와 `*/<subresource>`만 와일드카드로 읽는다 — `*/token`은 모든 리소스의
+    token 하위 리소스라 `serviceaccounts/token`이 맞는다: 2026-09-30 계약에 더했다 · 코드 판독, 라이브 미실측) · 초판의 `serviceaccounts/*`·`*/*`(아무것도 뜻하지 않는 문자열이지만 계약대로
+    엄격한 쪽으로 잡는다)(목록이 아니거나 없는 필드는 빈 목록 · `apiGroups`의 원소 `null`은 `""`로 읽는다 — Go의 JSON
+    해석은 문자열 자리의 null을 빈 문자열로 남긴다: 코드 판독, 라이브 미실측) — 을 가진 역할은 기준선 둘뿐이다: ① ClusterRole `argocd-application-controller`(이름만 본다 — 와일드카드 규칙 · GitOps 컨트롤러의
+    고유 권한) ② Role `external-secrets/eso-token-create` — 토큰 발급 규칙이 **하나**이고 `apiGroups`·`resources`·`verbs`가 정확히 `[""]`·`[serviceaccounts/token]`·
+    `[create]`이며 `resourceNames`가 `eso-platform`·`eso-dev`·`eso-prod`·`eso-data`·`eso-ca-reader`와 집합으로 같다(없음 · 빈 목록 · 여분 이름 FAIL). 같은 이름이
+    여러 렌더에 나타나면 **나타난 것마다** 판정한다(다른 컴포넌트가 같은 이름으로 넓은 규칙을 정의하는 경로). 규칙 A가 조건 하나를, 규칙 B가 다른 조건을 채우는
+    역할은 해당 없다(`rbac/pass`의 `split`).
+  - 13.2 `RBAC-extref` `roleRef`가 ClusterRole이고 그 이름의 ClusterRole이 **어느 렌더에도 없는** 바인딩(내장 역할 등 — validate가 규칙을 볼 수 없다)은
+    기준선 둘(`ClusterRoleBinding agent-view-view → view` · `ClusterRoleBinding vault-server-binding → system:auth-delegator` — 바인딩 kind·이름·대상 이름의 세
+    값으로 대조)뿐이다. RoleBinding → Role은 **같은 ns**의 그 Role이 어느 렌더에 있어야 하고, ClusterRoleBinding → Role과 `roleRef.kind`가 둘 밖인 것은 FAIL.
+    다른 컴포넌트의 렌더가 정의한 ClusterRole을 가리키는 것은 통과다("렌더에 있는 ClusterRole"은 모든 렌더를 합친 이름 집합이다).
+  - 13.3 `RBAC-builtin-name` 렌더된 ClusterRole의 이름이 `cluster-admin`·`admin`·`edit`·`view`이거나 `system:`으로 시작하면 FAIL — 13.2가 "그 이름이 렌더에
+    있는가"로 내장 역할을 가려내므로, 같은 이름을 함께 렌더해 내장 역할에 거는 바인딩을 "렌더된 역할"로 보이게 하는 경로를 닫는다(그 바인딩은 13.2가 아니라
+    여기서 걸린다).
+  - 13.4 `RBAC-subject` 모든 바인딩의 주체는 `kind: ServiceAccount`이고 `name`·`namespace`가 비어 있지 않다. `User`·`Group`(계정을 포함하는 그룹
+    `system:serviceaccounts[:<ns>]`·`system:authenticated`, 계정의 사용자 이름 표기 `system:serviceaccount:<ns>:<name>`) · ns 없는 ServiceAccount(RoleBinding에서는
+    API 서버가 바인딩의 ns로 채워 읽는다) · 이름 없는 ServiceAccount · 맵이 아닌 주체 · 목록이 아닌 `subjects`는 FAIL. 사람·그룹 주체가 필요해지면(OIDC 관리자
+    등 — T084) 계약에 행을 더한다.
+  - 13.5 `RBAC-reloader-subject` 주체 `ServiceAccount reloader/reloader`를 가진 바인딩은 `platform/reloader` 렌더에만 있을 수 있다(다른 컴포넌트 렌더가 Reloader에게
+    Secret 읽기 권한을 주는 경로). 그 렌더 안의 장수·모양은 검사 10이 본다 — PASS 줄은 그 렌더 안의 장수를 참고로 적는다.
+  - 13.6 `RBAC-aggregation` `aggregationRule` 키를 가진 ClusterRole 금지(합쳐진 결과 규칙은 렌더에 없다) · `rbac.authorization.k8s.io/aggregate-to-`로 시작하는
+    라벨(값은 보지 않는다 — `"false"`도 센다)을 가진 ClusterRole은 기준선 다섯(`cert-manager-cluster-view`·`cert-manager-edit`·`cert-manager-view`·
+    `external-secrets-edit`·`external-secrets-view`)뿐이다. `agent-view-view`가 내장 `view`에 걸려 있으므로, 새 ClusterRole이 `aggregate-to-view`로 Secret 읽기를
+    더하면 에이전트의 읽기 전용 자격이 Secret을 읽게 된다.
+  - 13.0 `RBAC-render` fail-closed: yq 추출 실패 · 추출 행의 모양 이상(종류·구분자 수·수 필드) · **렌더가 없는 kustomization**(빌드 실패 · 검사 12의 사전
+    판정으로 건너뜀) — 합친 집합이 불완전하므로 그룹 PASS 줄을 찍지 않는다. kustomize가 없으면(helmCharts를 쓰는 kustomization이 있는데 helm이 없어도)
+    `need_tool`로 SKIP(또는 CI에서 fail-closed)이다.
+  - **완전성**: "기준선의 것이 있는가"(역할 2 · 바인딩 2 · 라벨 ClusterRole 5)는 `--root`가 저장소 루트일 때만 요구한다(13.0이 나면 보지 않는다 — 빠진 렌더에
+    있을 수 있다). 부분 트리(픽스처)에서는 기준선 **밖의 것**만 FAIL이고, RBAC 객체가 하나도 없으면 "대상 없음" PASS다.
+  - PASS 줄(`13 RBAC` 한 줄)은 본 것의 수를 적는다: 렌더 수 · Role · ClusterRole · 바인딩(RoleBinding · ClusterRoleBinding) · 주체 · 토큰 발급 규칙을 가진 역할 ·
+    렌더되지 않은 ClusterRole을 가리키는 바인딩 · Role을 가리키는 RoleBinding · aggregate-to-* 라벨 ClusterRole · `platform/reloader` 렌더 안의 Reloader 주체
+    바인딩. 실제 트리(2026-09-30): 렌더 29 · Role 20 · ClusterRole 23 · 바인딩 40 · 주체 40 · 토큰 발급 역할 2 · 렌더되지 않은 역할을 가리키는 바인딩 2 ·
+    라벨 ClusterRole 5 · Reloader 주체 바인딩 5(계약의 실측 기준선과 같다).
+  - 픽스처: 부정 `fixtures/rbac/{token,extref,builtin-name,subject,reloader-subject,aggregation,render-fail}` · 경계(통과) `fixtures/rbac/pass`(PASS 줄을 개수까지
+    단언한다 — 토큰이 아닌 규칙 셋 · 기준선 ①·② · 다른 렌더의 ClusterRole을 가리키는 바인딩 · 기준선 바인딩 2 · 기준선 라벨 ClusterRole 5). 저장소 루트 분기는
+    `tests/.tmp/`의 임시 트리로 돈다 — 트리의 `tests/`에 `validate.sh` 사본을 넣으면 스크립트가 그 트리를 저장소 루트로 삼는다: `rbac-root-ok`(= `rbac/pass`) ·
+    `rbac-root-missing`(빈 트리 — 기준선 9개가 모두 없다고 FAIL). 경계 케이스는 분기를 바꾼 사본으로 변이 시험을 했다(2026-09-30 — 조건 셋을 하나씩 뺀 판정 ·
+    규칙을 합쳐 본 판정 · 렌더된 ClusterRole 집합 무시 · 기준선 표 무시 · resourceNames 순서 비교 · ①의 모양 고정 · Reloader 렌더 제외 없음 — 모두 해당 케이스가 깨졌다).
+- 검사 13이 **보지 않는 것**(계약 「보지 않는 것」):
+  - 기준선의 다섯 ClusterRole(aggregate-to-* 라벨)을 통해 내장 `view`·`edit`·`admin`이 **얼마나** 넓어졌는지 — 토큰 발급 규칙(13.1) 밖의 규칙 내용은 보지
+    않는다(차트 올림으로 그 규칙이 바뀌는 것 포함).
+  - **`secrets` 생성 권한으로 `kubernetes.io/service-account-token` 형식의 Secret을 만들어 토큰을 얻는 경로** — 2026-09-29 실측으로 그 권한을 가진 규칙은
+    8개다(Argo CD · cert-manager · external-secrets 컨트롤러). Secret을 만드는 것이 이 컨트롤러들의 본업이라, 기준선으로 고정하면 차트를 올릴 때마다(규칙이
+    바뀌거나 늘 때마다) 계약을 고쳐야 한다 — 고정하지 않았다. 후속은 모노레포 설계 문서(`specs/003-platform-foundation/design/t047-design.md`) §6 H8-1(converge).
+  - `escalate`·`bind`·`impersonate` 동사를 통한 권한 상승(오늘은 `argocd-application-controller`의 `*`뿐).
+  - 차트가 **런타임에** 만드는 RBAC(렌더에 없다) · 클러스터에 손으로 만든 객체.
+  - 네임스페이스가 없는 Role·RoleBinding의 ns — 렌더의 글자(`-`)로 맞춘다(Argo는 둘 다 Application의 destination ns에 만든다). 실제 트리의 RBAC는 모두
+    ns를 적는다.

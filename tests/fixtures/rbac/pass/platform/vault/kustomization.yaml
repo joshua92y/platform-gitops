@@ -1,0 +1,5 @@
+# 경계 픽스처(통과) 13.2 — 기준선의 "렌더되지 않은 ClusterRole을 가리키는 바인딩" ClusterRoleBinding vault-server-binding → system:auth-delegator
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - rbac.yaml

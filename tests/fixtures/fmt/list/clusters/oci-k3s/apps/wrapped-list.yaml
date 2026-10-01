@@ -1,0 +1,21 @@
+# 부정 픽스처 11.1 FMT-list — directory source 경로(clusters/oci-k3s/apps) 안에서 `kind: List`로 감싼 Application.
+#   파일 단위 추출(검사 2 · 7.1 · 7.4)은 최상위 문서의 kind(List)만 보므로 안의 Application을 보지 못하는데, Argo directory source는
+#   List를 풀어 그 Application을 만든다. 11.1이 목록 객체로, 11.4가 "Application이 아닌 문서"로 함께 잡는다(단언은 11.1 줄이다).
+apiVersion: v1
+kind: List
+items:
+  - apiVersion: argoproj.io/v1alpha1
+    kind: Application
+    metadata:
+      name: platform-cloudflared
+      namespace: argocd
+      annotations: { argocd.argoproj.io/sync-wave: "60" }
+    spec:
+      project: platform
+      source:
+        repoURL: https://github.com/joshua92y/platform-gitops.git
+        targetRevision: main
+        path: platform/cloudflared
+      destination: { server: https://kubernetes.default.svc, namespace: cloudflared }
+      syncPolicy:
+        syncOptions: [ServerSideApply=true]

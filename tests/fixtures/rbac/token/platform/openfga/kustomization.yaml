@@ -1,0 +1,6 @@
+# 부정 픽스처 13.1 RBAC-token ⓖ — 기준선 ②와 같은 이름의 Role에 토큰 발급 규칙이 **둘**이다(첫째는 기준선과 같은 모양 ·
+#   둘째가 다른 SA의 토큰을 발급한다). 규칙 수 ≠ 1이 FAIL이고, 둘째 규칙의 resourceNames 불일치도 FAIL이다.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - rbac.yaml

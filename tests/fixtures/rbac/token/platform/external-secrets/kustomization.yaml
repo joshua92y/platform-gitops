@@ -1,0 +1,8 @@
+# 부정 픽스처 13.1 RBAC-token ⓔ — 기준선 ②(Role external-secrets/eso-token-create)의 resourceNames에 SA 하나(`eso-extra`)를 더했다.
+#   ②는 이름만이 아니라 모양(토큰 발급 규칙 1개 · apiGroups [""] · resources [serviceaccounts/token] · verbs [create] ·
+#   resourceNames = eso-* 5개 집합)까지 고정이다 — 이름을 하나 더하면 그 SA의 토큰도 발급된다.
+#   rbac/token의 나머지 ② 변형(ⓕ ⓖ ⓗ)은 같은 이름의 Role을 **다른 렌더**에 둔다(나타난 것마다 판정 — FAIL 줄의 렌더 이름으로 구분한다).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - rbac.yaml

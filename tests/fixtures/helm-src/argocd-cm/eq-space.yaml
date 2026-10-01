@@ -1,0 +1,11 @@
+# 12.4 변형 eq-space — 마지막 `--enable-helm=false`를 U+2028(LINE SEPARATOR)로 앞 낱말에 붙였다(값의 `\L`은 YAML 큰따옴표 이스케이프 = U+2028 —
+#   글자 그대로 넣으면 보이지 않고, YAML 1.1 계열 파서는 그 글자를 줄바꿈으로 읽는다). Argo CD가 값을 나누는 strings.Fields는 unicode.IsSpace로
+#   나누므로 U+2028도 공백이다 — 낱말은 `--enable-helm` · `--load-restrictor` · `LoadRestrictionsNone` · `--enable-helm=false`이고 pflag는 마지막 값(false)을
+#   쓴다. 정규식 \S(RE2 — [\t\n\f\r ]만 공백)로 나누면 `LoadRestrictionsNone<U+2028>--enable-helm=false`가 한 낱말이 되어 이 거짓을 보지 못하고
+#   통과시킨다(낱말 정규식 HELM_ARGOCD_WORD_RE를 고정하는 경계)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  kustomize.buildOptions: "--enable-helm --load-restrictor LoadRestrictionsNone\L--enable-helm=false"

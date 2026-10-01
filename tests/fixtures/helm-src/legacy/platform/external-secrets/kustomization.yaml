@@ -1,0 +1,14 @@
+# 부정 픽스처 12.3 HELM-legacy — generators: 가 kind: HelmChartInflationGenerator 설정 파일을 부른다(레거시 생성기).
+#   helmCharts 항목은 허용 쌍 + version이지만, --enable-helm으로 빌드하면 레거시 생성기가 허용 목록 밖 저장소에서 차트를 받는다 —
+#   그래서 이 kustomization도 검사 1이 렌더하지 않는다. wrapped-inflator.yaml은 같은 생성기를 `kind: List`로 감싼 경우다(A3).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+helmCharts:
+  - name: external-secrets
+    repo: https://charts.external-secrets.io
+    version: 2.10.0
+    releaseName: external-secrets
+    namespace: external-secrets
+generators:
+  - legacy-inflator.yaml
+  - wrapped-inflator.yaml

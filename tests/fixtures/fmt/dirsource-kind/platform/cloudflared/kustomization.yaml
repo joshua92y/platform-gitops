@@ -1,0 +1,5 @@
+# 부정 픽스처 11.4 FMT-dirsource-kind 의 보조 — platform/cloudflared 는 kustomization이 있는 경로라 directory source가 아니다.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: cloudflared
+resources: []

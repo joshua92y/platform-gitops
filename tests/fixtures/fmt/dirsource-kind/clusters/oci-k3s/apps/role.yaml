@@ -1,0 +1,11 @@
+# 부정 픽스처 11.4 FMT-dirsource-kind — directory source 경로의 Role. root의 프로젝트(platform)는 목적지 ns의 namespaced kind를
+#   허용하므로 Argo는 렌더 없이 이것을 적용하는데, 렌더를 보는 검사는 이 파일을 보지 못한다.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: smuggled-role
+  namespace: argocd
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, list]

@@ -1,0 +1,7 @@
+# 부정 픽스처 13.5 RBAC-reloader-subject — platform/reloader **밖의** 렌더가 ServiceAccount reloader/reloader에 권한을 준다:
+#   RoleBinding cloudflared/reloader-read(→ 그 ns의 Secret 읽기 Role) · ClusterRoleBinding reloader-extra(둘째 주체).
+#   검사 10은 platform/reloader 렌더만 보므로 이 두 장은 그 시야 밖이다. platform/reloader 렌더 안의 바인딩(대조군)은 걸리지 않는다.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - rbac.yaml

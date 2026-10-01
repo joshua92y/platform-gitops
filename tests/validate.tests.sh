@@ -9,7 +9,14 @@
 #                            근거는 그 하위 검사에 고유한 `+[FAIL] <코드> — …` 단언과, 그룹 PASS 줄이 없다는 `-[PASS] <코드>` 음성 단언이다
 #   - author/*.diff        : 검사 6(봇 작성자) 입력 — positive 트리 위에서 환경변수로 넘긴다
 #   - tests/.tmp/          : (T047) 검사 6의 SHA 경로 케이스가 쓰는 임시 git 저장소(mergebase · lines · submodule · textconv)와
-#                            git 밖 디렉터리(nogit), 도구 없는 PATH의 심 디렉터리.
+#                            git 밖 디렉터리(nogit), 도구 없는 PATH의 심 디렉터리, 검사 12.4·12.5의 임시 트리(helm-src-* — 이름이
+#                            charts인 디렉터리는 .gitignore 대상이라 커밋되는 픽스처로 만들 수 없다. 원본은 fixtures/helm-src/tree/),
+#                            검사 13의 저장소 루트 케이스(rbac-root-* — 임시 트리의 tests/에 validate.sh 사본을 넣어 그 트리를 저장소 루트로
+#                            돌린다: 완전성 판정은 --root가 스크립트의 저장소 루트일 때만 돈다), 검사 12.4의 저장소 루트 케이스(helm-src-root-no-argocd
+#                            — 같은 방식), 검사 11.3·11.4의 심볼릭 링크 케이스(fmt-dirsource-link — 링크는 커밋하지 않는다. 원본은 fixtures/fmt/link/.
+#                            링크를 만들 수 없는 환경에서는 이유를 적은 [SKIP]으로 건너뜀에 센다 — CI · 판정용 실행에서는 실패), 검사 11.5의
+#                            심볼릭 링크 케이스(fmt-symlink · fmt-symlink-nogit — 같은 방식. 원본은 fixtures/fmt/symlink/)와 인덱스 케이스의 임시
+#                            git 저장소(fmt-symlink-index — 작업 트리에는 일반 파일 · 인덱스에만 모드 120000).
 #                            --root는 저장소 안이어야 하므로 여기에 만든다(.gitignore 대상). 시작할 때와 끝날 때(EXIT trap) 통째로 지운다
 # 실제 트리 검사(validate.sh 기본 실행)는 tests/ 를 제외하므로 픽스처가 실제 결과에 섞이지 않는다.
 #
@@ -34,6 +41,10 @@ VALIDATE="$HERE/validate.sh"
 FIX="$HERE/fixtures"
 # 임시 git 저장소·심 디렉터리(머리 주석 「tests/.tmp/」). 지난 실행이 실패로 남긴 것을 지우고 시작하고, 어떻게 끝나든 지운다
 TMP="$HERE/.tmp"
+# TMP는 이 스크립트의 셸 변수다 — 환경에 TMP가 이미 내보내져 있으면(Windows) 위 대입이 자식 프로세스의 TMP까지 바꿔, Go 도구(kustomize의 helm
+#   인플레이트)가 아직 없는 tests/.tmp에 임시 디렉터리를 만들려다 렌더가 실패한다(2026-09-30 실측 — rel-scoped의 helm 케이스). 내보내지 않는다
+#   (Linux는 Go가 TMPDIR을 보므로 영향이 없었다 — 환경에 TMP가 없으면 이 줄은 아무것도 하지 않는다).
+export -n TMP
 rm -rf -- "$TMP"
 trap 'rm -rf -- "$TMP"' EXIT
 
@@ -109,16 +120,19 @@ fail_case() {
   printf '[FAIL] %s\n       - 준비 실패: %s\n' "$1" "$2"
 }
 
-# run_case <이름> <root> <기대 exit> [--env K=V]... [--arg <validate.sh 인자>]... [+있어야 할 문자열 | -있으면 안 되는 문자열]...
+# run_case <이름> <root> <기대 exit> [--env K=V]... [--arg <validate.sh 인자>]... [--script <경로>] [+있어야 할 문자열 | -있으면 안 되는 문자열]...
 #   --arg 는 --root 뒤에 차례로 붙는다(예: --arg --author-id --arg 323873425)
+#   --script 는 validate.sh 대신 돌릴 사본(검사 13의 저장소 루트 케이스 — 임시 트리의 tests/validate.sh. 기본은 이 디렉터리의 validate.sh)
 run_case() {
   selected "$1" || return 0
   local name=$1 root=$2 want=$3; shift 3
   local -a envs=() args=() asserts=()
+  local script=$VALIDATE
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --env) envs+=("$2"); shift 2 ;;
       --arg) args+=("$2"); shift 2 ;;
+      --script) script=$2; shift 2 ;;
       *) asserts+=("$1"); shift ;;
     esac
   done
@@ -128,7 +142,7 @@ run_case() {
   out=$(env -u GITHUB_EVENT_NAME -u VALIDATE_REQUIRE_AUTHOR -u PR_AUTHOR -u PR_AUTHOR_ID -u PR_SENDER -u PR_SENDER_ID \
         -u CHANGED_FILES -u CHANGED_DIFF \
         -u VALIDATE_BASE_SHA -u VALIDATE_HEAD_SHA -u VALIDATE_ONLY_AUTHOR -u VALIDATE_BOT_AUTHORS -u VALIDATE_BOT_IDS \
-        "${envs[@]}" bash "$VALIDATE" --root "$root" "${args[@]}" 2>&1) || rc=$?
+        "${envs[@]}" bash "$script" --root "$root" "${args[@]}" 2>&1) || rc=$?
   N=$((N + 1))
   local problems=()
   if [[ $rc != "$want" ]]; then ok=0; problems+=("exit $rc ≠ 기대 $want"); fi
@@ -157,11 +171,21 @@ DIGEST_FILE='apps/identity-admin/overlays/dev/kustomization.yaml'
 
 # 도구 의존 검사의 PASS 단언은 도구가 있을 때만(없으면 SKIP이 정답)
 positive_asserts=('+[PASS] 2 APP-SSA' '+[PASS] 3 ES' '+[PASS] 3.5 ES-⑤⑥' '+[PASS] 4a IMG-newTag'
+  # 4a IMG-entry(T047 G4c): overlays/dev · overlays/prod의 images 항목 각 1개(name + newName + digest)
+  '+[PASS] 4a IMG-entry — kustomization images 2개 항목(kustomization 2개): 항목마다 name(문자열)·digest 있음 · 키 ⊆ {name, newName, digest}'
   '+[PASS] 5.1 POL-ns' '+[PASS] 5.2 POL-set' '+[PASS] 5.3 POL-egress' '+[PASS] 5.4 POL-port' '+[PASS] 5.5 POL-limitrange'
   '+[PASS] 5.6 POL-webhook-src'
   '+[PASS] 6 AUTHOR' '+[PASS] 7.1 WAVE' '+[PASS] 7.2 WAVE-dir' '+[PASS] 7.3 WAVE-secrets-base'
   '+[PASS] 7.4 APP-source — Application 24개(파일+렌더링) spec.source 키 = {path, repoURL, targetRevision}'
   '+[PASS] 9.1 CSS-set' '+[PASS] 9.2 CSS-auth' '+[PASS] 9.3 CSS-k8s' '+[PASS] 9.4 CSS-conditions'
+  # 검사 11 · 12(T047): directory source 경로는 root가 읽는 clusters/oci-k3s/apps 하나(Application 23 = 앱 2 + 플랫폼 21) · helmCharts 없음
+  '+[PASS] 11.1 FMT-list' '+[PASS] 11.2 FMT-appset'
+  '+[PASS] 11.3 FMT-dirsource — directory source 경로 1개(clusters/oci-k3s/apps) — .json·.jsonnet·.libsonnet 파일·하위 디렉터리 없음 · Application source.path 24개 = directory source 1 · kustomization 23 · 트리에 없음 0'
+  '+[PASS] 11.4 FMT-dirsource-kind — directory source 경로 1개의 YAML 파일 2개 · 문서 23개 모두 Application(argoproj.io/…) · 빈 문서 0개 건너뜀'
+  # 11.5: 링크 0 — 항목 수는 단언하지 않는다(인덱스 항목 수는 픽스처가 커밋됐는지에 따라 로컬과 CI가 다르다)
+  '+[PASS] 11.5 FMT-symlink — 심볼릭 링크 0개 — 작업 트리 항목 '
+  '+[PASS] 12.1 HELM-repo' '+[PASS] 12.2 HELM-version' '+[PASS] 12.3 HELM-legacy'
+  '+[PASS] 12.4 HELM-argocd — helmCharts를 쓰는 kustomization 0개 — 대상 없음' '+[PASS] 12.5 HELM-chartsdir'
   '+결과: PASS' '-[FAIL]')
 if command -v kustomize >/dev/null 2>&1 && command -v kubeconform >/dev/null 2>&1; then
   # 5.6 PASS 줄의 소스 수는 kustomize 유무로 갈린다(SKIP 모드에서는 "렌더 0" — 한계 절 참조)
@@ -170,7 +194,9 @@ if command -v kustomize >/dev/null 2>&1 && command -v kubeconform >/dev/null 2>&
   positive_asserts+=('+[PASS] 1 KUST' '+[PASS] 1b KUST-plain' '+ExternalSecret 26개(파일+렌더링)'
     '+webhook 정책을 담은 소스: 원본 1 · 렌더 1'
     # 검사 10(T046): 긍정 트리의 platform/reloader는 순수 매니페스트라 helm 없이 렌더된다(kustomize만 필요).
-    '+[PASS] 10 REL — platform/reloader (rendered): ClusterRole·ClusterRoleBinding 0 · Deployment reloader/reloader args = ["--log-level=info","--namespaces=identity,jt-dev,jt-prod,reloader","--reload-strategy=annotations"] · kind {ServiceAccount 1 · Deployment 1 · Role 5 · RoleBinding 5}(합계 12) · Role·RoleBinding ns 집합 = {identity,jt-dev,jt-prod,reloader} · RoleBinding → 같은 ns의 Role · 주체 = ServiceAccount reloader/reloader · reloader-role 규칙 동일·와일드카드 없음 · Reloader 이미지 컨테이너 1개(containers.0 · command 없음)')
+    '+[PASS] 10 REL — platform/reloader (rendered): ClusterRole·ClusterRoleBinding 0 · Deployment reloader/reloader args = ["--log-level=info","--namespaces=identity,jt-dev,jt-prod,reloader","--reload-strategy=annotations"] · kind {ServiceAccount 1 · Deployment 1 · Role 5 · RoleBinding 5}(합계 12) · Role·RoleBinding ns 집합 = {identity,jt-dev,jt-prod,reloader} · RoleBinding → 같은 ns의 Role · 주체 = ServiceAccount reloader/reloader · reloader-role 규칙 동일·와일드카드 없음 · Reloader 이미지 컨테이너 1개(containers.0 · command 없음)'
+    # 검사 13(T047 G4b): 긍정 트리의 RBAC는 platform/reloader의 Role 5 · RoleBinding 5뿐이다(기준선 밖의 것 없음 · 부분 트리라 완전성은 보지 않는다)
+    '+[PASS] 13 RBAC — 렌더 27개 합산(부분 트리 — 기준선 밖의 것만 본다) — Role 5 · ClusterRole 0 · 바인딩 5장(RoleBinding 5 · ClusterRoleBinding 0) · 주체 5개 모두 이름을 다 적은 ServiceAccount · 토큰 발급 규칙을 가진 역할 0개(없음) · 렌더되지 않은 ClusterRole을 가리키는 바인딩 0장(없음) · Role을 가리키는 RoleBinding 5장 모두 같은 ns의 렌더된 Role · 내장 역할 이름의 ClusterRole 0 · aggregationRule 0 · aggregate-to-* 라벨 ClusterRole 0개(없음) · Reloader 주체(ServiceAccount reloader/reloader) 바인딩은 platform/reloader 렌더에만 — 그 렌더 안 5장(장수·모양은 검사 10)')
 else
   positive_asserts+=('+webhook 정책을 담은 소스: 원본 1 · 렌더 0')
 fi
@@ -232,6 +258,97 @@ run_case img-platform-digest "$FIX/img-platform-digest" 1 \
   "+[WARN] 4b IMG-platform-digest — platform/cloudflared/deployment.yaml: image 'cloudflare/cloudflared:2026.1.0'에 @sha256 digest 없음" \
   '-[FAIL] 4b' "-image 'busybox:1.37@sha256" \
   '+[PASS] 4b IMG-platform-digest — platform/** image: 줄 2개 중 digest 없는 줄 1개(경고만)'
+
+# --- 4a IMG-entry: images 항목마다 name · digest(T047 G4c · 계약 §이미지·승격 「(T047) 항목마다 name과 digest」) ---------------------------
+# 모든 트리가 부분 트리다 — exit 1은 무관한 FAIL로도 나므로 판정 근거가 아니다. 근거는 하위 코드의 `+[FAIL] 4a IMG-…` 단언, 그룹 PASS 줄이 없다는
+# `-[PASS] 4a IMG-entry`, 그리고 그 트리의 결함이 다른 새 코드로 번지지 않는다는 `-[FAIL] 4a IMG-…`다. 기존 4a IMG-newTag의 줄(newTag · 형식 오류)은
+# 그대로 나오고 새 코드는 그것을 다시 찍지 않는다 — 기존 줄이 나와야 하는 곳은 `+[FAIL] 4a IMG-newTag`로, 그룹이 서로 독립인 것은 mixed의
+# `+[PASS] 4a IMG-newTag`로 짚는다. yq만 쓴다(helm·네트워크 불필요). "통과해야 하는 것"은 pass(항목 있음)와 none(대상 없음) 두 트리다.
+IE='apps/demo/overlays/dev/kustomization.yaml images'
+IE_ALL=('-[FAIL] 4a IMG-name' '-[FAIL] 4a IMG-digest' '-[FAIL] 4a IMG-keys' '-[FAIL] 4a IMG-shape')
+ie_others() { # <이 트리가 거는 새 코드…(예: IMG-digest)> — 그 밖의 새 코드 FAIL이 없고 그룹 PASS 줄도 없다는 음성 단언 목록 → 전역 IE_NEG
+  local a c keep
+  IE_NEG=('-[PASS] 4a IMG-entry')
+  for a in "${IE_ALL[@]}"; do
+    keep=1
+    for c in "$@"; do [[ $a == "-[FAIL] 4a $c" ]] && keep=0; done
+    [[ $keep == 0 ]] || IE_NEG+=("$a")
+  done
+}
+#   digest: 없음(digest 줄을 지운 모양) · "" · null · false · "-"(기존 추출이 '없음'과 같은 '-'로 읽던 값) · 따옴표 없는 숫자(형식 오류 —
+#     기존 4a IMG-newTag가 찍고 IMG-digest는 다시 찍지 않는다). ""는 기존 코드도 형식 오류로 찍는다(기존 줄은 바꾸지 않는다)
+ie_others IMG-digest
+run_case img-entry-digest "$FIX/img-entry/digest" 1 \
+  "+[FAIL] 4a IMG-digest — $IE #1 'ghcr.io/joshua92y/demo-a': digest 없음 — 이미지 고정이 풀린다" \
+  "+[FAIL] 4a IMG-digest — $IE #2 'ghcr.io/joshua92y/demo-b': digest가 빈 값 — 이미지 고정이 풀린다" \
+  "+[FAIL] 4a IMG-digest — $IE #3 'ghcr.io/joshua92y/demo-c': digest가 빈 값(null)" \
+  "+[FAIL] 4a IMG-digest — $IE #4 'ghcr.io/joshua92y/demo-d': digest false(태그 !!bool) — 문자열 sha256:<64 hex>가 아니다" \
+  "+[FAIL] 4a IMG-digest — $IE #5 'ghcr.io/joshua92y/demo-e': digest \"-\"(태그 !!str) — 문자열 sha256:<64 hex>가 아니다" \
+  "+[FAIL] 4a IMG-newTag — apps/demo/overlays/dev/kustomization.yaml images[ghcr.io/joshua92y/demo-b]: digest '' 형식 오류" \
+  "+[FAIL] 4a IMG-newTag — apps/demo/overlays/dev/kustomization.yaml images[ghcr.io/joshua92y/demo-f]: digest '12345' 형식 오류" \
+  "-[FAIL] 4a IMG-digest — $IE #6" \
+  "${IE_NEG[@]}"
+#   name: 없음 · "" · 정수 · 목록. 문자열 "-"(#5)는 통과 — 기존 추출은 name이 없을 때 '-'를 채웠다("없음"과 "값이 '-'"를 구분하는지 본다)
+ie_others IMG-name
+run_case img-entry-name "$FIX/img-entry/name" 1 \
+  "+[FAIL] 4a IMG-name — $IE #1: name 없음" \
+  "+[FAIL] 4a IMG-name — $IE #2: name이 빈 값" \
+  "+[FAIL] 4a IMG-name — $IE #3: name이 문자열이 아니다(태그 !!int)" \
+  "+[FAIL] 4a IMG-name — $IE #4: name이 문자열이 아니다(태그 !!seq)" \
+  "-[FAIL] 4a IMG-name — $IE #5" \
+  "${IE_NEG[@]}"
+#   keys: tagSuffix · 오타 digset(digest도 없어진다 — IMG-digest 함께) · newTag: ~(기존 코드가 '없음'으로 읽어 찍지 않는 newTag) · digest 키 중복 ·
+#     newTag: v1(기존 4a IMG-newTag가 찍는다 — IMG-keys는 다시 찍지 않는다). 중복의 뒤 값은 형식이 맞다 — IMG-digest는 #2 말고 걸리지 않는다
+ie_others IMG-keys IMG-digest
+run_case img-entry-keys "$FIX/img-entry/keys" 1 \
+  "+[FAIL] 4a IMG-keys — $IE #1 'ghcr.io/joshua92y/demo-a': 키 [\"tagSuffix\"] — 항목의 키는 {name, newName, digest}만" \
+  "+[FAIL] 4a IMG-keys — $IE #2 'ghcr.io/joshua92y/demo-b': 키 [\"digset\"]" \
+  "+[FAIL] 4a IMG-digest — $IE #2 'ghcr.io/joshua92y/demo-b': digest 없음" \
+  "+[FAIL] 4a IMG-keys — $IE #3 'ghcr.io/joshua92y/demo-c': 키 [\"newTag\"]" \
+  "+[FAIL] 4a IMG-keys — $IE #4 'ghcr.io/joshua92y/demo-d': 키 중복 [\"digest\"]" \
+  "+[FAIL] 4a IMG-newTag — apps/demo/overlays/dev/kustomization.yaml images[ghcr.io/joshua92y/demo-e]: newTag='v1' 금지" \
+  "-[FAIL] 4a IMG-keys — $IE #5" \
+  "-[FAIL] 4a IMG-digest — $IE #1" "-[FAIL] 4a IMG-digest — $IE #3" "-[FAIL] 4a IMG-digest — $IE #4" "-[FAIL] 4a IMG-digest — $IE #5" \
+  "${IE_NEG[@]}"
+#   shape(fail-closed): images가 맵 · images가 문자열 · 문자열 항목과 별칭 항목(앵커를 단 맵 #2는 걸리지 않는다) · 문서가 문자열 · 문서가 목록(yq 실패)
+IS='apps/shape-'
+ie_others IMG-shape
+run_case img-entry-shape "$FIX/img-entry/shape" 1 \
+  "+[FAIL] 4a IMG-shape — ${IS}map/overlays/dev/kustomization.yaml: images가 목록이 아니다(map · 태그 !!map)" \
+  "+[FAIL] 4a IMG-shape — ${IS}scalar/overlays/dev/kustomization.yaml: images가 목록이 아니다(scalar · 태그 !!str)" \
+  "+[FAIL] 4a IMG-shape — ${IS}entry/overlays/dev/kustomization.yaml images #1: 항목이 맵이 아니다(scalar · 태그 !!str)" \
+  "+[FAIL] 4a IMG-shape — ${IS}entry/overlays/dev/kustomization.yaml images #3: 항목이 맵이 아니다(alias · 태그 -)" \
+  "+[FAIL] 4a IMG-shape — ${IS}strdoc/overlays/dev/kustomization.yaml: 문서가 맵이 아니다(scalar · 태그 !!str)" \
+  "+[FAIL] 4a IMG-shape — ${IS}seqdoc/overlays/dev/kustomization.yaml: yq 추출 실패" \
+  "-${IS}entry/overlays/dev/kustomization.yaml images #2" \
+  "${IE_NEG[@]}"
+#   skipped: 기존 4a IMG-newTag가 통째로 건너뛰는 항목(name: "") — newTag와 틀린 digest가 있어도 기존 코드는 아무것도 찍지 않는다(음성 단언으로 고정).
+#     새 판정이 name · digest(형식 — 기존 코드가 보지 않았으므로 여기서 찍는다) · 키(newTag — 같은 이유)를 모두 찍는다
+ie_others IMG-name IMG-digest IMG-keys
+run_case img-entry-skipped "$FIX/img-entry/skipped" 1 \
+  "+[FAIL] 4a IMG-name — $IE #1: name이 빈 값" \
+  "+[FAIL] 4a IMG-digest — $IE #1: digest \"sha256:abc\"(태그 !!str) — 문자열 sha256:<64 hex>가 아니다" \
+  "+[FAIL] 4a IMG-keys — $IE #1: 키 [\"newTag\"]" \
+  '-[FAIL] 4a IMG-newTag' '+[PASS] 4a IMG-newTag — kustomization images 0개 항목 newTag 없음' \
+  "${IE_NEG[@]}"
+#   mixed: 정상 #1·#3 사이의 digest 없는 #2 — #2만 걸리고 그룹 PASS 줄이 없다. 기존 4a IMG-newTag 그룹은 그대로 PASS다(newTag 없음)
+ie_others IMG-digest
+run_case img-entry-mixed "$FIX/img-entry/mixed" 1 \
+  "+[FAIL] 4a IMG-digest — $IE #2 'ghcr.io/joshua92y/demo-b': digest 없음" \
+  "-$IE #1" "-$IE #3" \
+  '+[PASS] 4a IMG-newTag — kustomization images 3개 항목 newTag 없음' \
+  "${IE_NEG[@]}"
+#   pass(경계): name + digest · name + newName + digest(키 순서 무관) — 그룹 PASS 줄을 개수까지 단언한다
+run_case img-entry-pass "$FIX/img-entry/pass" 1 \
+  '+[PASS] 4a IMG-entry — kustomization images 3개 항목(kustomization 2개): 항목마다 name(문자열)·digest 있음 · 키 ⊆ {name, newName, digest}' \
+  '+[PASS] 4a IMG-newTag — kustomization images 3개 항목 newTag 없음' \
+  '-[FAIL] 4a'
+#   none(경계): images: 뒤가 빈 값(null) · images: [] · images 키 없음 · 끝의 `---` 뒤 빈 문서 — 항목 0개 = 대상 없음(null은 없는 것과 같이 읽는다 ·
+#     빈 문서는 "맵이 아닌 문서"가 아니다)
+run_case img-entry-none "$FIX/img-entry/none" 1 \
+  '+[PASS] 4a IMG-entry — kustomization images 항목 0개 — 대상 없음' \
+  '+[PASS] 4a IMG-newTag — kustomization images 0개 항목 newTag 없음' \
+  '-[FAIL] 4a'
 
 # --- 정책 ---------------------------------------------------------------------
 run_case pol-ns-set "$FIX/pol-ns-set" 1 \
@@ -321,8 +438,11 @@ run_case wave-and-app "$FIX/wave-and-app" 1 \
 # --- 7.3: secrets/<ns>의 단일 소유(설계 D3 조건 2) --------------------------------
 # 두 갈래를 한 트리로 덮는다: 소비자 컴포넌트가 같은 base를 포함(단일 소유 위반) · 어디에도 포함되지 않은 secrets/<ns>(죽은 선언).
 # 음성 단언: 배달자 자신과 배달자에 포함된 ns는 걸리지 않아야 하고, `secrets/<ns>`가 자기 파일을 가리키는 것도 위반이 아니다.
+#   (A1 후속 · 2026-09-30) platform/kafka가 secrets/data를 YAML 별칭 항목(`*s`)으로 끌어온다 — kustomize는 풀어서 빌드하는데 base 추출은 문자열 태그
+#     항목만 보아 건너뛰었다(namePrefix가 렌더의 ES 이름을 바꿔 이름으로 맞추는 ⓑ도 비켜 간다 — ⓐ의 고유 줄로 짚는다)
 run_case secrets-base-owner "$FIX/secrets-base-owner" 1 \
   "+[FAIL] 7.3 WAVE-secrets-base — platform/cert-manager-issuers/kustomization.yaml: base '../../secrets/cert-manager'(→ secrets/cert-manager) — secrets/ 아래를 base로 가질 수 있는 kustomization은 platform/secrets/kustomization.yaml 하나뿐이다" \
+  "+[FAIL] 7.3 WAVE-secrets-base — platform/kafka/kustomization.yaml: base '../../secrets/data'(→ secrets/data) — secrets/ 아래를 base로 가질 수 있는 kustomization은 platform/secrets/kustomization.yaml 하나뿐이다" \
   "+[FAIL] 7.3 WAVE-secrets-base — secrets/data/: platform/secrets/kustomization.yaml 의 resources에 없음 — 어떤 Application도 적용하지 않는 죽은 선언이다" \
   '-[FAIL] 7.3 WAVE-secrets-base — platform/secrets/kustomization.yaml' \
   '-[FAIL] 7.3 WAVE-secrets-base — secrets/cert-manager' \
@@ -583,6 +703,457 @@ else
   for c in $REL_PURE; do
     run_case "rel-scoped-$c" "$FIX/rel-scoped/$c" 1 '+[SKIP] 10 REL — 도구 없음(kustomize)'
   done
+fi
+
+# --- 검사 11: 형식별 정책(T047 · 계약 §validate.yml 4 「(T047) 형식별 정책」) ---------------------------------------------
+# 모든 트리가 부분 트리다 — exit 1은 5.x 등 무관한 FAIL로도 나므로 판정 근거가 아니다. 근거는 하위 코드의 `+[FAIL]` 단언과
+# `-[PASS] <코드>` 음성 단언이다. "통과해야 하는 것"(경계)은 fmt/pass 한 트리에 모아 11.1–11.4의 PASS 줄(개수 포함)을 단언한다.
+# 렌더에서만 보이는 결함(패치가 더한 items · List가 풀린 ApplicationSet)의 단언은 kustomize가 있을 때만 건다.
+fmt_list_r=(); fmt_appset_r=()
+if command -v kustomize >/dev/null 2>&1; then
+  fmt_list_r=("+[FAIL] 11.1 FMT-list — platform/cloudflared (rendered) 문서 #1 kind 'ConfigMap': 목록 객체 금지(최상위 items 목록")
+  fmt_appset_r=("+[FAIL] 11.2 FMT-appset — platform/argocd (rendered) 문서 #1 ApplicationSet/rendered-apps(apiVersion 'argoproj.io/v1alpha1'): ApplicationSet 금지")
+fi
+#   list: directory source 경로 안의 `kind: List`로 감싼 Application(11.4도 함께 건다) · ConfigMapList + items · items 없는 `kind: List` ·
+#     (보강) kind와 무관한 최상위 items 목록 — 파일(ConfigMap)과, 원본은 멀쩡하고 패치가 렌더에서만 더한 것 ·
+#     (A1 · 2026-09-30 G4 리뷰) YAML 별칭 `items: *seq` — 파일 쪽 ConfigMap과, directory source 경로의 platform-monitoring(리뷰어의 재현 그대로 —
+#     2 · 7.1 · 7.4를 모두 만족하므로 그 검사들의 FAIL 줄이 없고 11.1 · 11.4만 건다) · 병합 키의 우선순위(명시한 items: null 뒤의 병합이 이긴다 —
+#     yq의 병합 기본값이 Argo의 디코더와 같다는 것을 고정한다)
+run_case fmt-list "$FIX/fmt/list" 1 \
+  "+[FAIL] 11.1 FMT-list — clusters/oci-k3s/apps/wrapped-list.yaml 문서 #1 kind 'List': 목록 객체 금지(kind: List — items 유무와 무관)" \
+  "+[FAIL] 11.1 FMT-list — misc/configmaplist.yaml 문서 #1 kind 'ConfigMapList': 목록 객체 금지(<Kind>List + 최상위 items 목록)" \
+  "+[FAIL] 11.1 FMT-list — misc/list-no-items.yaml 문서 #1 kind 'List': 목록 객체 금지(kind: List — items 유무와 무관)" \
+  "+[FAIL] 11.1 FMT-list — misc/items-carrier.yaml 문서 #1 kind 'ConfigMap': 목록 객체 금지(최상위 items 목록" \
+  "+[FAIL] 11.4 FMT-dirsource-kind — clusters/oci-k3s/apps/wrapped-list.yaml 문서 #1 kind 'List'" \
+  "+[FAIL] 11.1 FMT-list — misc/alias-carrier.yaml 문서 #1 kind 'ConfigMap': 목록 객체 금지(최상위 items 목록" \
+  "+[FAIL] 11.1 FMT-list — clusters/oci-k3s/apps/platform-monitoring.yaml 문서 #1 kind 'Application': 목록 객체 금지(최상위 items 목록" \
+  "+[FAIL] 11.4 FMT-dirsource-kind — clusters/oci-k3s/apps/platform-monitoring.yaml 문서 #1 Application/platform-monitoring: 최상위 items 목록 금지(보강)" \
+  "+[FAIL] 11.1 FMT-list — misc/merge-order-carrier.yaml 문서 #1 kind 'ConfigMap': 목록 객체 금지(최상위 items 목록" \
+  '-clusters/oci-k3s/apps/platform-monitoring.yaml Application/platform-monitoring' '-[FAIL] 11.0' \
+  "${fmt_list_r[@]}" '-[FAIL] 11.1 FMT-list — platform/cloudflared/carrier.yaml' '-[PASS] 11.1 FMT-list' '-[FAIL] 11.2' '-[FAIL] 11.3'
+#   appset: 파일의 ApplicationSet · 렌더에만 나타나는 ApplicationSet(파일은 ApplicationSetList — 그 목록 객체는 11.1이 건다)
+run_case fmt-appset "$FIX/fmt/appset" 1 \
+  "+[FAIL] 11.2 FMT-appset — misc/appset.yaml 문서 #1 ApplicationSet/generated-apps(apiVersion 'argoproj.io/v1alpha1'): ApplicationSet 금지" \
+  "+[FAIL] 11.1 FMT-list — platform/argocd/appset-list.yaml 문서 #1 kind 'ApplicationSetList'" \
+  "${fmt_appset_r[@]}" '-[FAIL] 11.2 FMT-appset — platform/argocd/appset-list.yaml' '-[PASS] 11.2 FMT-appset'
+#   dirsource: directory source 경로의 .json · .jsonnet · .libsonnet · 하위 디렉터리 + 위치를 판정할 수 없는 source.path(절대 · 저장소 밖)
+run_case fmt-dirsource "$FIX/fmt/dirsource" 1 \
+  "+[FAIL] 11.3 FMT-dirsource — clusters/oci-k3s/apps/platform-apps.yaml Application/platform-vault: spec.source.path '/srv/platform/vault' — 절대 경로 금지" \
+  "+[FAIL] 11.3 FMT-dirsource — clusters/oci-k3s/apps/platform-apps.yaml Application/platform-dragonfly: spec.source.path '../outside/platform/dragonfly' — 저장소 밖으로 나가는 경로" \
+  "+[FAIL] 11.3 FMT-dirsource — clusters/oci-k3s/apps/extra.json: directory source 경로 clusters/oci-k3s/apps(kustomization 없음 — Argo가 디렉터리째 읽는다)에 .json 파일 금지" \
+  "+[FAIL] 11.3 FMT-dirsource — clusters/oci-k3s/apps/extra.jsonnet: directory source 경로 clusters/oci-k3s/apps(kustomization 없음 — Argo가 디렉터리째 읽는다)에 .jsonnet 파일 금지" \
+  "+[FAIL] 11.3 FMT-dirsource — clusters/oci-k3s/apps/lib.libsonnet: directory source 경로 clusters/oci-k3s/apps(kustomization 없음 — Argo가 디렉터리째 읽는다)에 .libsonnet 파일 금지" \
+  "+[FAIL] 11.3 FMT-dirsource — clusters/oci-k3s/apps/nested/: directory source 경로 clusters/oci-k3s/apps의 하위 디렉터리 금지" \
+  '-[PASS] 11.3 FMT-dirsource' '-[FAIL] 11.1' '-[FAIL] 11.2' '-[FAIL] 11.4'
+#   dirsource-kind: Role · 둘째 문서의 ClusterRoleBinding(첫 문서 Application은 걸리지 않는다) · apiVersion이 다른 Application ·
+#     kind 없는 문서 · (보강) 최상위 items 목록을 가진 Application. kustomization이 있는 경로(platform/)는 보지 않는다 ·
+#     (A1 후속) 병합 키(`<<: *m`)로 들인 items 목록 — has()는 병합으로 들어온 키를 보지 못했다 ·
+#     별칭으로 적은 kind(`kind: *k`)의 multi-source Application — 11.4는 풀어서 Application으로 받아들이고, 같은 파일을 보는 7.4가 풀어서 건다
+#     (11.4만 풀면 `select(.kind == "Application")`이 별칭을 보지 못하는 2 · 7.x를 이 문서가 통째로 지난다 — 회귀를 막는 단언)
+run_case fmt-dirsource-kind "$FIX/fmt/dirsource-kind" 1 \
+  "+[FAIL] 11.4 FMT-dirsource-kind — clusters/oci-k3s/apps/role.yaml 문서 #1 kind 'Role'(apiVersion 'rbac.authorization.k8s.io/v1'): directory source 경로에는 Application(argoproj.io/…)만" \
+  "+[FAIL] 11.4 FMT-dirsource-kind — clusters/oci-k3s/apps/app-then-crb.yaml 문서 #2 kind 'ClusterRoleBinding'(apiVersion 'rbac.authorization.k8s.io/v1')" \
+  "+[FAIL] 11.4 FMT-dirsource-kind — clusters/oci-k3s/apps/not-argo-app.yaml 문서 #1 kind 'Application'(apiVersion 'example.com/v1')" \
+  "+[FAIL] 11.4 FMT-dirsource-kind — clusters/oci-k3s/apps/no-kind.yaml 문서 #1: kind 없음" \
+  "+[FAIL] 11.4 FMT-dirsource-kind — clusters/oci-k3s/apps/items-app.yaml 문서 #1 Application/platform-dragonfly: 최상위 items 목록 금지(보강)" \
+  "+[FAIL] 11.1 FMT-list — clusters/oci-k3s/apps/items-app.yaml 문서 #1 kind 'Application': 목록 객체 금지(최상위 items 목록" \
+  "+[FAIL] 11.4 FMT-dirsource-kind — clusters/oci-k3s/apps/merge-items-app.yaml 문서 #1 Application/platform-kafka: 최상위 items 목록 금지(보강)" \
+  "+[FAIL] 11.1 FMT-list — clusters/oci-k3s/apps/merge-items-app.yaml 문서 #1 kind 'Application': 목록 객체 금지(최상위 items 목록" \
+  "+[FAIL] 7.4 APP-source-multi — clusters/oci-k3s/apps/alias-kind-app.yaml Application/platform-openfga: spec.sources(multi-source) 금지" \
+  '-[FAIL] 11.4 FMT-dirsource-kind — clusters/oci-k3s/apps/alias-kind-app.yaml' '-[FAIL] 11.0' \
+  '-[FAIL] 11.4 FMT-dirsource-kind — clusters/oci-k3s/apps/app-then-crb.yaml 문서 #1' '-[FAIL] 11.4 FMT-dirsource-kind — platform/' \
+  '-[PASS] 11.4 FMT-dirsource-kind' '-[FAIL] 11.3'
+#   pass(경계): README.md · kustomization 경로의 .json·Role · 트리에 없는 경로 · 빈 문서가 섞인 Application 파일 ·
+#     items 없는 <Kind>List · items가 맵인 <Kind>List · argoproj.io가 아닌 ApplicationSet — 11.x의 FAIL이 하나도 없어야 한다
+run_case fmt-pass "$FIX/fmt/pass" 1 \
+  '+[PASS] 11.1 FMT-list — 목록 객체(kind: List · 최상위 items 목록) 없음' \
+  '+[PASS] 11.2 FMT-appset — ApplicationSet(argoproj.io/…) 없음' \
+  '+[PASS] 11.3 FMT-dirsource — directory source 경로 1개(clusters/oci-k3s/apps) — .json·.jsonnet·.libsonnet 파일·하위 디렉터리 없음 · Application source.path 3개 = directory source 1 · kustomization 1 · 트리에 없음 1' \
+  '+[PASS] 11.4 FMT-dirsource-kind — directory source 경로 1개의 YAML 파일 1개 · 문서 2개 모두 Application(argoproj.io/…) · 빈 문서 2개 건너뜀' \
+  '+[PASS] 11.5 FMT-symlink — 심볼릭 링크 0개 — 작업 트리 항목 ' \
+  '-[FAIL] 11.'
+#   alias-unresolvable(11.0 fail-closed): 맵이 아닌 값(문자열 앵커)을 가리키는 병합 키 — 파싱은 되지만 explode(.)가 멈춘다. 풀지 못한 문서는
+#     목록 객체인지 판정할 수 없어 11.0이 걸고 11.1 PASS 줄이 없다. 같은 문서를 풀어 읽는 다른 식도 조용히 건너뛰지 않는다(fail-closed) —
+#     misc/의 파일은 2 · 7.1(YQ_APP) · 7.4(YQ_APP_SRC) · 11.3(YQ_APP_PATHS)의 "yq 추출 실패", platform/kafka의 kustomization은 7.3 ⓐ(YQ_KUST_BASES)와
+#     12.1(YQ_HELM_SCAN), platform/dragonfly의 generators:가 부르는 파일은 12.3(YQ_LEGACY_GEN). 이 줄들은 식마다 explode(.)가 있다는 것도 짚는다
+#     (풀지 않는 식은 이 문서들을 오류 없이 읽고 지나간다 — 2026-09-30 G4 수정 전 실측)
+run_case fmt-alias-unresolvable "$FIX/fmt/alias-unresolvable" 1 \
+  '+[FAIL] 11.0 FMT-alias — misc/unresolvable-merge.yaml: yq로 문서를 풀어 읽지 못했다' \
+  '+[FAIL] 11.0 FMT-alias — platform/kafka/kustomization.yaml: yq로 문서를 풀어 읽지 못했다' \
+  '+[FAIL] 2 APP-SSA — yq 추출 실패: misc/unresolvable-merge.yaml' \
+  '+[FAIL] 7.1 WAVE — yq 추출 실패: misc/unresolvable-merge.yaml' \
+  '+[FAIL] 7.4 APP-source — yq 추출 실패: misc/unresolvable-merge.yaml' \
+  '+[FAIL] 11.3 FMT-dirsource — yq 추출 실패: misc/unresolvable-merge.yaml' \
+  '+[FAIL] 7.3 WAVE-secrets-base — platform/kafka/kustomization.yaml: base 항목(resources·bases·components)을 yq로 풀어 읽지 못했다' \
+  '+[FAIL] 12.1 HELM-repo — platform/kafka/kustomization.yaml: yq로 읽지 못했다 — 차트 출처를 판정할 수 없다' \
+  "+[FAIL] 12.3 HELM-legacy — platform/dragonfly/kustomization.yaml: generators·transformers 항목 'unresolvable-gen.yaml'(→ platform/dragonfly/unresolvable-gen.yaml)를 yq로 풀어 읽지 못했다" \
+  '-[PASS] 11.1 FMT-list' '-[FAIL] 11.1' '-[FAIL] 11.4'
+
+# --- 검사 11.3 · 11.4 · 심볼릭 링크(A2 · 계약 형식별 정책 「심볼릭 링크」 행 — 그중 directory source 경로 바로 아래) — 임시 트리(tests/.tmp) ---------
+# 링크는 커밋되는 픽스처로 두지 않는다(체크아웃 설정 core.symlinks에 따라 일반 파일로 풀릴 수 있다). 원본 fixtures/fmt/link/를 tests/.tmp/로 복사하고
+# directory source 경로(clusters/oci-k3s/apps)에 링크 셋 — 파일(→ 열거 밖 payload/evil-app.txt의 Application: 다른 리비전 · kustomize 패치) ·
+# 디렉터리(→ payload/) · 대상 없음 — 을 만든다. 11.3이 셋 다 "심볼릭 링크 금지"로 걸고(디렉터리 링크를 "하위 디렉터리"로 읽지 않는다), 11.4는 링크를
+# 따라가지 않으므로 일반 파일 1개만 본다(PASS 줄의 개수로 짚는다). 같은 링크를 트리 어디든의 판정(11.5)도 건다 — 코드가 달라 두 줄씩 나온다
+# (트리 어디든의 링크 케이스는 아래 「검사 11.5」 — 임시 git 저장소 도우미 tg 뒤에 둔다). Git Bash는 MSYS=winsymlinks:nativestrict일 때만 진짜 링크를 만든다(아니면 조용히
+# 복사한다) — 만든 뒤 [[ -L ]]로 확인하고, 링크를 만들 수 없는 환경(권한 없는 Windows 등)에서는 준비 실패가 아니라 이유를 적은 [SKIP]이다(건너뜀으로
+# 센다). CI · 판정용 실행(CI=true · VALIDATE_TESTS_REQUIRE_TOOLS=1)에서는 SKIP하지 않고 실패한다 — 러너(Linux)는 링크를 만든다.
+FL_ROOT="$TMP/fmt-dirsource-link"
+FL_WHY=''
+fl_tree() { # → 0 준비됨 · 1 준비 실패 · 2 링크를 만들 수 없는 환경(FL_WHY에 이유)
+  local a="$FL_ROOT/clusters/oci-k3s/apps" l
+  mkdir -p "$FL_ROOT" || return 1
+  cp -R "$FIX/fmt/link/." "$FL_ROOT/" || return 1
+  if ! ( cd "$a" && export MSYS="${MSYS:+$MSYS }winsymlinks:nativestrict" \
+         && ln -s ../../../payload/evil-app.txt evil.yaml && ln -s ../../../payload linked-dir \
+         && ln -s ../../../payload/missing.yaml broken.yaml ); then
+    FL_WHY='ln -s 실패(Windows는 개발자 모드나 관리자 권한이 있어야 진짜 링크를 만든다)'; return 2
+  fi
+  for l in evil.yaml linked-dir broken.yaml; do
+    [[ -L "$a/$l" ]] || { FL_WHY="ln -s가 링크가 아닌 것을 만들었다($l)"; return 2; }
+  done
+}
+if any_selected fmt-dirsource-link; then
+  mkdir -p "$TMP"
+  fl_rc=0; fl_tree 2>>"$TMP/fmt-link.log" || fl_rc=$?
+  FL='+[FAIL] 11.3 FMT-dirsource — clusters/oci-k3s/apps/'
+  FL_MSG=': directory source 경로 clusters/oci-k3s/apps의 심볼릭 링크 금지'
+  if [[ $fl_rc == 0 ]]; then
+    run_case fmt-dirsource-link "$FL_ROOT" 1 \
+      "${FL}evil.yaml${FL_MSG}" "${FL}linked-dir${FL_MSG}" "${FL}broken.yaml${FL_MSG}" \
+      '-하위 디렉터리 금지' '-[PASS] 11.3 FMT-dirsource' \
+      "+[FAIL] 11.5 FMT-symlink — clusters/oci-k3s/apps/evil.yaml: 심볼릭 링크 금지(→ '../../../payload/evil-app.txt')" \
+      "+[FAIL] 11.5 FMT-symlink — clusters/oci-k3s/apps/linked-dir: 심볼릭 링크 금지(→ '../../../payload')" \
+      "+[FAIL] 11.5 FMT-symlink — clusters/oci-k3s/apps/broken.yaml: 심볼릭 링크 금지(→ '../../../payload/missing.yaml' · 대상 없음)" \
+      '-[PASS] 11.5 FMT-symlink' \
+      '+[PASS] 11.4 FMT-dirsource-kind — directory source 경로 1개의 YAML 파일 1개 · 문서 1개 모두 Application(argoproj.io/…) · 빈 문서 0개 건너뜀' \
+      '-[FAIL] 11.4' '-[FAIL] 11.1' '-[FAIL] 11.0'
+  elif [[ $fl_rc == 2 && ${VALIDATE_TESTS_REQUIRE_TOOLS:-0} != 1 && ${CI:-} != true ]]; then
+    NSKIP=$((NSKIP + 1))
+    printf '[SKIP] fmt-dirsource-link — 이 환경에서 심볼릭 링크를 만들 수 없다: %s — 11.3(링크 금지) · 11.4(링크를 따라가지 않음)는 이번 실행에서 확인되지 않았다(CI 러너는 돌린다)\n' "$FL_WHY"
+  else
+    fail_case fmt-dirsource-link "임시 트리를 만들 수 없음 — ${FL_WHY:-$(tr -d '\r' < "$TMP/fmt-link.log" | tail -n 3 | tr '\n' ' ')}"
+  fi
+else
+  skip_cases fmt-dirsource-link
+fi
+
+# --- 검사 12: 차트 출처(T047 · 계약 §validate.yml 4 「(T047) 차트 저장소 허용 목록」·「charts/」·「--enable-helm」) ---------------
+# 12.1–12.3은 kustomization **파일**을 검사 1보다 먼저 읽는다 — 걸린 kustomization(과 그것을 base로 끌어오는 kustomization)은 검사 1이
+# 렌더하지 않으므로 아래 네 트리는 helm·네트워크 없이 돈다(허용하지 않은 저장소에서 차트를 받아 오지 않는다). 렌더를 건너뛴 줄(1 KUST)은
+# 검사 1이 도는 경우(kustomize 있음)에만 찍히므로 그 단언은 kustomize가 있을 때만 건다.
+HS_SKIP='kustomize build 건너뜀: '
+hs_repo_k=(); hs_version_k=(); hs_legacy_k=(); hs_block_k=()
+if command -v kustomize >/dev/null 2>&1; then
+  hs_repo_k=("+[FAIL] 1 KUST — ${HS_SKIP}platform/cert-manager — 차트 출처 판정(12.1)에 걸렸다" '-kustomize build 실패: platform/cert-manager')
+  hs_version_k=("+[FAIL] 1 KUST — ${HS_SKIP}platform/external-secrets — 차트 출처 판정(12.2)에 걸렸다"
+    "+[FAIL] 1 KUST — ${HS_SKIP}platform/vault — 차트 출처 판정(12.2)에 걸렸다")
+  hs_legacy_k=("+[FAIL] 1 KUST — ${HS_SKIP}platform/vault — 차트 출처 판정(12.3)에 걸렸다"
+    "+[FAIL] 1 KUST — ${HS_SKIP}platform/cert-manager — 차트 출처 판정(12.3)에 걸렸다"
+    "+[FAIL] 1 KUST — ${HS_SKIP}platform/external-secrets — 차트 출처 판정(12.3)에 걸렸다")
+  hs_block_k=("+[FAIL] 1 KUST — ${HS_SKIP}platform/cert-manager — 차트 출처 판정(base tests/vendored-base)에 걸렸다")
+fi
+#   repo: #1 목록 밖 저장소 · #2 이름은 맞고 저장소가 다름 · #3 저장소는 맞고 이름이 다름 · #4 끝의 '/' · #5 repo 없음 · #6 name 없음 ·
+#     #7 허용 쌍(걸리지 않는다). bootstrap/argocd가 없는 부분 트리라 12.4는 대상 없음이다
+HR='platform/cert-manager/kustomization.yaml helmCharts'
+run_case helm-src-repo "$FIX/helm-src/repo" 1 \
+  "+[FAIL] 12.1 HELM-repo — $HR #1 'mystery-chart': repo 'https://charts.example.invalid' — (이름, 저장소) 쌍이 허용 목록에 없다" \
+  "+[FAIL] 12.1 HELM-repo — $HR #2 'cert-manager': repo 'https://charts.jetstack.io' ≠ 허용 목록의 'oci://quay.io/jetstack/charts'" \
+  "+[FAIL] 12.1 HELM-repo — $HR #3 'cert-manager-csi-driver': repo 'oci://quay.io/jetstack/charts' — (이름, 저장소) 쌍이 허용 목록에 없다" \
+  "+[FAIL] 12.1 HELM-repo — $HR #4 'cert-manager': repo 'oci://quay.io/jetstack/charts/' ≠ 허용 목록의 'oci://quay.io/jetstack/charts'" \
+  "+[FAIL] 12.1 HELM-repo — $HR #5 'cert-manager': repo 없음" \
+  "+[FAIL] 12.1 HELM-repo — $HR #6: name 없음" \
+  '+[PASS] 12.4 HELM-argocd — bootstrap/argocd 없음 — 부분 트리(픽스처)라 대상 없음(helmCharts를 쓰는 kustomization 1개)' \
+  "-$HR #7" '-[PASS] 12.1 HELM-repo' '-[FAIL] 12.2' '-[FAIL] 12.3' "${hs_repo_k[@]}"
+#   version: version 없음 · 빈 문자열(둘 다 허용 쌍 — 12.1은 걸리지 않는다)
+run_case helm-src-version "$FIX/helm-src/version" 1 \
+  "+[FAIL] 12.2 HELM-version — platform/external-secrets/kustomization.yaml helmCharts #1 'external-secrets': version 없음" \
+  "+[FAIL] 12.2 HELM-version — platform/vault/kustomization.yaml helmCharts #1 'vault': version이 빈 값" \
+  '+[PASS] 12.1 HELM-repo' '-[PASS] 12.2 HELM-version' '-[FAIL] 12.1' '-[FAIL] 12.3' "${hs_version_k[@]}"
+#   legacy: 최상위 helmGlobals · 최상위 helmChartInflationGenerator · generators:가 부르는 kind: HelmChartInflationGenerator 파일
+#     (그 kustomization의 helmCharts는 허용 쌍이지만 --enable-helm 빌드가 레거시 생성기를 돌리므로 렌더하지 않는다) ·
+#     (A3 · 2026-09-30 G4 리뷰) 같은 생성기를 `kind: List`로 감싼 파일 — 최상위 kind만 보던 판정은 지나갔다
+run_case helm-src-legacy "$FIX/helm-src/legacy" 1 \
+  "+[FAIL] 12.3 HELM-legacy — platform/vault/kustomization.yaml: 최상위 키 'helmGlobals' 금지" \
+  "+[FAIL] 12.3 HELM-legacy — platform/cert-manager/kustomization.yaml: 최상위 키 'helmChartInflationGenerator' 금지" \
+  "+[FAIL] 12.3 HELM-legacy — platform/external-secrets/kustomization.yaml: generators·transformers 항목 'legacy-inflator.yaml'(→ platform/external-secrets/legacy-inflator.yaml)가 kind: HelmChartInflationGenerator" \
+  "+[FAIL] 12.3 HELM-legacy — platform/external-secrets/kustomization.yaml: generators·transformers 항목 'wrapped-inflator.yaml'(→ platform/external-secrets/wrapped-inflator.yaml)가 kind: HelmChartInflationGenerator" \
+  "+[FAIL] 12.3 HELM-legacy — platform/external-secrets/legacy-inflator.yaml 문서 #1 kind 'HelmChartInflationGenerator': 레거시 생성기 설정 금지" \
+  '+[PASS] 12.1 HELM-repo' '+[PASS] 12.2 HELM-version' '-[PASS] 12.3 HELM-legacy' "${hs_legacy_k[@]}"
+#   block(보강): 허용 쌍만 쓰는 kustomization이 파일 열거 밖(--root의 tests/)의 kustomization을 base로 끌어오고, 그 base가 목록 밖 저장소를
+#     쓴다 — 12.1은 base로 끌려온 kustomization까지 보고, 끌어온 쪽도 렌더하지 않는다(--enable-helm 빌드가 base의 차트까지 받는다) ·
+#     (A1 후속) platform/vault가 resources 항목을 YAML 별칭으로 적어 tests/vendored-alias를 끌어온다 — kustomize는 별칭을 풀어 빌드하는데,
+#     문자열 태그 항목만 따라가던 사전 판정은 건너뛰었다(허용 목록 밖 차트를 검사 1이 받으러 갔다)
+if command -v kustomize >/dev/null 2>&1; then
+  hs_block_k+=("+[FAIL] 1 KUST — ${HS_SKIP}platform/vault — 차트 출처 판정(base tests/vendored-alias)에 걸렸다" '-kustomize build 실패: platform/vault')
+fi
+run_case helm-src-block "$FIX/helm-src/block" 1 \
+  "+[FAIL] 12.1 HELM-repo — tests/vendored-base/kustomization.yaml helmCharts #1 'mystery-chart': repo 'https://charts.example.invalid' — (이름, 저장소) 쌍이 허용 목록에 없다" \
+  "+[FAIL] 12.1 HELM-repo — tests/vendored-alias/kustomization.yaml helmCharts #1 'alias-chart': repo 'https://charts.example.invalid' — (이름, 저장소) 쌍이 허용 목록에 없다" \
+  '-[FAIL] 12.1 HELM-repo — platform/cert-manager' '-[FAIL] 12.1 HELM-repo — platform/vault' '-[PASS] 12.1 HELM-repo' "${hs_block_k[@]}"
+
+# --- 검사 12.4 · 12.5 · 임시 트리(tests/.tmp) ----------------------------------------------------------------------------------
+# .gitignore의 앵커 없는 `charts/` 때문에 이름이 charts인 디렉터리 아래의 파일은 커밋되는 픽스처로 만들 수 없다. 트리의 나머지는
+# tests/fixtures/helm-src/tree/ 에 두고, 실행 중에 tests/.tmp/<케이스>/ 로 복사한 뒤 argocd-cm 변형(helm-src/argocd-cm/<변형>.yaml)과
+# charts/ 아래를 여기서 만든다(준비 실패는 fail_case — 검사 6 SHA 경로의 임시 저장소와 같다).
+# helmCharts 인플레이트는 네트워크를 쓰지 않는다: kustomize는 <kustomization>/charts/<name>-<version>/<name>/ 에 차트가 이미 있으면 받지 않고
+# 그것을 쓴다(kustomize v5.8.1 chartExistsLocally) — 그 자리에 작은 차트(ConfigMap 1장)를 둔다. 트리의 version(0.0.1-local)은 실재하지 않으므로
+# 로컬 차트가 없으면 받기가 실패한다(조용히 인터넷의 차트를 쓰지 않는다). 로컬 차트 렌더에는 helm이 필요하다.
+HS_ES_VER='0.0.1-local'   # tests/fixtures/helm-src/tree/platform/external-secrets/kustomization.yaml 의 version과 같아야 한다
+HS_ROOT=''
+hs_local_chart() { # <트리> <kustomization 디렉터리(트리 기준)> <차트 이름> <version> — 인플레이트 캐시 자리에 작은 차트를 둔다
+  local c="$1/$2/charts/$3-$4/$3"
+  mkdir -p "$c/templates" || return 1
+  printf 'apiVersion: v2\nname: %s\nversion: %s\n' "$3" "$4" > "$c/Chart.yaml" || return 1
+  : > "$c/values.yaml" || return 1
+  printf 'apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: %s-local-chart\n' "$3" > "$c/templates/configmap.yaml"
+}
+hs_tree() { # <케이스> <argocd-cm 변형> — helm-src/tree 복사 + argocd-cm 변형 + 로컬 차트 → 전역 HS_ROOT (if 조건 안 — 단계마다 확인)
+  HS_ROOT="$TMP/$1"
+  mkdir -p "$HS_ROOT" || return 1
+  cp -R "$FIX/helm-src/tree/." "$HS_ROOT/" || return 1
+  cp "$FIX/helm-src/argocd-cm/$2.yaml" "$HS_ROOT/bootstrap/argocd/argocd-cm.yaml" || return 1
+  hs_local_chart "$HS_ROOT" platform/external-secrets external-secrets "$HS_ES_VER"
+}
+hs_tree_chartsdir() { # 12.5 — hs_tree(ok) + 캐시 자리 밖의 charts 둘 + 캐시 안의 하위 차트 자리(세지 않아야 한다)
+  hs_tree helm-src-chartsdir ok || return 1
+  mkdir -p "$HS_ROOT/platform/external-secrets/charts/external-secrets-$HS_ES_VER/external-secrets/charts" || return 1
+  mkdir -p "$HS_ROOT/apps/charts/overlays/dev" || return 1
+  printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources: []\n' \
+    > "$HS_ROOT/apps/charts/overlays/dev/kustomization.yaml" || return 1
+  mkdir -p "$HS_ROOT/platform/cloudflared/charts" || return 1
+  printf 'apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: leftover\n' > "$HS_ROOT/platform/cloudflared/charts/leftover.yaml"
+}
+# hs_case <케이스> <트리를 만드는 명령...> -- <기대 exit> [단언...] — 필터 밖이면 건너뜀으로 센다. 트리를 만들지 못하면 fail_case
+hs_case() {
+  local name=$1; shift
+  local -a build=()
+  while [[ $# -gt 0 && $1 != -- ]]; do build+=("$1"); shift; done
+  shift
+  if ! any_selected "$name"; then skip_cases "$name"; return 0; fi
+  mkdir -p "$TMP"
+  if "${build[@]}" 2>>"$TMP/helm-src.log"; then
+    run_case "$name" "$HS_ROOT" "$@"
+  else
+    fail_case "$name" "임시 트리를 만들 수 없음 — $(tr -d '\r' < "$TMP/helm-src.log" | tail -n 3 | tr '\n' ' ')"
+  fi
+}
+HS_CM='bootstrap/argocd (rendered) ConfigMap/argocd/argocd-cm'
+if command -v kustomize >/dev/null 2>&1; then
+  hs_helm=()   # 로컬 차트의 렌더가 성공했다는 단언 — helm이 있을 때만
+  if command -v helm >/dev/null 2>&1; then hs_helm=('-[FAIL] 1 KUST'); fi
+  #   12.4: helmCharts를 쓰는 kustomization(platform/external-secrets)이 있는데 argocd-cm의 kustomize.buildOptions에 --enable-helm 낱말이 없다
+  #     — 다른 옵션만 · 글자는 들어 있지만 낱말이 아님(--enable-helmfoo) · 키 자체가 없음. ok는 여러 옵션 중 하나로 있는 경계(통과)다
+  hs_case helm-src-argocd-no-flag hs_tree helm-src-argocd-no-flag no-flag -- 1 \
+    "+[FAIL] 12.4 HELM-argocd — $HS_CM: data.\"kustomize.buildOptions\" \"--load-restrictor LoadRestrictionsNone\"에 --enable-helm 낱말 없음" \
+    '-[PASS] 12.4 HELM-argocd' '-[FAIL] 12.5' "${hs_helm[@]}"
+  hs_case helm-src-argocd-helmfoo hs_tree helm-src-argocd-helmfoo helmfoo -- 1 \
+    "+[FAIL] 12.4 HELM-argocd — $HS_CM: data.\"kustomize.buildOptions\" \"--enable-helmfoo\"에 --enable-helm 낱말 없음" \
+    '-[PASS] 12.4 HELM-argocd' "${hs_helm[@]}"
+  hs_case helm-src-argocd-no-key hs_tree helm-src-argocd-no-key no-key -- 1 \
+    "+[FAIL] 12.4 HELM-argocd — $HS_CM: data.\"kustomize.buildOptions\" 없음" \
+    '-[PASS] 12.4 HELM-argocd' "${hs_helm[@]}"
+  hs_case helm-src-argocd-ok hs_tree helm-src-argocd-ok ok -- 1 \
+    "+[PASS] 12.4 HELM-argocd — helmCharts를 쓰는 kustomization 1개 → $HS_CM data.\"kustomize.buildOptions\" \"--load-restrictor LoadRestrictionsNone --enable-helm\"에 --enable-helm 있음" \
+    '+[PASS] 12.5 HELM-chartsdir' '-[FAIL] 12.' '-[FAIL] 11.' "${hs_helm[@]}"
+  #   (B1 · 2026-09-30 G4 리뷰) `--enable-helm=<참값>`도 낱말로 받는다(pflag ParseBool) · 같은 플래그가 여럿이면 마지막 값이 이긴다(pflag) —
+  #     eq-true는 앞의 =false를 뒤의 =true가 이기는 통과 경계, eq-false는 앞의 맨 --enable-helm을 뒤의 =false가 이기는 실패다
+  hs_case helm-src-argocd-eq-true hs_tree helm-src-argocd-eq-true eq-true -- 1 \
+    "+[PASS] 12.4 HELM-argocd — helmCharts를 쓰는 kustomization 1개 → $HS_CM data.\"kustomize.buildOptions\" \"--enable-helm=false --load-restrictor LoadRestrictionsNone --enable-helm=true\"에 --enable-helm 있음" \
+    '-[FAIL] 12.' "${hs_helm[@]}"
+  hs_case helm-src-argocd-eq-false hs_tree helm-src-argocd-eq-false eq-false -- 1 \
+    "+[FAIL] 12.4 HELM-argocd — $HS_CM: data.\"kustomize.buildOptions\" \"--enable-helm --load-restrictor LoadRestrictionsNone --enable-helm=false\"의 마지막 --enable-helm 낱말 \"--enable-helm=false\"이 참이 아니다" \
+    '-[PASS] 12.4 HELM-argocd' '-낱말 없음' "${hs_helm[@]}"
+  #   eq-invalid: 값이 참·거짓 낱말이 아닌 `--enable-helm=yes` 뒤에 맨 `--enable-helm` — pflag는 읽지 못하는 값에서 인자 해석을 멈춘다(kustomize build
+  #     실패). 마지막 낱말만 보면 통과했을 설정이다
+  hs_case helm-src-argocd-eq-invalid hs_tree helm-src-argocd-eq-invalid eq-invalid -- 1 \
+    "+[FAIL] 12.4 HELM-argocd — $HS_CM: data.\"kustomize.buildOptions\" \"--enable-helm=yes --enable-helm\"의 --enable-helm 낱말 \"--enable-helm=yes\"의 값을 pflag가 참·거짓으로 읽지 못한다" \
+    '-[PASS] 12.4 HELM-argocd' '-낱말 없음' '-참이 아니다' "${hs_helm[@]}"
+  #   eq-space: 마지막 `--enable-helm=false`를 U+2028로 앞 낱말에 붙였다 — strings.Fields(unicode.IsSpace)는 U+2028에서 나눈다. 낱말 정규식이 RE2의 \s
+  #     집합이면 그 거짓이 한 낱말 안에 숨어 통과한다(yq의 to_json은 값의 U+2028을 JSON 유니코드 이스케이프로 적는다 — 아래 단언의 역슬래시 둘은
+  #     bash 큰따옴표 안에서 하나가 된다)
+  hs_case helm-src-argocd-eq-space hs_tree helm-src-argocd-eq-space eq-space -- 1 \
+    "+[FAIL] 12.4 HELM-argocd — $HS_CM: data.\"kustomize.buildOptions\" \"--enable-helm --load-restrictor LoadRestrictionsNone\\u2028--enable-helm=false\"의 마지막 --enable-helm 낱말 \"--enable-helm=false\"이 참이 아니다" \
+    '-[PASS] 12.4 HELM-argocd' '-낱말 없음' "${hs_helm[@]}"
+else
+  for c in no-flag helmfoo no-key ok eq-true eq-false eq-invalid eq-space; do
+    hs_case "helm-src-argocd-$c" hs_tree "helm-src-argocd-$c" "$c" -- 1 '+[SKIP] 12.4 HELM-argocd — 도구 없음(kustomize)'
+  done
+fi
+#   (F9 · 2026-09-30 G4 리뷰) 저장소 루트에서 bootstrap/argocd가 없다 — helmCharts를 쓰는 kustomization이 있는데 Argo CD 설정을 판정할 수 없어
+#     FAIL(fail-closed). 부분 트리에서는 같은 부재가 "대상 없음"이므로(helm-src-repo 단언) 루트 판별을 픽스처로 돌린다 — 검사 13의 rbac-root-*와
+#     같은 방식(임시 트리의 tests/에 validate.sh 사본). 12.4의 부재 판정은 렌더를 보지 않아 kustomize 유무와 무관하다(로컬 차트는 검사 1이
+#     네트워크로 차트를 받으러 가지 않게 둔다)
+HS_RT="$TMP/helm-src-root-no-argocd"
+hs_root_tree() { # → 전역 HS_ROOT (if 조건 안 — 단계마다 확인)
+  HS_ROOT=$HS_RT
+  mkdir -p "$HS_ROOT/tests" || return 1
+  cp -R "$FIX/helm-src/tree/platform" "$HS_ROOT/" || return 1
+  cp "$VALIDATE" "$HS_ROOT/tests/validate.sh" || return 1
+  hs_local_chart "$HS_ROOT" platform/external-secrets external-secrets "$HS_ES_VER"
+}
+hs_case helm-src-root-no-argocd hs_root_tree -- 1 --script "$HS_RT/tests/validate.sh" \
+  '+[FAIL] 12.4 HELM-argocd — bootstrap/argocd/kustomization.yaml 없음 — helmCharts를 쓰는 kustomization 1개가 있는데 Argo CD 설정(argocd-cm)을 판정할 수 없다(fail-closed)' \
+  '-[PASS] 12.4 HELM-argocd'
+#   12.5: 캐시 자리 밖의 charts 둘 — pod 이름이 charts(apps/charts/overlays/dev) · helmCharts를 쓰지 않는 kustomization 아래. 캐시 자리
+#     (helmCharts를 쓰는 platform/external-secrets 바로 아래)와 그 안의 하위 차트 자리(…/external-secrets/charts)는 걸리지 않는다
+hs_case helm-src-chartsdir hs_tree_chartsdir -- 1 \
+  '+[FAIL] 12.5 HELM-chartsdir — apps/charts/: 이름이 charts인 디렉터리 — 부모 apps/에 kustomization이 없다' \
+  '+[FAIL] 12.5 HELM-chartsdir — platform/cloudflared/charts/: 이름이 charts인 디렉터리 — 부모 platform/cloudflared/의 kustomization이 helmCharts를 쓰지 않는다' \
+  '-[FAIL] 12.5 HELM-chartsdir — platform/external-secrets/' '-[PASS] 12.5 HELM-chartsdir'
+
+# --- 검사 13: 권한 경계(T047 G4b · 계약 §validate.yml 4 「(T047) 권한 경계 — 문자열이 아니라 규칙 구조로 본다」) ---------------------
+# 모든 트리가 부분 트리다 — exit 1은 무관한 FAIL로도 나므로 판정 근거가 아니다. 근거는 하위 코드의 `+[FAIL] 13.x` 단언, 그룹 PASS 줄이 없다는
+# `-[PASS] 13 RBAC`, 그리고 그 트리의 결함이 다른 하위 코드로 번지지 않는다는 `-[FAIL] 13.x`다. 대조군(걸리면 안 되는 객체)은 `-` 단언으로 짚는다.
+# "통과해야 하는 것"(경계)은 rbac/pass 한 트리에 모아 그룹 PASS 줄(개수 포함)을 단언한다. 렌더를 보는 검사라 kustomize가 없으면 모든 케이스가
+# "도구 없음"(SKIP)이 정답이다. helm·네트워크는 쓰지 않는다.
+RB_CASES='token extref builtin-name subject reloader-subject aggregation render-fail pass'
+RB_ALL13=('-[FAIL] 13.0' '-[FAIL] 13.1' '-[FAIL] 13.2' '-[FAIL] 13.3' '-[FAIL] 13.4' '-[FAIL] 13.5' '-[FAIL] 13.6')
+rb_others() { # <이 트리가 거는 하위 코드(예: 13.1)> — 그 밖의 13.x FAIL이 없다는 음성 단언 목록 → 전역 RB_NEG
+  local a
+  RB_NEG=('-[PASS] 13 RBAC')
+  for a in "${RB_ALL13[@]}"; do [[ $a == "-[FAIL] $1" ]] || RB_NEG+=("$a"); done
+}
+RB_PASS_BODY='Role 4 · ClusterRole 7 · 바인딩 6장(RoleBinding 2 · ClusterRoleBinding 4) · 주체 6개 모두 이름을 다 적은 ServiceAccount · 토큰 발급 규칙을 가진 역할 2개(ClusterRole/argocd-application-controller · Role/external-secrets/eso-token-create) · 렌더되지 않은 ClusterRole을 가리키는 바인딩 2장(ClusterRoleBinding/agent-view-view → view · ClusterRoleBinding/vault-server-binding → system:auth-delegator) · Role을 가리키는 RoleBinding 1장 모두 같은 ns의 렌더된 Role · 내장 역할 이름의 ClusterRole 0 · aggregationRule 0 · aggregate-to-* 라벨 ClusterRole 5개(cert-manager-cluster-view · cert-manager-edit · cert-manager-view · external-secrets-edit · external-secrets-view) · Reloader 주체(ServiceAccount reloader/reloader) 바인딩은 platform/reloader 렌더에만 — 그 렌더 안 0장(장수·모양은 검사 10)'
+if command -v kustomize >/dev/null 2>&1; then
+  #   token: 기준선 밖 역할의 토큰 발급 규칙 ⓐ–ⓓ(platform/cloudflared) · 기준선 ②(Role external-secrets/eso-token-create)의 모양 불일치 —
+  #     ⓔ resourceNames 하나 더(platform/external-secrets) · ⓕ resourceNames 없음(platform/vault) · ⓖ 토큰 발급 규칙 둘(platform/openfga) ·
+  #     ⓗ 다른 렌더(platform/cloudflared)가 같은 이름으로 넓은 규칙. 같은 이름은 나타난 것마다 판정한다(기준선 밖이라고 하지 않고 모양으로 건다) ·
+  #     ⓘ resources ["*/token"] 하나뿐인 규칙(platform/cloudflared — RBAC ResourceMatches가 `*/<subresource>`를 와일드카드로 읽는다 · 계약 2026-09-30 추가) ·
+  #     ⓙ 기준선 ②의 resourceNames가 빈 목록(platform/dragonfly — RBAC에서 빈 목록은 "제한 없음"이다 · 2026-09-30 G4 리뷰 F9: 빈 목록 분기의 고유 문구를 짚는다)
+  RB_TOK='+[FAIL] 13.1 RBAC-token — '
+  RB_CF='platform/cloudflared (rendered)'
+  RB_ESO='Role/external-secrets/eso-token-create'
+  rb_others 13.1
+  run_case rbac-token "$FIX/rbac/token" 1 \
+    "${RB_TOK}$RB_CF Role/cloudflared/sa-token 규칙 #2(apiGroups [\"\"] · resources [\"serviceaccounts/token\"] · verbs [\"create\"]): ServiceAccount 토큰 발급 규칙 — 기준선(ClusterRole/argocd-application-controller · $RB_ESO) 밖의 역할이다" \
+    "${RB_TOK}$RB_CF Role/cloudflared/core-wild 규칙 #1(apiGroups [\"\"] · resources [\"*\"] · verbs [\"*\"]): ServiceAccount 토큰 발급 규칙" \
+    "${RB_TOK}$RB_CF Role/cloudflared/sa-subwild 규칙 #1(apiGroups [\"\"] · resources [\"serviceaccounts/*\"] · verbs [\"create\"]): ServiceAccount 토큰 발급 규칙" \
+    "${RB_TOK}$RB_CF ClusterRole/all-wild 규칙 #1(apiGroups [\"*\"] · resources [\"*/*\"] · verbs [\"create\"]): ServiceAccount 토큰 발급 규칙" \
+    "${RB_TOK}$RB_CF Role/cloudflared/any-token 규칙 #1(apiGroups [\"\"] · resources [\"*/token\"] · verbs [\"create\"]): ServiceAccount 토큰 발급 규칙" \
+    "${RB_TOK}platform/external-secrets (rendered) $RB_ESO 규칙 #1: resourceNames 집합 [\"eso-ca-reader\",\"eso-data\",\"eso-dev\",\"eso-extra\",\"eso-platform\",\"eso-prod\"] ≠ 기준선 ② [\"eso-ca-reader\",\"eso-data\",\"eso-dev\",\"eso-platform\",\"eso-prod\"]" \
+    "${RB_TOK}platform/vault (rendered) $RB_ESO 규칙 #1: resourceNames 없음" \
+    "${RB_TOK}platform/openfga (rendered) $RB_ESO: 토큰 발급 규칙 2개 ≠ 1" \
+    "${RB_TOK}platform/openfga (rendered) $RB_ESO 규칙 #2: resourceNames 집합 [\"external-secrets\"] ≠ 기준선 ②" \
+    "${RB_TOK}$RB_CF $RB_ESO 규칙 #1: apiGroups·resources·verbs가 기준선 ②와 다르다 — 실제 apiGroups [\"\"] · resources [\"*\"] · verbs [\"*\"]" \
+    "${RB_TOK}$RB_CF $RB_ESO 규칙 #1: resourceNames 없음" \
+    "${RB_TOK}platform/dragonfly (rendered) $RB_ESO 규칙 #1: resourceNames가 빈 목록 — 제한이 없다" \
+    "-[FAIL] 13.1 RBAC-token — platform/dragonfly (rendered) $RB_ESO 규칙 #1: resourceNames 집합" \
+    "-[FAIL] 13.1 RBAC-token — $RB_CF Role/cloudflared/sa-token 규칙 #1" \
+    "-[FAIL] 13.1 RBAC-token — $RB_CF $RB_ESO 규칙 #1(" \
+    "-[FAIL] 13.1 RBAC-token — platform/openfga (rendered) $RB_ESO 규칙 #1" \
+    "-[FAIL] 13.1 RBAC-token — platform/external-secrets (rendered) $RB_ESO 규칙 #1: apiGroups" \
+    "-[FAIL] 13.1 RBAC-token — platform/external-secrets (rendered) $RB_ESO: 토큰 발급 규칙" \
+    "-[FAIL] 13.1 RBAC-token — platform/vault (rendered) $RB_ESO: 토큰 발급 규칙" \
+    "${RB_NEG[@]}"
+  #   extref: 렌더에 없는 ClusterRole을 가리키는 바인딩 ⓐ–ⓓ(기준선은 바인딩 kind · 이름 · 대상 이름의 세 값) · 다른 ns에만 있는 Role(ⓔ) ·
+  #     ClusterRoleBinding → Role(ⓕ) · roleRef.kind가 둘 밖(ⓖ). 기준선 vault-server-binding(platform/vault)은 걸리지 않는다
+  RB_EXT='+[FAIL] 13.2 RBAC-extref — platform/policies (rendered) '
+  rb_others 13.2
+  run_case rbac-extref "$FIX/rbac/extref" 1 \
+    "${RB_EXT}ClusterRoleBinding/grant-all → ClusterRole 'cluster-admin': 그 이름의 ClusterRole이 어느 렌더에도 없다(내장 역할 등 — 규칙을 볼 수 없다)" \
+    "${RB_EXT}RoleBinding/jt-dev/dev-edit → ClusterRole 'edit': 그 이름의 ClusterRole이 어느 렌더에도 없다" \
+    "${RB_EXT}ClusterRoleBinding/agent-view-view → ClusterRole 'admin': 그 이름의 ClusterRole이 어느 렌더에도 없다" \
+    "${RB_EXT}ClusterRoleBinding/agent-view-extra → ClusterRole 'view': 그 이름의 ClusterRole이 어느 렌더에도 없다" \
+    "${RB_EXT}RoleBinding/jt-dev/cross-ns → Role 'only-in-prod': 같은 ns(jt-dev)의 그 Role이 어느 렌더에도 없다" \
+    "${RB_EXT}ClusterRoleBinding/crb-to-role → Role 'only-in-prod': ClusterRoleBinding은 Role을 가리킬 수 없다" \
+    "${RB_EXT}RoleBinding/jt-dev/odd-kind: roleRef.kind 'Group' — Role·ClusterRole만" \
+    '-[FAIL] 13.2 RBAC-extref — platform/vault (rendered)' \
+    "${RB_NEG[@]}"
+  #   builtin-name: 내장 역할 이름의 ClusterRole(view · system:custom) — 그것을 가리키는 바인딩 둘은 13.2가 아니라 13.3(역할 쪽)으로 잡힌다
+  RB_BI='+[FAIL] 13.3 RBAC-builtin-name — platform/monitoring (rendered) ClusterRole/'
+  rb_others 13.3
+  run_case rbac-builtin-name "$FIX/rbac/builtin-name" 1 \
+    "${RB_BI}view: 내장 역할의 이름(cluster-admin·admin·edit·view · system: 접두) 금지" \
+    "${RB_BI}system:custom: 내장 역할의 이름(cluster-admin·admin·edit·view · system: 접두) 금지" \
+    "${RB_NEG[@]}"
+  #   subject: Group · User(ServiceAccount의 사용자 이름 표기) · namespace 없는 SA · name이 빈 SA · 둘째 주체만 Group · subjects가 맵.
+  #     ok-sa와 mixed의 첫 주체는 걸리지 않는다. User system:serviceaccount:reloader:reloader는 13.4가 걸고 13.5(SA 주체만 본다)는 걸지 않는다
+  RB_SUB='+[FAIL] 13.4 RBAC-subject — platform/monitoring (rendered) RoleBinding/monitoring/'
+  rb_others 13.4
+  run_case rbac-subject "$FIX/rbac/subject" 1 \
+    "${RB_SUB}group-sa 주체 #1 kind 'Group' name 'system:serviceaccounts': 주체는 이름을 다 적은 ServiceAccount뿐이다" \
+    "${RB_SUB}user-sa 주체 #1 kind 'User' name 'system:serviceaccount:reloader:reloader': 주체는 이름을 다 적은 ServiceAccount뿐이다" \
+    "${RB_SUB}sa-no-ns 주체 #1 ServiceAccount 'prometheus': namespace가 비었다" \
+    "${RB_SUB}sa-empty-name 주체 #1 ServiceAccount: name이 비었다" \
+    "${RB_SUB}mixed 주체 #2 kind 'Group' name 'system:authenticated'" \
+    "${RB_SUB}subjects-map: subjects가 목록이 아니다(태그 !!map)" \
+    '-[FAIL] 13.4 RBAC-subject — platform/monitoring (rendered) RoleBinding/monitoring/mixed 주체 #1' \
+    '-[FAIL] 13.4 RBAC-subject — platform/monitoring (rendered) RoleBinding/monitoring/ok-sa' \
+    "${RB_NEG[@]}"
+  #   reloader-subject: platform/reloader 밖(platform/cloudflared)의 RoleBinding과 ClusterRoleBinding(둘째 주체)이 ServiceAccount reloader/reloader를
+  #     주체로 가진다. platform/reloader 렌더 안의 바인딩(대조군)은 걸리지 않는다
+  RB_RS='+[FAIL] 13.5 RBAC-reloader-subject — platform/cloudflared (rendered) '
+  rb_others 13.5
+  run_case rbac-reloader-subject "$FIX/rbac/reloader-subject" 1 \
+    "${RB_RS}RoleBinding/cloudflared/reloader-read 주체 #1 ServiceAccount reloader/reloader: platform/reloader 밖의 렌더가 Reloader에게 권한을 준다" \
+    "${RB_RS}ClusterRoleBinding/reloader-extra 주체 #2 ServiceAccount reloader/reloader: platform/reloader 밖의 렌더가 Reloader에게 권한을 준다" \
+    '-[FAIL] 13.5 RBAC-reloader-subject — platform/reloader (rendered)' \
+    '-[FAIL] 13.5 RBAC-reloader-subject — platform/cloudflared (rendered) ClusterRoleBinding/reloader-extra 주체 #1' \
+    "${RB_NEG[@]}"
+  #   aggregation: aggregationRule · 기준선 밖 이름의 aggregate-to-view: "true" · 값이 "false"인 라벨(그래도 FAIL). 기준선 이름 cert-manager-view는 걸리지 않는다
+  RB_AG='+[FAIL] 13.6 RBAC-aggregation — platform/monitoring (rendered) ClusterRole/'
+  rb_others 13.6
+  run_case rbac-aggregation "$FIX/rbac/aggregation" 1 \
+    "${RB_AG}agg-parent: aggregationRule 금지" \
+    "${RB_AG}extra-view: aggregate-to-* 라벨 [\"rbac.authorization.k8s.io/aggregate-to-view\"] — 기준선(" \
+    "${RB_AG}extra-false: aggregate-to-* 라벨 [\"rbac.authorization.k8s.io/aggregate-to-edit\"] — 기준선(" \
+    '-[FAIL] 13.6 RBAC-aggregation — platform/cert-manager (rendered)' \
+    '-[FAIL] 13.6 RBAC-aggregation — platform/monitoring (rendered) ClusterRole/agg-parent: aggregate-to-*' \
+    "${RB_NEG[@]}"
+  #   render-fail: 렌더에 실패하는 kustomization이 섞인 트리 — 합친 집합이 불완전하므로 그룹 PASS 줄이 없다(fail-closed)
+  rb_others 13.0
+  run_case rbac-render-fail "$FIX/rbac/render-fail" 1 \
+    '+[FAIL] 13.0 RBAC-render — 렌더가 없는 kustomization 1개 [platform/monitoring]' \
+    "${RB_NEG[@]}"
+  #   pass(경계): 토큰이 아닌 규칙(serviceaccounts create · apps 그룹 와일드카드 · 규칙 둘에 나뉜 조건) · 기준선 ①(이름만)과 ②(resourceNames 순서만
+  #     다르다) · 다른 렌더가 정의한 ClusterRole을 가리키는 바인딩 · 기준선 바인딩 2장 · 기준선 이름의 aggregate-to-* 라벨 ClusterRole 5장
+  run_case rbac-pass "$FIX/rbac/pass" 1 \
+    "+[PASS] 13 RBAC — 렌더 7개 합산(부분 트리 — 기준선 밖의 것만 본다) — $RB_PASS_BODY" \
+    '-[FAIL] 13.'
+else
+  for c in $RB_CASES; do
+    run_case "rbac-$c" "$FIX/rbac/$c" 1 '+[SKIP] 13 RBAC — 도구 없음(kustomize)'
+  done
+fi
+
+# --- 검사 13 · 저장소 루트(완전성) — 임시 트리(tests/.tmp) ------------------------------------------------------------------------
+# "기준선의 것이 있는가"는 --root가 **스크립트의 저장소 루트**일 때만 판정한다(부분 트리 픽스처는 기준선 밖의 것만 본다). 그 분기를 픽스처로
+# 돌리려고 임시 트리의 tests/에 validate.sh 사본을 넣고(스크립트는 자기 위치의 부모를 저장소 루트로 삼는다) 그 트리를 --root로 준다.
+#   rbac-root-ok      = fixtures/rbac/pass(기준선 전부) — 부분 트리 실행(rbac-pass)과 같은 줄에 모드만 "저장소 루트"
+#   rbac-root-missing = 빈 트리 — 기준선의 역할 2 · 바인딩 2 · 라벨 ClusterRole 5가 모두 없다(렌더가 0개여도 "대상 없음" PASS가 아니다)
+RB_ROOT=''
+rb_root_tree() { # <케이스> [<fixtures/rbac 아래 트리>] — 임시 트리 + validate.sh 사본 → 전역 RB_ROOT (if 조건 안 — 단계마다 확인)
+  RB_ROOT="$TMP/$1"
+  mkdir -p "$RB_ROOT/tests" || return 1
+  if [[ -n ${2:-} ]]; then cp -R "$FIX/rbac/$2/." "$RB_ROOT/" || return 1; fi
+  cp "$VALIDATE" "$RB_ROOT/tests/validate.sh"
+}
+rb_root_case() { # <케이스> <트리|''> <기대 exit> [단언...] — 필터 밖이면 건너뜀으로 센다. 트리를 만들지 못하면 fail_case
+  local name=$1 src=$2; shift 2
+  if ! any_selected "$name"; then skip_cases "$name"; return 0; fi
+  mkdir -p "$TMP"
+  if rb_root_tree "$name" "$src" 2>>"$TMP/rbac-root.log"; then
+    run_case "$name" "$RB_ROOT" "$@" --script "$RB_ROOT/tests/validate.sh"
+  else
+    fail_case "$name" "임시 트리를 만들 수 없음 — $(tr -d '\r' < "$TMP/rbac-root.log" | tail -n 3 | tr '\n' ' ')"
+  fi
+}
+if command -v kustomize >/dev/null 2>&1; then
+  rb_root_case rbac-root-ok pass 1 \
+    "+[PASS] 13 RBAC — 렌더 7개 합산(저장소 루트 — 기준선 전부 있음) — $RB_PASS_BODY" \
+    '-[FAIL] 13.'
+  RB_RM='저장소 루트에 기준선의 '
+  rb_root_case rbac-root-missing '' 1 \
+    "+[FAIL] 13.1 RBAC-token — ${RB_RM}토큰 발급 역할 ClusterRole/argocd-application-controller 없음" \
+    "+[FAIL] 13.1 RBAC-token — ${RB_RM}토큰 발급 역할 Role/external-secrets/eso-token-create 없음" \
+    "+[FAIL] 13.2 RBAC-extref — ${RB_RM}바인딩 ClusterRoleBinding/agent-view-view → ClusterRole 'view' 없음" \
+    "+[FAIL] 13.2 RBAC-extref — ${RB_RM}바인딩 ClusterRoleBinding/vault-server-binding → ClusterRole 'system:auth-delegator' 없음" \
+    "+[FAIL] 13.6 RBAC-aggregation — ${RB_RM}aggregate-to-* 라벨 ClusterRole 'cert-manager-cluster-view' 없음" \
+    "+[FAIL] 13.6 RBAC-aggregation — ${RB_RM}aggregate-to-* 라벨 ClusterRole 'external-secrets-view' 없음" \
+    '-[PASS] 13 RBAC' '-[FAIL] 13.0' '-[FAIL] 13.3' '-[FAIL] 13.4' '-[FAIL] 13.5'
+else
+  rb_root_case rbac-root-ok pass 1 '+[SKIP] 13 RBAC — 도구 없음(kustomize)'
+  rb_root_case rbac-root-missing '' 1 '+[SKIP] 13 RBAC — 도구 없음(kustomize)'
 fi
 
 # --- 작성자(봇) 경로 lint: positive 트리 + diff 입력 ---------------------------------
@@ -1162,6 +1733,91 @@ else
   skip_cases "${FMT_CASES[@]}"
 fi
 
+# --- 검사 11.5 · 심볼릭 링크(계약 형식별 정책 「심볼릭 링크」 행 — --root 트리 어디든) — 임시 트리 · 임시 git 저장소(tests/.tmp) ---------------
+# 링크는 커밋되는 픽스처로 두지 않는다(fmt-dirsource-link와 같은 이유 · 같은 만드는 법). 원본 fixtures/fmt/symlink/(링크의 대상만 — 파일 열거 밖인
+# tests/ 아래)를 tests/.tmp/fmt-symlink/로 복사하고 링크 셋을 만든다:
+#   ⓐ 파일 링크      platform/vault/kustomization.yaml → ../../tests/payload/kustomization.yaml — kustomization 열거(find -type f)가 세지 않는다
+#   ⓑ 디렉터리 링크  platform/cloudflared → ../tests/hidden-cf — 컴포넌트 디렉터리 자체가 링크(2026-09-30 수정 빌더의 재현 모양: 안의 cluster-admin
+#                    바인딩이 모든 검사의 시야 밖에서 렌더되어 exit 0이었다)
+#   ⓒ 깨진 링크      platform/broken.yaml → ../tests/payload/missing.yaml
+# 이 트리에는 Application이 없어 directory source 경로가 없다 — 링크를 거는 것은 11.5뿐이다(11.3 FAIL 없음).
+#   fmt-symlink        --root가 git 작업 트리 안(tests/.tmp는 무시 대상이라 인덱스 항목 0) — ①(작업 트리)이 셋을 건다
+#   fmt-symlink-nogit  같은 트리를 GIT_CEILING_DIRECTORIES로 git 밖에 둔다 — ②(인덱스)를 볼 수 없다는 사실을 적고도 ①이 돈다(fail-open 아님)
+#   fmt-symlink-index  임시 git 저장소: 작업 트리의 platform/cloudflared는 일반 파일(링크 대상 문자열 — core.symlinks=false 체크아웃의 모양)이고
+#                      인덱스에만 모드 120000(update-index --cacheinfo) — ①은 못 보고 ②가 건다. 링크를 만들지 않으므로 어느 환경에서나 돈다
+# 링크를 만들 수 없는 환경에서는 앞 두 케이스가 이유를 적은 [SKIP]이다(fmt-dirsource-link와 같다 — CI · 판정용 실행에서는 실패).
+SL_ROOT="$TMP/fmt-symlink"
+SL_IDX="$TMP/fmt-symlink-index"
+SL_WHY=''
+sl_tree() { # → 0 준비됨 · 1 준비 실패 · 2 링크를 만들 수 없는 환경(SL_WHY에 이유)
+  local l
+  mkdir -p "$SL_ROOT/platform/vault" || return 1
+  cp -R "$FIX/fmt/symlink/." "$SL_ROOT/" || return 1
+  if ! ( cd "$SL_ROOT/platform" && export MSYS="${MSYS:+$MSYS }winsymlinks:nativestrict" \
+         && ln -s ../../tests/payload/kustomization.yaml vault/kustomization.yaml && ln -s ../tests/hidden-cf cloudflared \
+         && ln -s ../tests/payload/missing.yaml broken.yaml ); then
+    SL_WHY='ln -s 실패(Windows는 개발자 모드나 관리자 권한이 있어야 진짜 링크를 만든다)'; return 2
+  fi
+  for l in vault/kustomization.yaml cloudflared broken.yaml; do
+    [[ -L "$SL_ROOT/platform/$l" ]] || { SL_WHY="ln -s가 링크가 아닌 것을 만들었다(platform/$l)"; return 2; }
+  done
+}
+sl_index_tree() { # 임시 git 저장소 — 작업 트리에는 일반 파일 · 인덱스에는 모드 120000(if 조건 안에서 부르므로 set -e가 꺼진다 — 단계마다 확인한다)
+  local blob
+  mkdir -p "$SL_IDX/platform" || return 1
+  tg "$SL_IDX" init -q || return 1
+  cp -R "$FIX/fmt/symlink/tests" "$SL_IDX/" || return 1
+  printf '%s' '../tests/hidden-cf' > "$SL_IDX/platform/cloudflared" || return 1
+  tg "$SL_IDX" add -A -- tests || return 1
+  blob=$(printf '%s' '../tests/hidden-cf' | tg "$SL_IDX" hash-object -w --stdin) || return 1
+  tg "$SL_IDX" update-index --add --cacheinfo "120000,$blob,platform/cloudflared" || return 1
+  [[ -f "$SL_IDX/platform/cloudflared" && ! -L "$SL_IDX/platform/cloudflared" ]]
+}
+SL='[FAIL] 11.5 FMT-symlink — '
+SL_NOIDX='11.5 git 인덱스를 보지 않았다'
+# ②가 도는 것(인덱스를 읽음)의 음성 단언은 이 저장소가 git 작업 트리일 때만 건다(CI · 로컬 체크아웃 — git 밖에서 돌린 자기검사는 그 줄이 정답이다)
+sl_inrepo=()
+if [[ $(git -C "$HERE" rev-parse --is-inside-work-tree 2>/dev/null) == true ]]; then sl_inrepo=("-$SL_NOIDX"); fi
+SL_CASES=(fmt-symlink fmt-symlink-nogit)
+if any_selected "${SL_CASES[@]}"; then
+  mkdir -p "$TMP"
+  sl_rc=0; sl_tree 2>>"$TMP/fmt-symlink.log" || sl_rc=$?
+  if [[ $sl_rc == 0 ]]; then
+    run_case fmt-symlink "$SL_ROOT" 1 \
+      "+${SL}platform/vault/kustomization.yaml: 심볼릭 링크 금지(→ '../../tests/payload/kustomization.yaml')" \
+      "+${SL}platform/cloudflared: 심볼릭 링크 금지(→ '../tests/hidden-cf')" \
+      "+${SL}platform/broken.yaml: 심볼릭 링크 금지(→ '../tests/payload/missing.yaml' · 대상 없음)" \
+      '-[PASS] 11.5 FMT-symlink' '-[FAIL] 11.3' '-git 인덱스의 모드 120000' "${sl_inrepo[@]}"
+    run_case fmt-symlink-nogit "$SL_ROOT" 1 --env "GIT_CEILING_DIRECTORIES=$TMP" \
+      "+$SL_NOIDX(git 작업 트리가 아니다)" \
+      "+${SL}platform/cloudflared: 심볼릭 링크 금지(→ '../tests/hidden-cf')" \
+      '-[PASS] 11.5 FMT-symlink'
+  elif [[ $sl_rc == 2 && ${VALIDATE_TESTS_REQUIRE_TOOLS:-0} != 1 && ${CI:-} != true ]]; then
+    for c in "${SL_CASES[@]}"; do
+      selected "$c" || continue
+      NSKIP=$((NSKIP + 1))
+      printf '[SKIP] %s — 이 환경에서 심볼릭 링크를 만들 수 없다: %s — 11.5의 작업 트리 판정(①)은 이번 실행에서 확인되지 않았다(CI 러너는 돌린다)\n' "$c" "$SL_WHY"
+    done
+  else
+    sl_why=${SL_WHY:-$(tr -d '\r' < "$TMP/fmt-symlink.log" | tail -n 3 | tr '\n' ' ')}
+    for c in "${SL_CASES[@]}"; do fail_case "$c" "임시 트리를 만들 수 없음 — $sl_why"; done
+  fi
+else
+  skip_cases "${SL_CASES[@]}"
+fi
+if any_selected fmt-symlink-index; then
+  mkdir -p "$TMP"
+  if sl_index_tree 2>"$TMP/fmt-symlink-index.log"; then
+    run_case fmt-symlink-index "$SL_IDX" 1 \
+      "+${SL}platform/cloudflared: git 인덱스의 모드 120000(심볼릭 링크) 금지" \
+      "-${SL}platform/cloudflared: 심볼릭 링크 금지" '-[PASS] 11.5 FMT-symlink' "-$SL_NOIDX"
+  else
+    fail_case fmt-symlink-index "임시 git 저장소를 만들 수 없음 — $(tr -d '\r' < "$TMP/fmt-symlink-index.log" | tail -n 3 | tr '\n' ' ')"
+  fi
+else
+  skip_cases fmt-symlink-index
+fi
+
 # --- 저장소 밖 root 거부(exit 2) — 실제 트리 검사는 여기서 하지 않는다(트리 상태에 따라 결과가 달라지므로) -----
 if selected root-outside-repo-rejected; then
   outside_rc=0
@@ -1176,6 +1832,9 @@ if [[ -n $ONLY ]]; then
     printf "필터 '%s'에 맞는 케이스 0개 — 빈 실행을 통과로 읽지 않는다(exit 1)\n" "$ONLY"
     exit 1
   fi
+elif [[ $NSKIP -gt 0 ]]; then
+  # 필터가 없는데 건너뜀이 있다 = 이 환경에서 준비할 수 없는 케이스(fmt-dirsource-link의 심볼릭 링크 — 위 [SKIP] 줄). 결과를 온전하다고 읽지 않도록 드러낸다
+  printf '\n== 자기검사 요약: %d 케이스, 실패 %d · 환경 SKIP %d(위 [SKIP] 줄 — 이 실행은 그 케이스를 확인하지 않았다) ==\n' "$N" "$NF" "$NSKIP"
 else
   printf '\n== 자기검사 요약: %d 케이스, 실패 %d ==\n' "$N" "$NF"
 fi

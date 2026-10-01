@@ -1,0 +1,25 @@
+# 부정 픽스처 11.4 · 11.1(병합 키) — 최상위 items를 병합 키(`<<: *m`)로 들인 Application. 명시한 items 키는 없다.
+#   yq의 has("items")는 병합으로 들어온 키를 보지 못했다(별칭과 같은 부류 — 2026-09-30 G4 리뷰 A1의 후속 실측). Argo의 디코더(go-yaml v2)는
+#   병합을 풀어 items 목록을 가진 객체로 읽고 IsList로 안의 Role을 적용한다. 검사 11은 문서를 explode(.)로 푼 뒤 판정한다.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-kafka
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "30"
+    hold: &m
+      items:
+        - apiVersion: rbac.authorization.k8s.io/v1
+          kind: Role
+          metadata: { name: hidden-by-merge, namespace: argocd }
+          rules:
+            - apiGroups: [""]
+              resources: [secrets]
+              verbs: [get]
+spec:
+  project: platform
+  source: { repoURL: https://github.com/joshua92y/platform-gitops.git, targetRevision: main, path: platform/kafka }
+  destination: { server: https://kubernetes.default.svc, namespace: data }
+  syncPolicy: { syncOptions: [ServerSideApply=true] }
+<<: *m

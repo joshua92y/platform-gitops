@@ -56,7 +56,7 @@ Stakater Reloader 차트 **2.2.16**(appVersion v1.4.21)을 **scoped 모드**로 
   | Application `spec.source`의 오버라이드 키(`kustomize.patches` 등) · 다른 리비전 · multi-source · `spec.sourceHydrator` · source 경로의 `.argocd-source.yaml`·`.argocd-source-<앱 이름>.yaml` · Application 최상위 `operation`(`operation.sync`의 source·revision·manifests) | 7.4 APP-source · -ref · -multi · -hydrator · -file · -operation(`../../tests/fixtures/app-source/`) — **우회 경로를 전부 덮는다고 주장하지 않는다**(전수 열거는 T047): 사각(`kind: List`로 감싼 Application 등)은 `../../tests/README.md` 「검사 7.4가 보지 않는 것」 |
 
   **보지 않는 것**: 다른 컴포넌트 렌더가 ServiceAccount `reloader/reloader`에 주는 RoleBinding·ClusterRoleBinding(전 렌더 교차 검사는
-  T047 후보), `reloader-role` 4장을 똑같이 넓힌 규칙 · 이름이 `reloader-role`이 아닌 Role의 규칙 내용(둘 다 §1의 대조가 잡는다) —
+  검사 13.5 `RBAC-reloader-subject`가 본다 — T047), `reloader-role` 4장을 똑같이 넓힌 규칙 · 이름이 `reloader-role`이 아닌 Role의 규칙 내용(둘 다 §1의 대조가 잡는다) —
   전체 목록은 `../../tests/README.md` 「검사 10이 보지 않는 것」.
 
 **새 소비자 ns를 더하는 순서**(한 줄씩, 세 곳):

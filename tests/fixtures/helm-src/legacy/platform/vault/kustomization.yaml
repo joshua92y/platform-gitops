@@ -1,0 +1,12 @@
+# 부정 픽스처 12.3 HELM-legacy — 최상위 helmGlobals(chartHome을 바꾸면 인플레이트 캐시 자리가 <kustomization>/charts/ 밖으로 간다).
+#   helmCharts 항목 자체는 허용 쌍 + version이다(12.1·12.2는 걸리지 않는다). 12.3에 걸렸으므로 검사 1은 렌더하지 않는다.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+helmGlobals:
+  chartHome: vendored-charts
+helmCharts:
+  - name: vault
+    repo: https://helm.releases.hashicorp.com
+    version: 0.34.1
+    releaseName: vault
+    namespace: vault

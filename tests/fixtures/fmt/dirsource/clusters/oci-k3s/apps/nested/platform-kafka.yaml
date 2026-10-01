@@ -1,0 +1,13 @@
+# 부정 픽스처 11.3 FMT-dirsource — directory source 경로의 하위 디렉터리(nested/). directory.recurse는 7.4가 금지하므로
+#   Argo는 이 파일을 적용하지 않는다(죽은 선언) — 하위 디렉터리 자체를 금지한다.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-kafka
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "30" }
+spec:
+  project: platform
+  source: { repoURL: https://github.com/joshua92y/platform-gitops.git, targetRevision: main, path: platform/kafka }
+  destination: { server: https://kubernetes.default.svc, namespace: data }
+  syncPolicy: { syncOptions: [ServerSideApply=true] }

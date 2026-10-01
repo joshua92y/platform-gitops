@@ -1,0 +1,6 @@
+# 경계(통과) 픽스처 4a IMG-entry "대상 없음" — 끝의 `---` 뒤에 주석뿐인 빈 문서(null)가 있다. 빈 문서는 "맵이 아닌 문서"로 걸리지 않는다
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: []
+---
+# 빈 문서

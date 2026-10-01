@@ -1,0 +1,30 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: read-secrets, namespace: cloudflared }
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: reloader-read, namespace: cloudflared }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: read-secrets }
+subjects:
+  - { kind: ServiceAccount, name: reloader, namespace: reloader }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: { name: reloader-extra }
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: { name: reloader-extra }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: reloader-extra }
+subjects:
+  - { kind: ServiceAccount, name: cloudflared, namespace: cloudflared }
+  - { kind: ServiceAccount, name: reloader, namespace: reloader }

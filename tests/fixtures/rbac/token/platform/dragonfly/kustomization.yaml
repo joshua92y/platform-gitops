@@ -1,0 +1,6 @@
+# 부정 픽스처 13.1 RBAC-token ⓙ — 기준선 ②와 같은 이름(Role external-secrets/eso-token-create)인데 resourceNames가 **빈 목록**이다
+#   (RBAC에서 빈 resourceNames는 "제한 없음" = 그 ns의 모든 ServiceAccount 토큰 발급 — 2026-09-30 G4 리뷰 F9). 다른 렌더(platform/dragonfly)에 두었다.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - rbac.yaml

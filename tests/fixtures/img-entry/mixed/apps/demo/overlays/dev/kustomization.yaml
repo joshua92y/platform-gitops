@@ -1,0 +1,14 @@
+# 부정 픽스처 4a IMG-entry(섞인 경우) — 한 kustomization에 정상 항목과 비정상 항목
+#   #1 name + newName + digest(정상) · #2 name + newName뿐(digest 없음 — 비정상) · #3 name + digest(정상)
+#   비정상 항목(#2)만 FAIL로 찍히고 그룹 PASS 줄(4a IMG-entry)이 없어야 한다. 기존 4a IMG-newTag의 그룹 PASS 줄은 그대로 있다(newTag가 없다)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: []
+images:
+  - name: ghcr.io/joshua92y/demo-a
+    newName: ghcr.io/joshua92y/demo-a
+    digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+  - name: ghcr.io/joshua92y/demo-b
+    newName: ghcr.io/joshua92y/demo-b
+  - name: ghcr.io/joshua92y/demo-c
+    digest: sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210

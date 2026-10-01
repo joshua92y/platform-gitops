@@ -1,0 +1,6 @@
+# 부정 픽스처 11.4 FMT-dirsource-kind — kind가 없는 문서(fail-closed)
+apiVersion: v1
+metadata:
+  name: kindless
+data:
+  key: value

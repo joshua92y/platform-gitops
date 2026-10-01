@@ -1,0 +1,7 @@
+# 부정 픽스처 12.3(fail-closed — 풀지 못하는 생성기 설정 파일) — 이 kustomization은 멀쩡하지만 generators:가 부르는 파일을 explode(.)로 풀 수 없다.
+#   레거시 생성기(kind: HelmChartInflationGenerator — List로 감싼 것 포함)인지 판정할 수 없으므로 조용히 지나가지 않고 FAIL한다 — 검사 1은 이
+#   kustomization을 렌더하지 않는다.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+generators:
+  - unresolvable-gen.yaml

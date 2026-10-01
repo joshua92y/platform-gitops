@@ -1,0 +1,11 @@
+# 부정 픽스처 4a IMG-shape — 항목이 맵이 아니다
+#   #1 문자열 항목(이미지 참조를 통째로 적은 모양) · #2 앵커를 단 정상 맵(걸리지 않아야 한다) · #3 #2를 가리키는 별칭(앵커·별칭은 판정하지 않는다 — fail-closed)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: []
+images:
+  - ghcr.io/joshua92y/demo-a@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+  - &pinned
+    name: ghcr.io/joshua92y/demo-b
+    digest: sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210
+  - *pinned

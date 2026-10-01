@@ -1,0 +1,28 @@
+# 경계 픽스처(통과) 11.4 — Application 둘 사이에 주석만 있는 문서와 `---`만 있는 문서가 섞여 있다(빈 문서는 건너뛴다).
+#   platform-cloudflared 의 경로에는 kustomization이 있고, platform-openfga 의 경로는 이 트리에 없다(11.3이 건너뛴다).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-cloudflared
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "60" }
+spec:
+  project: platform
+  source: { repoURL: https://github.com/joshua92y/platform-gitops.git, targetRevision: main, path: platform/cloudflared }
+  destination: { server: https://kubernetes.default.svc, namespace: cloudflared }
+  syncPolicy: { syncOptions: [ServerSideApply=true] }
+---
+# 주석만 있는 문서 — Argo는 빈 문서를 건너뛴다
+---
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-openfga
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "50" }
+spec:
+  project: platform
+  source: { repoURL: https://github.com/joshua92y/platform-gitops.git, targetRevision: main, path: platform/openfga }
+  destination: { server: https://kubernetes.default.svc, namespace: identity }
+  syncPolicy: { syncOptions: [ServerSideApply=true] }

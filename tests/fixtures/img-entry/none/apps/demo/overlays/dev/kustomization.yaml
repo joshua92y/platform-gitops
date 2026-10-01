@@ -1,0 +1,5 @@
+# 경계(통과) 픽스처 4a IMG-entry "대상 없음" — images: 뒤가 비었다(null — images 키가 없는 것과 같이 읽는다: kustomize도 빈 목록으로 읽는다)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: []
+images:

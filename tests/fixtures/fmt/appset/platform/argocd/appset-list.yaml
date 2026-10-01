@@ -1,0 +1,24 @@
+# 부정 픽스처 11.2 FMT-appset(렌더) — 이 파일의 최상위 kind는 ApplicationSetList다(파일 단위 11.2는 ApplicationSet을 보지 못한다).
+#   kustomize 렌더에서 풀려 ApplicationSet이 된다.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSetList
+items:
+  - apiVersion: argoproj.io/v1alpha1
+    kind: ApplicationSet
+    metadata:
+      name: rendered-apps
+    spec:
+      generators:
+        - list:
+            elements:
+              - comp: reloader
+      template:
+        metadata:
+          name: 'platform-{{comp}}'
+        spec:
+          project: platform
+          source:
+            repoURL: https://github.com/joshua92y/platform-gitops.git
+            targetRevision: main
+            path: 'platform/{{comp}}'
+          destination: { server: https://kubernetes.default.svc, namespace: '{{comp}}' }

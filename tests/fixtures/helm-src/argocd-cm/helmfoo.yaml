@@ -1,0 +1,7 @@
+# 12.4 변형 helmfoo — --enable-helm 이 낱말로 있지 않다(--enable-helmfoo — 글자 포함으로 판정하면 통과해 버린다)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  kustomize.buildOptions: "--enable-helmfoo"

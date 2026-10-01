@@ -1,0 +1,25 @@
+# 부정 픽스처 11.3 FMT-dirsource — source.path를 위치로 판정할 수 없는 Application 둘(fail-closed):
+#   platform-vault = 절대 경로 · platform-dragonfly = 저장소 밖으로 나가는 상대 경로
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-vault
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "10" }
+spec:
+  project: platform
+  source: { repoURL: https://github.com/joshua92y/platform-gitops.git, targetRevision: main, path: /srv/platform/vault }
+  destination: { server: https://kubernetes.default.svc, namespace: vault }
+  syncPolicy: { syncOptions: [ServerSideApply=true] }
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-dragonfly
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "30" }
+spec:
+  project: platform
+  source: { repoURL: https://github.com/joshua92y/platform-gitops.git, targetRevision: main, path: ../outside/platform/dragonfly }
+  destination: { server: https://kubernetes.default.svc, namespace: data }
+  syncPolicy: { syncOptions: [ServerSideApply=true] }
