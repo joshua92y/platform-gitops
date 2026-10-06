@@ -140,7 +140,8 @@ helmCharts:
             type: RuntimeDefault
         resources:
           requests: { cpu: 10m, memory: 48Mi }
-          limits: { memory: 128Mi }
+          limits: { memory: 256Mi }   # 128Mi → 256Mi(T048 실측 2026-10-06): 노드 재부팅 뒤에는 실행 파일의 페이지 캐시가 이 컨테이너의
+                                      #   cgroup에 잡혀 128Mi에 붙었다(최고 128 · 회수 스캔 1,691 · 다시 읽기 708 · OOM 0). 모노레포 런북 §3 T048.
         # 빈 Secret `external-secrets-webhook`과 webhook 설정 2장의 caBundle을 런타임에 채운다. 희망 상태에 그 필드가 없으므로
         # ignoreDifferences를 넣지 않는다(설계 D8 · VD-5). `enablePartialCache`(기본 true)는 `external-secrets.io/component` 라벨에
         # 의존한다 — 라벨을 깎는 kustomize 변환을 넣지 않는다.
