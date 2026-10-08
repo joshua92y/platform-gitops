@@ -1,0 +1,43 @@
+# platform/cnpg/clusterimagecatalog-standard-trixie.yaml — ClusterImageCatalog `postgresql-standard-trixie`(upstream vendoring) (T052)
+#
+# 출처: https://raw.githubusercontent.com/cloudnative-pg/artifacts/main/image-catalogs/catalog-standard-trixie.yaml
+#   upstream 커밋 fd9187c535d74a3879baea19f4d45e65eb85e02a("chore: update imageCatalogs", 2026-10-05T08:40:02Z) · 갱신일 2026-10-05
+#   파일 sha256 4ccfce106a6fd086a46c1accae27f4ae8958728d15cbbb656f701d46ae2ad516(1302바이트 · LF). 2026-10-08 빌더 독립 재확인 일치.
+# 내용은 upstream과 **바이트 단위로 같다**(name · labels · spec.images 6항목 · digest 글자) — 다른 것은 주석 줄과 아래 `metadata.annotations` 2줄뿐이다.
+#   대조: diff <(curl -fsSL <출처 URL>) <(grep -v '^[[:space:]]*#' 이파일 | grep -v -E '^  annotations:$|^    argocd.argoproj.io/sync-wave:')
+# Cluster `pg-main`(T053, platform/cnpg-cluster/)은 `imageCatalogRef`(kind ClusterImageCatalog · name postgresql-standard-trixie · **major 18**)만
+#   참조한다 — 13–17 항목은 참조되지 않는 선언이다(이미지가 당겨지지 않는다 · Renovate가 PR 소음을 내면 T116 packageRule로 거른다).
+# 18.6 = 과제 문면의 고정 판. research.md는 `18.6-202608310817` 빌드를 적었으나 2026-10-05 카탈로그는 `202610050823` 빌드다 — 18.6 minor는 같다.
+#   major 18 digest `sha256:79be0d10…`은 ghcr 멀티아치 **인덱스** digest(linux/amd64 + linux/arm64)와 일치(2026-10-08 실측).
+# 갱신 절차: README §2(카탈로그 갱신) — upstream 파일을 받아 sha256·커밋 SHA를 이 주석에 적고 major 18 digest를 ghcr 인덱스와 대조한 뒤 PR.
+#   ⚠ 카탈로그 갱신 = pg-main 이미지 교체 = 인스턴스 1개라 PG 재시작(수 초 다운타임) → 유지보수 창에 머지한다.
+apiVersion: postgresql.cnpg.io/v1
+kind: ClusterImageCatalog
+metadata:
+  name: postgresql-standard-trixie
+  labels:
+    images.cnpg.io/family: postgresql
+    images.cnpg.io/type: standard
+    images.cnpg.io/os: trixie
+    images.cnpg.io/date: '20261005'
+    images.cnpg.io/publisher: cnpg.io
+  # 리소스 수준 sync-wave — ⚠ Application 표(계약 §sync-wave 단일 표)의 wave가 **아니라** 이 Application 안의 리소스 적용 순서다(표 숫자를 다시 적는 것이 아니다).
+  #   같은 sync에서 CRD(리소스 wave 0)가 established 되고 operator Deployment가 Healthy(= validating webhook 준비)가 된 뒤에 이 CR을 적용한다 —
+  #   `SkipDryRunOnMissingResource=true`가 dry-run은 넘기더라도 첫 apply가 "no matches for kind"/webhook 거부로 실패해 selfHeal 재시도에
+  #   기대는 것을 피한다. 저장소의 다른 컴포넌트에는 리소스 수준 wave가 없다 — 이 파일이 첫 사용이다(README §2).
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  images:
+  - major: 13
+    image: ghcr.io/cloudnative-pg/postgresql:13.22-202511100817-standard-trixie@sha256:8252529362b12a451a18cb19fdec9174ea09709102a7e6cf2e2b24d140dbd181
+  - major: 14
+    image: ghcr.io/cloudnative-pg/postgresql:14.24-202610050823-standard-trixie@sha256:9b7fbeb30f13996254d955b2f5ddee15a4a02b5016f870541d7e05d601ff12a7
+  - major: 15
+    image: ghcr.io/cloudnative-pg/postgresql:15.19-202610050823-standard-trixie@sha256:8e6ffa486aa444c539a8d6521933891b5df90a63e1f2a35b47354fd738b08532
+  - major: 16
+    image: ghcr.io/cloudnative-pg/postgresql:16.15-202610050823-standard-trixie@sha256:34c186731c221d8a788ac3758240653743a4f6237c52a6a2d6de29c6e1d1b834
+  - major: 17
+    image: ghcr.io/cloudnative-pg/postgresql:17.11-202610050823-standard-trixie@sha256:d456fe7392b0b2147b4cea0dc124d51aee7ad3ec522c57f3177799e01f29a2d1
+  - major: 18
+    image: ghcr.io/cloudnative-pg/postgresql:18.6-202610050823-standard-trixie@sha256:79be0d10e78b7ac4520cf6c5db199a8bb7f6de53b3229f47e90cab5865528a0d

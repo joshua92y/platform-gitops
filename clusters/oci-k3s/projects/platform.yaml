@@ -32,7 +32,6 @@ spec:
     # 차트 저장소(계약 "sourceRepos [gitops, 차트 저장소]"). 아래는 plan.md Primary Dependencies · research.md 기준의
     # **현재 알려진 값**이다. 컴포넌트를 kustomize `helmCharts` 로 인플레이트하면 Application source 는 gitops 저장소뿐이므로
     # 해당 줄은 그 컴포넌트 태스크의 PR 에서 지운다(설계 D7). 실행 사례는 아래 jetstack(T042)·hashicorp(T044)·external-secrets(T045) 문단이다.
-    - https://cloudnative-pg.github.io/charts      # cnpg operator + plugin-barman-cloud
     - https://charts.goauthentik.io                # authentik
     - https://grafana.github.io/helm-charts        # monitoring(k8s-monitoring)
     # jetstack(cert-manager) 두 줄은 **지웠다(T042 PR-5)** — 위 D7 규칙을 처음으로 실행한 자리다.
@@ -59,6 +58,12 @@ spec:
     #   인플레이트(`repo: https://stakater.github.io/stakater-charts` — HTTPS helm repo)라 Application source 는 gitops 저장소뿐이다.
     #   앞 세 번과 달리 컴포넌트와 **같은 PR** 에서 지운다 — 이 줄을 `source.repoURL` 로 쓰는 Application 이 처음부터 0 이라
     #   순서를 나눠도 원인 구분에 쓸 신호가 생기지 않는다. 확인 절차는 위와 같다.
+    # cloudnative-pg 한 줄은 **지웠다(T052)** — D7 규칙의 다섯 번째 실행. `platform-cnpg` 도 kustomize `helmCharts` 인플레이트
+    #   (`platform/cnpg/kustomization.yaml`, `repo: https://cloudnative-pg.github.io/charts` — HTTPS helm repo · cloudnative-pg 0.29.0 과
+    #   plugin-barman-cloud 0.7.1 두 항목이 같은 저장소)라 Application source 는 gitops 저장소뿐이다. T046 과 같이 컴포넌트와 **같은 PR**
+    #   에서 지운다 — 이 줄을 `source.repoURL` 로 쓰는 Application 이 처음부터 0 이라 순서를 나눠도 원인 구분에 쓸 신호가 생기지 않는다.
+    #   차트 출처 통제는 `tests/validate.sh` 검사 12.1 의 허용 목록(HELM_CHART_TABLE — 계약 §validate.yml 4 (T047) 표의 코드 사본)이 맡는다.
+    #   확인 절차: 머지 뒤 `platform-argocd` 가 Synced 를 유지하고 Application 전부 Synced/Healthy 가 유지되는지 본다. 깨지면 이 커밋을 revert 한다.
     # OCI 레지스트리 표기 — 미확정이라 두 형식을 함께 둔다(같은 레지스트리 경로라 권한이 넓어지지 않는다).
     #   research.md 실측 메모는 "OCI 차트는 repoURL 에 oci:// 없이 host/path"(Argo CD 3.0 이전 helm-OCI 방식),
     #   설계 D7 은 `oci://` 접두사 형식을 적었다. 어느 쪽으로 확정되는지는 컴포넌트 태스크의 실측이며,
@@ -114,6 +119,8 @@ spec:
       kind: ClusterIssuer
     - group: external-secrets.io            # ClusterSecretStore 5개
       kind: ClusterSecretStore
+    - group: postgresql.cnpg.io             # ClusterImageCatalog postgresql-standard-trixie(platform/cnpg, T052) — 클러스터 범위 CR.
+      kind: ClusterImageCatalog             #   지시문에 없던 항목: 빌더가 렌더의 클러스터 범위 kind를 이 목록과 대조하다 발견해 더했다(platform/cnpg/README.md §0)
     - group: admissionregistration.k8s.io   # cert-manager · CNPG · ESO webhook
       kind: MutatingWebhookConfiguration
     - group: admissionregistration.k8s.io
