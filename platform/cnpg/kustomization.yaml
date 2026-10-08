@@ -1,6 +1,205 @@
-# platform/cnpg/ — CNPG operator + barman-cloud plugin
-# sync-wave: 계약 gitops-repo.md §sync-wave 단일 표 참조(wave 번호는 표에만 기재 — 중복 금지).
-# 빈 뼈대(T003) — 실제 매니페스트는 T031+에서 작성한다.
+# platform/cnpg/ — CloudNativePG operator 1.30.0(차트 cloudnative-pg 0.29.0 · CRD 11장) + plugin-barman-cloud v0.14.0(차트 0.7.1 · CRD 1장)
+#                  + ClusterImageCatalog `postgresql-standard-trixie`(upstream vendoring) (T052)
+#
+# 정본 계약(모노레포 specs/003-platform-foundation/contracts/):
+#   - gitops-repo.md §sync-wave 단일 표(wave 번호는 그 표에만 — 여기 다시 적지 않는다. `cnpg` 행 = "CNPG operator + barman-cloud plugin"
+#     → 두 차트는 **한 Application(`platform-cnpg`) · 한 디렉터리**다. 표에 없는 디렉터리는 validate 7.2가 거부하고, 플러그인은
+#     operator와 **같은 ns**에 있어야만 발견된다 — operator가 자기 ns의 `cnpg.io/pluginName` 라벨 Service를 찾는다)
+#     · §삭제 보호(오퍼레이터 CRD 전부 `Delete=false,Prune=false` → 아래 `patches`가 CRD 12장에 붙인다 — 두 차트 모두 `crds.annotations`
+#     류 키가 없다) · §이미지(태그에 `@sha256` 병기 — 두 차트 모두 `image.digest` 키가 없어 태그 문자열에 병기, ESO 선례)
+#     · §워크로드 강화(helm 컴포넌트는 values에 securityContext 명시) · §validate.yml 4 (T047) 차트 저장소 허용 목록(두 행 — 코드 사본은
+#     tests/validate.sh HELM_CHART_TABLE)
+#   - network-policy.md(ns `cnpg-system` = PSA **baseline** · `allow-apiserver-webhook` 9443 · metrics 8080 ← monitoring ·
+#     `allow-same-namespace`(operator ↔ 플러그인 9090이 이 규칙으로 통한다) · `allow-kube-api` 6443 · §포트 출처 각주 `cnpg-webhook` 9443)
+#
+# 설치 방식 = kustomize `helmCharts` 인플레이트 **2항목**(cert-manager T042 · vault T044 · ESO T045 · reloader T046 선례). 전제: argocd-cm
+#   `kustomize.buildOptions: --enable-helm`(T042 PR-0, 라이브). 로컬 재현: `kustomize build --enable-helm platform/cnpg`(helm 필요).
+#   인플레이트는 helm 릴리스가 아니다(`helm list -n cnpg-system`은 비어 있다).
+#   ⚠ 두 차트 모두 **HTTPS helm repo**다 — `repo:`에 `oci://`를 붙이지 않는다(ESO·vault와 같고 cert-manager와 반대).
+#   ⚠ cloudnative-pg 차트의 `values.schema.json`에는 `additionalProperties`가 **0곳**이다 — 키 오타는 조용히 무시되고 렌더는 성공한다
+#     (plugin 차트는 12곳이 있지만 **전부 `true`(열림)**라 마찬가지다 — 2026-10-08 원본 확인). 유일한 방어는 렌더 결과 대조다(README §2 표).
+#   ⚠ 최상위 `namespace:` 변환기를 두지 않는다 — 두면 클러스터 범위 객체(CRD 12 · ClusterRole 4 · ClusterRoleBinding 2 · webhook 설정 2 ·
+#     ClusterImageCatalog)에 metadata.namespace가 찍힌다(cert-manager·ESO 선례). ns는 `helmCharts[].namespace`와 수기 매니페스트의 metadata로만.
+#
+# 이 디렉터리가 만들지 "않는" 것:
+#   1) Namespace `cnpg-system` · PSA 라벨(baseline) · NetworkPolicy → `platform/policies/`(이미 적용돼 있다 — 정책 객체는 거기에만, validate 5.0·5.1).
+#   2) `Cluster pg-main` · `ObjectStore oci-backups` · `ScheduledBackup` → `platform/cnpg-cluster/`(T053). `Database`·`DatabaseRole` → `platform/cnpg-databases/`(T054).
+#   3) Application `platform-cnpg` → `clusters/oci-k3s/apps/platform-cnpg.yaml`(T041부터 라이브). 이 PR은 그 파일을 **건드리지 않는다** —
+#      검사 7.1이 `source.path = platform/cnpg`를 대조한다.
+#   4) 시크릿 값: 없다. 플러그인 mTLS 인증서는 cert-manager가 런타임에 발급하고(아래 `certificate` 블록), operator webhook 인증서(`cnpg-webhook-cert` ·
+#      그 CA `cnpg-ca-secret`)는 operator가 스스로 만든다 — 런타임 Secret 4장, 희망 상태에는 0장(README §0).
+#
+# 되돌리기(순서 고정 — README §6): revert 머지 → 렌더 0(`prune: false`라 객체가 남는다) → ① Deployment 2 · webhook 설정 2 · Service 2 ·
+#   Issuer·Certificate·Secret(tls) 삭제 → ② **CRD 12장은 남긴다**(지우면 Cluster·Backup·PVC까지 cascade — T053 이후 비가역) →
+#   ③ ClusterImageCatalog는 CRD와 함께 남긴다(참조하는 Cluster가 없을 때만 지워도 무해).
+#   ⚠ CNPG CR을 먼저 지워야 한다면 operator가 살아 있는 동안에 한다 — webhook은 DELETE를 가로채지 않지만(렌더 실측: rules는 CREATE·UPDATE뿐)
+#     Database·Publication·Subscription 류 CR은 operator가 finalizer로 정리하므로 operator 없이는 Terminating에 머문다(README §4·§6).
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-resources: []
+
+# ⚠ 전역 `namespace:` 변환기 금지(머리 주석) — 클러스터 범위 CRD·ClusterRole·ClusterImageCatalog·webhook 설정에 ns가 찍힌다.
+resources:
+  - clusterimagecatalog-standard-trixie.yaml   # upstream vendoring + 리소스 수준 sync-wave(파일 머리 주석 · README §2)
+
+helmCharts:
+  # ── ① CloudNativePG operator ──────────────────────────────────────────────
+  - name: cloudnative-pg
+    repo: https://cloudnative-pg.github.io/charts   # HTTPS helm repo — `oci://` 금지. 계약 차트 허용 목록 행과 글자 단위 일치(validate 12.1)
+    version: 0.29.0                                 # appVersion 1.30.0. 대조용 실측(값 고정 아님): index.yaml tgz sha256
+                                                    #   668e065ff53508d58238788fd35b355a925060843629a951df0e6a9362e6d32f (2026-10-08)
+                                                    # 2026-10-08 index.yaml 최신은 0.29.1(1.30.1, 2026-09-23) — 과제 문면이 0.29.0으로 동결(bump는 README §2 · T116)
+    releaseName: cnpg                               # fullname = cnpg-cloudnative-pg(Deployment · SA · ClusterRole · ClusterRoleBinding) ·
+                                                    # Service cnpg-webhook-service(차트 고정) · ConfigMap cnpg-controller-manager-config · cnpg-default-monitoring
+    namespace: cnpg-system
+    valuesInline:
+      replicaCount: 1                               # 기본값 명시 — 단일 노드 B 배치
+      crds:
+        create: true                                # 기본값 명시. CRD 11장이 templates/crds/crds.yaml로 렌더된다(`includeCRDs` 불필요)
+
+      image:
+        # 이 차트에는 `image.digest` 키가 없다 → 태그 문자열에 병기(ESO 선례). digest = 멀티아치 **인덱스** digest(linux/amd64 + arm64, 2026-10-08 실측).
+        # 반드시 **블록 스타일**로 쓴다(한 줄 flow면 validate 4b의 `image:` 스칼라 정규식에 걸려 WARN — cert-manager 선례 주석).
+        # Deployment env `OPERATOR_IMAGE_NAME`도 같은 문자열이 된다 = 인스턴스 파드의 instance manager init 컨테이너 이미지(ns data).
+        # ⚠ 차트 `version` bump PR은 이 digest와 아래 플러그인 digest 2개를 **함께** 갱신한다 — 자동 검사가 없다(README §2).
+        tag: "1.30.0@sha256:a2701eb97cdd2a34b1fdb2cb51987f544b706e40bec72ae7146cd8580efefebb"
+
+      config:
+        create: true                                # ConfigMap cnpg-controller-manager-config(기본 이름 · `secret: false` 기본)
+        clusterWide: true                           # 기본값 명시 — ns data의 Cluster를 본다(false면 Role/RoleBinding 경로로 바뀐다)
+        data:
+          # research CNPG-D1: operator 업그레이드 때 인스턴스 파드를 재시작하지 않고 instance manager만 제자리 교체 —
+          # 단일 PG 인스턴스(pg-main)의 재시작 다운타임 회피. ConfigMap data라 값은 **문자열** "true"다.
+          ENABLE_INSTANCE_MANAGER_INPLACE_UPDATES: "true"
+
+      webhook:
+        port: 9443                                  # 명시해야 validate 5.4b(HELM_PORT_KEYS `cnpg .webhook.port 9443`)가 실제로 대조한다.
+                                                    # 계약 §포트 각주 · PORT_TABLE · 정책 allow-apiserver-webhook 3중 일치 — **변경 금지**(셋을 함께).
+                                                    # Service cnpg-webhook-service는 443 → targetPort 이름 webhook-server(= 이 포트)
+        mutating:
+          create: true
+          failurePolicy: Fail                       # 기본값 명시. ⚠ webhook이 죽으면 CNPG CR의 CREATE·UPDATE가 거부된다(DELETE는 가로채지 않는다 — 머리 주석 · README §4 · ESO와 다르다)
+        validating:
+          create: true
+          failurePolicy: Fail
+
+      rbac:
+        create: true
+        aggregateClusterRoles: false                # 기본값이지만 **명시** — 검사 13.6 기준선(aggregate-to-* 라벨 ClusterRole 정확히 5: cert-manager 3 · ESO 2).
+                                                    # 차트는 `-view`·`-edit` ClusterRole을 항상 렌더하고 라벨만 이 키로 켠다 → 라벨 없이 렌더(바인딩 0 · 폭발 반경 0, README §5).
+                                                    # agent-view는 `platform/policies/rbac-agent-view.yaml`의 agent-view-extra로 postgresql.cnpg.io를 이미 읽는다.
+
+      # 계약 §워크로드 강화 — 차트 기본값 **전체 맵**을 그대로 명시(ns PSA baseline). 깊은 병합에 기대지 않는다.
+      containerSecurityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+        capabilities:
+          drop: [ALL]
+      podSecurityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+
+      resources:                                    # 차트 기본 `{}`. plan A14 노드 B 예산 "CNPG 오퍼레이터 0.2 GiB"(requests 기준) — 초기 추정, T097 실측 교정(VD)
+        requests:
+          cpu: 50m
+          memory: 200Mi
+        limits:
+          memory: 400Mi                             # CPU limit은 두지 않는다(저장소 관례 · validate 5.5와 같은 취지)
+
+      nodeSelector:
+        role: data                                  # 과제 문면 · plan A14 노드 B(cert-manager 3종과 같은 노드). 배치 단언은 T097
+
+      monitoring:
+        podMonitorEnabled: false                    # 기본값 명시 — PodMonitor CRD 없음. 스크레이프는 T098(platform/monitoring) 소유, metrics 8080은 정책 행과 짝
+        grafanaDashboard:
+          create: false
+
+      # 적지 않는 것: `service.*`(443 — 5.4c WARN 회피 · 차트 기본 그대로) · `additionalArgs`·`additionalEnv` · `hostNetwork` · `priorityClassName`
+      #   · `updateStrategy` · `affinity` · `config.name`·`config.secret`·`config.maxConcurrentReconciles`(기본값) · `monitoringQueriesConfigMap`(기본 쿼리 ConfigMap 1장 그대로)
+
+  # ── ② plugin-barman-cloud (CNPG-I 백업 플러그인) ─────────────────────────
+  - name: plugin-barman-cloud
+    repo: https://cloudnative-pg.github.io/charts   # 위와 같은 HTTPS helm repo(허용 목록 둘째 행)
+    version: 0.7.1                                  # appVersion v0.14.0. 대조용 실측: index.yaml tgz sha256
+                                                    #   3b385372b21c9a5bfb12283726ef3a7a726ce1f7dbafa2c27e49aa50eb6207f2 (2026-10-08)
+                                                    # 최신은 0.8.1(v0.15.1, 2026-09-30) — 과제 문면 동결(README §2 · T116)
+    releaseName: plugin-barman-cloud                # fullname = plugin-barman-cloud(Deployment · SA · ClusterRole · ClusterRoleBinding -binding · Role -leader-election-role)
+                                                    # Service barman-cloud(차트 고정 — 인증서 이름에 쓰인다) · Issuer plugin-barman-cloud-selfsigned-issuer
+    namespace: cnpg-system                          # operator와 **같은 ns 필수**(플러그인 발견 계약 — 머리 주석)
+    valuesInline:
+      replicaCount: 1
+      crds:
+        create: true                                # ObjectStore CRD 1장(barmancloud.cnpg.io)
+
+      image:
+        # `image.digest` 키 없음 → 태그에 병기 · 블록 스타일(위와 같은 이유). 인덱스 digest(linux/amd64 + arm64).
+        tag: "v0.14.0@sha256:823a8893690980ba5830bbbb11196a35f695b0488db7d846abc33baebf32417c"
+      sidecarImage:
+        # ConfigMap plugin-barman-cloud-config의 `SIDECAR_IMAGE`로 렌더된다 — operator가 **ns data의 인스턴스 파드**에 주입하는 사이드카 이미지.
+        # ⚠ validate 4b 정규식은 `image:` 줄만 보므로 이 키는 자동 검사 밖이다 — README §2의 grep(digest 3건)이 유일한 그물.
+        tag: "v0.14.0@sha256:9880817c285c7afa4d195da2145064d21907405489ed6ec39abe59b1feb558a4"
+
+      rbac:
+        create: true
+        cnpgGroup: postgresql.cnpg.io               # 기본값 명시 — backups get/list/watch · clusters/finalizers update의 API 그룹
+
+      containerSecurityContext:                     # 차트 기본값 전체 명시(operator와 같은 값 · 같은 이유)
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+        capabilities:
+          drop: [ALL]
+      podSecurityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+
+      resources:                                    # plan A14 "barman-cloud 플러그인 0.1 GiB" — 초기 추정, T097 실측 교정
+        requests:
+          cpu: 20m
+          memory: 100Mi
+        limits:
+          memory: 200Mi
+
+      nodeSelector:
+        role: data
+
+      certificate:
+        # "cert-manager 재사용" = cert-manager **설치**를 재사용해 자체 self-signed Issuer로 서버·클라이언트 인증서(gRPC mTLS)를 발급한다.
+        # ClusterIssuer(LE)와 무관 · 공개 인증서 아님. cert-manager CRD·컨트롤러는 앞 wave(T042)에 이미 있다. 전부 차트 기본값 명시.
+        createIssuer: true
+        issuerName: ""                              # 비우면 Issuer `<fullname>-selfsigned-issuer`(spec.selfSigned) — 릴리스 ns
+        createServerCertificate: true               # Certificate barman-cloud-server → Secret barman-cloud-server-tls
+        createClientCertificate: true               # Certificate barman-cloud-client → Secret barman-cloud-client-tls
+        duration: 2160h
+        renewBefore: 360h
+
+      # 적지 않는 것: `service.*`(9090 — 5.4c WARN 회피 · 이름 barman-cloud는 차트가 "변경 금지"로 못박는다) · `additionalArgs`(`--log-level=debug`는
+      #   차트 고정 인자 — 로그가 많다, T098 Alloy 필터 후보 · README §4) · `updateStrategy`(Deployment strategy는 Recreate 고정).
+
+patches:
+  # CRD 삭제 보호(계약 §삭제 보호 · cert-manager 선례 그대로). 대상 = 두 차트의 CRD **12장 전부** —
+  #   postgresql.cnpg.io 11: backups · clusters · clusterimagecatalogs · databaseroles · databases · failoverquorums · imagecatalogs · poolers ·
+  #   publications · scheduledbackups · subscriptions / barmancloud.cnpg.io 1: objectstores.
+  # 하네스 `argo-4-cnpg-crd`(모노레포 tests/platform/cluster.tests.ps1)가 그룹 cnpg.io·*.cnpg.io CRD 전부에 **정확히** 이 값이 있는지 본다 —
+  #   글자·순서·공백을 바꾸지 않는다. 차트의 `helm.sh/resource-policy: keep`은 그대로 남는다(Argo prune과 무관 — 해롭지 않다).
+  # SMP를 쓰는 이유: JSON6902 `add`는 `annotations` 맵이 없으면 빌드가 깨진다(T041 교훈). patch 안의 `name`은 자리표시자 — 대상 선택은
+  #   `target`이 하고 kustomize가 적용 뒤 원래 name을 복원한다(렌더로 검증).
+  - target:
+      group: apiextensions.k8s.io
+      version: v1
+      kind: CustomResourceDefinition
+    patch: |-
+      apiVersion: apiextensions.k8s.io/v1
+      kind: CustomResourceDefinition
+      metadata:
+        name: placeholder-target-selector-decides
+        annotations:
+          argocd.argoproj.io/sync-options: Delete=false,Prune=false

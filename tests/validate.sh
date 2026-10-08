@@ -468,6 +468,8 @@ cert-manager oci://quay.io/jetstack/charts
 external-secrets https://charts.external-secrets.io
 reloader https://stakater.github.io/stakater-charts
 vault https://helm.releases.hashicorp.com
+cloudnative-pg https://cloudnative-pg.github.io/charts
+plugin-barman-cloud https://cloudnative-pg.github.io/charts
 '
 # 12.4 — Argo CD 설정이 사는 kustomization 디렉터리, 그 렌더의 ConfigMap(ns/이름)과 data 키, 그 값에 있어야 할 낱말.
 #   yq 식(YQ_ARGOCD_CM)이 strenv로 읽으므로 export한다.
