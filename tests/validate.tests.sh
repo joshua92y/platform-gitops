@@ -192,6 +192,8 @@ if command -v kustomize >/dev/null 2>&1 && command -v kubeconform >/dev/null 2>&
   # ES 수: `secrets/<ns>`의 ES는 파일 · 자기 디렉터리 렌더 · 배달자 렌더로 3번 세어진다 —
   # 배달자에 ns를 하나 더하면 +3이다(T045 G4에서 두 번째 ns를 더해 23 → 26).
   positive_asserts+=('+[PASS] 1 KUST' '+[PASS] 1b KUST-plain' '+ExternalSecret 26개(파일+렌더링)'
+    # 검사 1(T053): CRD 파생 스키마 줄은 안정 어구만 단언한다 — 긍정 트리는 CRD 0개("CRD 0개 → 스키마 파일 0개")라 수는 단언하지 않는다
+    '+CRD 스키마 파생:'
     '+webhook 정책을 담은 소스: 원본 1 · 렌더 1'
     # 검사 10(T046): 긍정 트리의 platform/reloader는 순수 매니페스트라 helm 없이 렌더된다(kustomize만 필요).
     '+[PASS] 10 REL — platform/reloader (rendered): ClusterRole·ClusterRoleBinding 0 · Deployment reloader/reloader args = ["--log-level=info","--namespaces=identity,jt-dev,jt-prod,reloader","--reload-strategy=annotations"] · kind {ServiceAccount 1 · Deployment 1 · Role 5 · RoleBinding 5}(합계 12) · Role·RoleBinding ns 집합 = {identity,jt-dev,jt-prod,reloader} · RoleBinding → 같은 ns의 Role · 주체 = ServiceAccount reloader/reloader · reloader-role 규칙 동일·와일드카드 없음 · Reloader 이미지 컨테이너 1개(containers.0 · command 없음)'
@@ -215,6 +217,29 @@ else
   kust_plain_asserts+=('+[SKIP] 1b KUST-plain — 도구 없음(kubeconform)')
 fi
 run_case kust-plain "$FIX/kust-plain" 1 "${kust_plain_asserts[@]}"
+
+# --- 1: CRD 스키마 = 저장소 렌더 CRD 파생 1순위 · datreeio 폴백(T053 · 계약 §validate.yml 1 — 2026-10-13 개정) ----------------------
+#   datreeio의 barmancloud.cnpg.io/objectstore_v1.json(2025-06-17 사본)은 data.compression lz4를 거부하지만 라이브 차트(plugin-barman-cloud 0.7.1 =
+#   appVersion v0.14.0)의 CRD는 허용한다 — 검사 1은 렌더에 나온 CustomResourceDefinition의 spec.versions[].schema.openAPIV3Schema를 저장소 밖 임시
+#   디렉터리(validate-crd-schemas.*)에 파생해 kubeconform -schema-location의 datreeio 앞에 둔다(validate.sh KC_ARGS · derive_crd_schemas).
+#   crd-schema-repo-first : 렌더에 최소 ObjectStore CRD(enum에 lz4) + ObjectStore lz4 → 1 KUST PASS(datreeio만 보던 코드는 FAIL — 2026-10-13 실측 = red)
+#   crd-schema-reject     : 같은 CRD + ObjectStore zstd(enum 밖) → 1 KUST FAIL · 메시지의 enum에 lz4가 있고 스키마 경로가 validate-crd-schemas.* 다
+#                           (= 파생 스키마가 적용됐다는 증명 — datreeio 메시지의 enum에는 lz4가 없고 경로는 raw.githubusercontent.com/datreeio/… 다)
+#   둘 다 부분 트리라 exit 1(다른 검사의 FAIL은 판정 근거가 아니다 — 머리 주석). 파생 줄은 안정 어구(`CRD 스키마 파생:`)만 단언한다 — 수는 트리마다 다르다.
+crd_schema_repo_first_asserts=(); crd_schema_reject_asserts=()
+if command -v kustomize >/dev/null 2>&1 && command -v kubeconform >/dev/null 2>&1; then
+  crd_schema_repo_first_asserts+=('+[PASS] 1 KUST' '-[FAIL] 1 KUST' '+CRD 스키마 파생:')
+  crd_schema_reject_asserts+=('+[FAIL] 1 KUST — kubeconform 실패: platform/barman-crd'
+    "+'bzip2', 'gzip', 'lz4', 'snappy'" '+validate-crd-schemas.' '-[PASS] 1 KUST' '+CRD 스키마 파생:')
+elif command -v kustomize >/dev/null 2>&1; then
+  crd_schema_repo_first_asserts+=('+[SKIP] 1 KUST — 도구 없음(kubeconform)')
+  crd_schema_reject_asserts+=('+[SKIP] 1 KUST — 도구 없음(kubeconform)')
+else
+  crd_schema_repo_first_asserts+=('+[SKIP] 1 KUST — 도구 없음(kustomize)')
+  crd_schema_reject_asserts+=('+[SKIP] 1 KUST — 도구 없음(kustomize)')
+fi
+run_case crd-schema-repo-first "$FIX/crd-schema/repo-first" 1 "${crd_schema_repo_first_asserts[@]}"
+run_case crd-schema-reject "$FIX/crd-schema/reject" 1 "${crd_schema_reject_asserts[@]}"
 
 # --- ExternalSecret 규약 보강(3.0) · ①–⑦ ---------------------------------------
 run_case es-0-conventions "$FIX/es-0-conventions" 1 \

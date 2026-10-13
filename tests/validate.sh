@@ -12,8 +12,9 @@
 #
 # 검사 순서(= 모노레포 tasks.md T033 문면 순서) · 출력 코드:
 #   0    TOOL / YAML        도구 존재(fail-closed) · YAML 파싱
-#   1    KUST               모든 kustomization.yaml `kustomize build` + `kubeconform -strict -ignore-missing-schemas`
-#   1b   KUST-plain         (보강) kustomization 밖 매니페스트(clusters/**, bootstrap/root-app.yaml)도 kubeconform
+#   1    KUST               모든 kustomization.yaml `kustomize build` + `kubeconform -strict -ignore-missing-schemas` — CRD 스키마 = 저장소 렌더 CRD 파생
+#                           1순위 · datreeio 카탈로그 폴백(T053 · 계약 §validate.yml 1: 렌더의 CustomResourceDefinition → <임시 디렉터리>/<group>/<kind 소문자>_<version>.json)
+#   1b   KUST-plain         (보강) kustomization 밖 매니페스트(clusters/**, bootstrap/root-app.yaml)도 kubeconform(같은 스키마 순서 — 검사 1 뒤에 돈다)
 #   2    APP-SSA            Application마다 syncOptions에 ServerSideApply=true
 #   3.0  ES-apiVersion/store/dataFrom/sourceRef   ExternalSecret 규약 보강(계약 §이름·인증 규약)
 #   3.1  ES-①              remoteRef.key 정규식 ^(platform|dev|prod)/[a-z0-9_./-]+$ (k8s-data-ca 제외)
@@ -200,8 +201,9 @@
 #   VALIDATE_KUBECONFORM_CACHE kubeconform 스키마 캐시 디렉터리(기본 ${TMPDIR:-/tmp}/kubeconform-cache — 저장소 밖 임시 경로)
 #   GITHUB_EVENT_NAME=pull_request|pull_request_target | VALIDATE_REQUIRE_AUTHOR=1   PR_AUTHOR 또는 PR_SENDER가 비어 있으면 검사 6 FAIL
 #
-# 원칙: --root 트리(와 명시적으로 넘긴 입력 파일) 밖을 읽거나 쓰지 않는다(예외: kubeconform 스키마 캐시만 저장소 밖
-#       임시 경로에 둔다). 스크립트가 직접 임시 파일을 만들지 않는다(파이프·변수만) — 단, 검사 1의 kustomize --enable-helm
+# 원칙: --root 트리(와 명시적으로 넘긴 입력 파일) 밖을 읽거나 쓰지 않는다(예외: 저장소 밖 임시 경로 둘 — kubeconform 스키마 캐시 ·
+#       검사 1의 CRD 파생 스키마 디렉터리 ${TMPDIR:-/tmp}/validate-crd-schemas.*(mktemp · EXIT trap으로 삭제 · T053 — 바꾸는 환경변수 없음)).
+#       스크립트가 직접 임시 파일을 만들지 않는다(파이프·변수만 — 단, CRD 파생 스키마 파일은 그 임시 디렉터리에만 쓴다) — 또 검사 1의 kustomize --enable-helm
 #       인플레이트가 <kustomization>/charts/ 아래에 차트를 풀어 둔다(빌드 산출물 · .gitignore 대상). 자격·비밀을 요구하지 않는다.
 #       결과는 [PASS]/[FAIL]/[WARN]/[SKIP] 한 줄씩이며 FAIL이 하나라도 있으면 exit 1(SKIP은 exit에 영향 없음 —
 #       단, 요약에 "불완전"으로 표시).
@@ -548,6 +550,18 @@ RE_BOT_LINE='^[[:space:]]*(-[[:space:]]*)?digest:[[:space:]]*sha256:[0-9a-f]{64}
 RE_PORT_KEY='(^|\.)(port|[a-z]+Port[A-Za-z]*)$'
 RE_ADDR='^[A-Za-z0-9.:_-]*:([0-9]{2,5})$'
 DATREE_SCHEMA='https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
+# 검사 1 — CRD 파생 스키마(T053 · 계약 §validate.yml 1 — 2026-10-13 개정): 저장소 렌더에 나온 CustomResourceDefinition의 spec.versions[].schema.openAPIV3Schema를
+#   JSON으로 CRD_SCHEMA_DIR/<group>/<kind 소문자>_<version>.json 에 쓰고(datreeio 카탈로그와 같은 배치 — kubeconform이 {{.ResourceKind}}를 kind 소문자로
+#   치환한다) kubeconform -schema-location의 datreeio 앞에 둔다(KC_ARGS). 스키마 출처가 라이브에 적용되는 차트 버전과 항상 같다 — datreeio 사본은 오래될 수
+#   있다(2026-10-13: barmancloud.cnpg.io/objectstore_v1.json 이 2025-06-17 사본이라 라이브 CRD가 받는 data.compression lz4를 거부한 거짓 음성 — 이 개정의 계기).
+#   kubeconform은 위치를 순서대로 찾고 파일이 없으면 다음 위치로 넘어간다(2026-10-13 실측) — 디렉터리가 비어 있어도(CRD 0개 · kustomize 없음 · SKIP 모드)
+#   datreeio만 쓴 결과와 같다. CRD_SCHEMA_DIR는 시작 절에서 mktemp로 만들고(kubeconform이 있을 때만 · --only-author 모드는 시작 절을 건너뛰므로 만들지 않는다)
+#   EXIT trap으로 지운다(이 스크립트의 유일한 trap — 더하려면 여기에 합친다). 채우는 쪽은 검사 1 패스 1.5(derive_crd_schemas).
+CRD_SCHEMA_TMPL='{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
+CRD_SCHEMA_DIR=''
+crd_schema_cleanup() { # EXIT trap — mktemp가 만든 디렉터리만 지운다(경로 모양을 한 번 더 확인)
+  if [[ -n ${CRD_SCHEMA_DIR:-} && -d $CRD_SCHEMA_DIR && $CRD_SCHEMA_DIR == */validate-crd-schemas.* ]]; then rm -rf -- "$CRD_SCHEMA_DIR"; fi
+}
 
 # -----------------------------------------------------------------------------
 # 결과 기록
@@ -839,8 +853,22 @@ else
     fi
   done
 
-  # kubeconform 공통 인자. 스키마 캐시는 저장소 밖 임시 경로(카탈로그를 실행마다 다시 받지 않도록) — 생성 실패 시 캐시 없이 진행
-  KC_ARGS=(-strict -ignore-missing-schemas -summary -kubernetes-version "$K8S_VERSION" -schema-location default -schema-location "$DATREE_SCHEMA")
+  # kubeconform 공통 인자. -schema-location 순서(T053 · 계약 §validate.yml 1) = default(내장 쿠버네티스 API) → CRD 파생 스키마(CRD_SCHEMA_DIR — 검사 1 패스 1.5가
+  #   렌더 CRD에서 채운다 · DATREE_SCHEMA 아래 주석) → datreeio 카탈로그(렌더에 없는 kind의 폴백). 파생 디렉터리는 저장소 밖 임시 경로(mktemp · EXIT trap으로 삭제).
+  #   생성 실패 시 그 위치 없이(datreeio만으로) 진행하고 줄로 드러낸다 — 그러면 렌더 CRD가 받는 값을 카탈로그 사본이 거부하는 거짓 음성이 다시 날 수 있다(막는 쪽).
+  #   스키마 캐시는 저장소 밖 임시 경로(카탈로그를 실행마다 다시 받지 않도록) — 생성 실패 시 캐시 없이 진행
+  KC_ARGS=(-strict -ignore-missing-schemas -summary -kubernetes-version "$K8S_VERSION" -schema-location default)
+  if [[ ${TOOL_OK[kubeconform]} == 1 ]]; then
+    if CRD_SCHEMA_DIR=$(mktemp -d "${TMPDIR:-/tmp}/validate-crd-schemas.XXXXXX" 2>/dev/null) && [[ -d $CRD_SCHEMA_DIR ]]; then
+      trap crd_schema_cleanup EXIT
+      KC_ARGS+=(-schema-location "$CRD_SCHEMA_DIR/$CRD_SCHEMA_TMPL")
+      printf '  kubeconform CRD 파생 스키마 디렉터리: %s (검사 1이 렌더 CRD에서 채운다 · datreeio보다 앞 · 실행 뒤 삭제)\n' "$CRD_SCHEMA_DIR"
+    else
+      CRD_SCHEMA_DIR=''
+      printf '  kubeconform CRD 파생 스키마 디렉터리 생성 실패(%s) — 렌더 CRD 파생 없이 datreeio 카탈로그만으로 실행\n' "${TMPDIR:-/tmp}/validate-crd-schemas.XXXXXX"
+    fi
+  fi
+  KC_ARGS+=(-schema-location "$DATREE_SCHEMA")
   if [[ ${TOOL_OK[kubeconform]} == 1 ]]; then
     if mkdir -p "$KUBECONFORM_CACHE" 2>/dev/null; then
       KC_ARGS+=(-cache "$KUBECONFORM_CACHE")
@@ -1015,12 +1043,89 @@ helm_src_scan() {
 
 # -----------------------------------------------------------------------------
 # 검사 1 — kustomize build + kubeconform (렌더링 결과는 이후 검사에도 원본으로 추가)
+#   (T053 · 계약 §validate.yml 1) 두 패스: 패스 1 = 모든 kustomization을 렌더해 add_src로 모은다(kubeconform은 아직) → 패스 1.5 = 모인 렌더의
+#   CustomResourceDefinition에서 스키마 파생(derive_crd_schemas → CRD_SCHEMA_DIR) → 패스 2 = 렌더마다 kubeconform(KC_ARGS: default → 파생 → datreeio).
+#   한 패스였다면 CRD를 설치하는 kustomization보다 먼저 렌더된 CR이 파생 스키마를 보지 못한다. 검사 1b는 같은 KC_ARGS를 쓰므로 검사 1 뒤에 돈다(「실행」 절)
 # -----------------------------------------------------------------------------
+# 패스 1.5의 yq 추출 — 렌더의 CRD 문서마다 spec.versions[] 항목 하나가 한 행: group · kind · version · openAPIV3Schema(compact JSON · to_json(0)) 또는 "-"
+#   (스키마 없는 버전). 렌더를 한 번만 파싱한다(버전마다 다시 파싱하지 않는다 — Windows 로컬의 프로세스 생성 비용). 렌더는 kustomize가 새로 직렬화한
+#   출력이라 별칭이 없다(YQ_DOCS 주석) — explode 없이 읽는다. 맵이 아닌 문서·spec·names·versions 항목은 select로 건너뛴다. compact JSON 한 줄에는 US(0x1f)가
+#   들어갈 수 없으므로(JSON은 제어 문자를 \u001f로 이스케이프한다) 4번째 필드가 행의 나머지 전부다. 선택되지 않은 문서의 빈 줄은 src_extract가 지운다
+# shellcheck disable=SC2016  # $g·$k 는 yq 변수다
+YQ_CRD_SCHEMAS='select(kind == "map") | select(((.kind // "") | tostring) == "CustomResourceDefinition") | (((.spec | select(kind == "map") | .group) // "-") | tostring) as $g | (((.spec | select(kind == "map") | .names | select(kind == "map") | .kind) // "-") | tostring) as $k | (((.spec | select(kind == "map") | .versions) | select(kind == "seq")) // [])[] | select(kind == "map") | [ $g, $k, ((.name // "-") | tostring), ((.schema | select(kind == "map") | .openAPIV3Schema | select(kind == "map") | to_json(0)) // "-") ] | join(strenv(YQ_SEP))'
+# 파일 이름에 쓰는 세 값의 모양(파일시스템 안전 — 셸이 행마다 확인하고 아니면 WARN으로 건너뛴다). version은 K8s가 DNS 라벨만 요구하므로 v1·v1beta1 밖도 허용
+RE_CRD_GROUP='^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$'
+RE_CRD_KIND='^[A-Za-z][A-Za-z0-9]*$'
+RE_CRD_VERSION='^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
+derive_crd_schemas() { # <SRC 인덱스>... — 패스 1.5. 요약 한 줄을 찍는다(수는 트리마다 다르므로 자기검사는 어구 `CRD 스키마 파생:`만 단언한다)
+  local i rows g k v s path target ncrd=0 nfile=0 nskip=0 nbad=0 ndup=0
+  local -A seen_crd=() seen_group=() file_src=()
+  if [[ -z $CRD_SCHEMA_DIR ]]; then
+    printf '  CRD 스키마 파생 건너뜀 — 임시 디렉터리 없음(검사 0의 생성 실패 줄) · kubeconform은 datreeio 카탈로그만 본다\n'
+    return 0
+  fi
+  if [[ ${TOOL_OK[yq]:-0} != 1 ]]; then
+    printf '  CRD 스키마 파생 건너뜀 — 도구 없음(yq) · kubeconform은 datreeio 카탈로그만 본다\n'
+    return 0
+  fi
+  for i in "$@"; do
+    if ! rows=$(src_extract "$i" "$YQ_CRD_SCHEMAS"); then
+      fail "1 KUST" "CRD 스키마 파생 실패(yq 추출): ${SRC_LABEL[$i]}"
+      continue
+    fi
+    [[ -n $rows ]] || continue
+    while IFS=$YQ_SEP read -r g k v s; do
+      if [[ ! $g =~ $RE_CRD_GROUP || ! $k =~ $RE_CRD_KIND || ! $v =~ $RE_CRD_VERSION || -z $s ]]; then
+        nbad=$((nbad + 1))
+        warn "1 KUST" "CRD 스키마 파생 건너뜀: ${SRC_LABEL[$i]} CRD group='$g' kind='$k' version='$v' — 이름 형식이 아니거나 행 모양 이상(파일로 쓰지 않는다)"
+        continue
+      fi
+      if [[ -z ${seen_crd[$g/$k]:-} ]]; then seen_crd[$g/$k]=1; ncrd=$((ncrd + 1)); fi
+      if [[ $s == - ]]; then nskip=$((nskip + 1)); continue; fi
+      if [[ $s != \{* ]]; then
+        nbad=$((nbad + 1))
+        warn "1 KUST" "CRD 스키마 파생 건너뜀: ${SRC_LABEL[$i]} CRD $g/$k 버전 $v — openAPIV3Schema가 JSON 객체로 읽히지 않는다"
+        continue
+      fi
+      path="$g/${k,,}_$v.json"; target="$CRD_SCHEMA_DIR/$path"
+      if [[ -f $target ]]; then
+        # 같은 경로가 두 번(두 컴포넌트가 같은 CRD를 렌더) — 내용이 같으면 무시, 다르면 WARN(어느 두 렌더인지) · 먼저 나온 것을 쓴다
+        if [[ $s == "$(< "$target")" ]]; then
+          ndup=$((ndup + 1))
+        else
+          warn "1 KUST" "CRD 스키마 충돌: $path — ${file_src[$path]:-?}와 ${SRC_LABEL[$i]}의 openAPIV3Schema가 다르다(먼저 나온 ${file_src[$path]:-?}의 것을 쓴다)"
+        fi
+        continue
+      fi
+      if [[ -z ${seen_group[$g]:-} ]]; then
+        if ! mkdir -p "$CRD_SCHEMA_DIR/$g" 2>/dev/null; then
+          fail "1 KUST" "CRD 스키마 파생 실패(디렉터리 생성): $CRD_SCHEMA_DIR/$g"
+          continue
+        fi
+        seen_group[$g]=1
+      fi
+      if ! printf '%s\n' "$s" > "$target"; then
+        fail "1 KUST" "CRD 스키마 파생 실패(파일 쓰기): $target"
+        continue
+      fi
+      file_src[$path]=${SRC_LABEL[$i]}
+      nfile=$((nfile + 1))
+    done < <(printf '%s\n' "$rows")
+  done
+  local extra=''
+  [[ $nskip -eq 0 ]] || extra+=" · openAPIV3Schema 없는 버전 ${nskip}개 건너뜀"
+  [[ $ndup -eq 0 ]] || extra+=" · 같은 스키마 중복 ${ndup}개 무시"
+  [[ $nbad -eq 0 ]] || extra+=" · 모양 이상 ${nbad}개 건너뜀(WARN)"
+  printf '  CRD 스키마 파생: CRD %d개 → 스키마 파일 %d개(그룹 %d개)%s — kubeconform 1순위 · 렌더에 없는 kind는 datreeio 폴백\n' \
+    "$ncrd" "$nfile" "${#seen_group[@]}" "$extra"
+}
+
 check_1_kustomize() {
   header 1 "kustomize build(모든 kustomization) + kubeconform -strict -ignore-missing-schemas"
   need_tool "1 KUST" kustomize || return 0
-  local fails_before=$N_FAIL n=0 kfile dir rdir rendered has_helm out
-  local -a flags
+  local fails_before=$N_FAIL n=0 kfile dir rdir rendered has_helm out i
+  local -a flags ridx=()
+  # 패스 1 — 렌더만 모은다(kubeconform은 패스 2: 파생 스키마가 모든 렌더의 CRD를 본 뒤에 돌아야 한다)
   for kfile in "${KUST_FILES[@]}"; do
     dir=$(dirname "$kfile"); rdir=$(rel "$dir")
     # (T047) 차트 출처 판정(12.1–12.3 — helm_src_scan)에 걸린 kustomization은 빌드하지 않는다: --enable-helm 빌드가 허용하지 않은 출처의
@@ -1043,17 +1148,21 @@ check_1_kustomize() {
     fi
     rendered=$(printf '%s' "$rendered" | tr -d '\r')
     add_src "$rdir" "$rdir (rendered)" rendered "$rendered"
+    ridx+=("$((SRC_N - 1))")
     n=$((n + 1))
-    if [[ ${TOOL_OK[kubeconform]} == 1 ]]; then
-      if ! out=$(printf '%s\n' "$rendered" | kubeconform "${KC_ARGS[@]}" 2>&1); then
-        fail "1 KUST" "kubeconform 실패: $rdir — $(printf '%s' "$out" | tr -d '\r' | head -n 5 | tr '\n' ' ')"
-      fi
-    fi
   done
-  if [[ ${TOOL_OK[kubeconform]} != 1 ]]; then
+  if [[ ${TOOL_OK[kubeconform]} == 1 ]]; then
+    # 패스 1.5 — 렌더의 CRD에서 스키마 파생(요약 한 줄) → 패스 2 — 렌더마다 kubeconform(KC_ARGS: default → 파생 → datreeio)
+    derive_crd_schemas "${ridx[@]}"
+    for i in "${ridx[@]}"; do
+      if ! out=$(printf '%s\n' "${SRC_CONTENT[$i]}" | kubeconform "${KC_ARGS[@]}" 2>&1); then
+        fail "1 KUST" "kubeconform 실패: ${SRC_PATH[$i]} — $(printf '%s' "$out" | tr -d '\r' | head -n 5 | tr '\n' ' ')"
+      fi
+    done
+  else
     need_tool "1 KUST" kubeconform || true
   fi
-  finish_group "1 KUST" "kustomization ${n}개 빌드·스키마 검증(렌더링 결과는 검사 3에도 포함)" "$fails_before"
+  finish_group "1 KUST" "kustomization ${n}개 빌드·스키마 검증(CRD 파생 스키마 우선 · 렌더링 결과는 검사 3에도 포함)" "$fails_before"
 }
 
 # 1b(보강) — 어떤 kustomization에도 속하지 않는 매니페스트(clusters/**, bootstrap/root-app.yaml 등 Argo가 디렉터리로 읽는 것)도 kubeconform.
@@ -3200,7 +3309,7 @@ fi
 load_wave_table
 helm_src_scan        # 12.1–12.3 사전 판정(출력 없음) — 걸린 kustomization을 검사 1이 렌더하지 않게 검사 1보다 먼저 돈다. 줄은 검사 12가 찍는다
 check_1_kustomize
-check_1b_plain
+check_1b_plain       # 검사 1 뒤 — 같은 KC_ARGS로 검사 1(패스 1.5)이 파생한 CRD 스키마를 본다(T053)
 check_2_app_ssa
 check_3_externalsecrets
 check_3_workloads

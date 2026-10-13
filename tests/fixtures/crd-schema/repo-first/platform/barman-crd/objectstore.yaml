@@ -1,0 +1,12 @@
+# crd-schema/repo-first — 판정 대상은 data.compression 한 줄(lz4 = 렌더 CRD enum 안 · datreeio 2025-06-17 사본의 enum 밖 → 파생 스키마가 앞이면 PASS).
+#   나머지는 CRD required(metadata · spec.configuration.destinationPath)만 — 스키마에 없는 필드는 넣지 않는다(-strict).
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: oci-backups
+  namespace: data
+spec:
+  configuration:
+    destinationPath: s3://example/x/
+    data:
+      compression: lz4
