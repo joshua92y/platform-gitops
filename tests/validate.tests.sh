@@ -374,6 +374,21 @@ run_case pol-port "$FIX/pol-port" 1 \
   '-helm values server.extraArgs' \
   "+[FAIL] 5.6 POL-webhook-port — platform/policies/policies.yaml NetworkPolicy/vault/allow-apiserver-webhook #1: 계약 포트 8200 밖의 ingress 규칙 — ports [8201]" \
   "+[FAIL] 5.6 POL-webhook-port — platform/policies/policies.yaml NetworkPolicy/vault/allow-apiserver-webhook: 계약 포트 8200을 가진 ingress 규칙이 없음"
+# 5.4a PORT_TABLE 신규 행 `data 8000 cnpg-instance-manager`(T053 선행 — 계약 §포트 출처 각주 "CNPG instance manager 8000")의 red 대조.
+#   픽스처 = 긍정 트리 platform/policies 5파일의 사본에서 ingress `data/allow-from-cnpg-operator`(8000)만 뺀 것.
+#   data 8000 행만 FAIL하고, 같은 ns의 다른 각주 포트(9187·9404)와 webhook·vault 포트(10250·9443·8200)는 그대로 통과해야 한다(격리 증명).
+run_case pol-port-cnpg-8000 "$FIX/pol-port-cnpg-8000" 1 \
+  "+[FAIL] 5.4 POL-port-table — ns 'data' 포트 8000(cnpg-instance-manager): 계약 §포트 출처 각주의 포트가 platform/policies의 ingress ports에 없음" \
+  "-POL-port-table — ns 'data' 포트 9187" \
+  "-POL-port-table — ns 'data' 포트 9404" \
+  "-POL-port-table — ns 'vault'" \
+  "-POL-port-table — ns 'cnpg-system'" \
+  "-POL-port-table — ns 'cert-manager'" \
+  "-POL-port-table — ns 'external-secrets'" \
+  "-POL-port-table — ns 'jt-" \
+  "-POL-port-table — ns 'identity'" \
+  "-POL-port-table — ns 'argocd'" \
+  '+[PASS] 5.1 POL-ns' '+[PASS] 5.2 POL-set' '+[PASS] 5.3 POL-egress' '+[PASS] 5.6 POL-webhook-src'
 run_case pol-limitrange "$FIX/pol-limitrange" 1 \
   "+[FAIL] 5.5 POL-limitrange — platform/policies/limitrange.yaml LimitRange/jt-dev/defaults[Container]: default.cpu=500m 금지" \
   "+LimitRange/jt-dev/defaults[Container]: max.cpu=2 금지"

@@ -32,7 +32,7 @@
 |---|---|---|---|
 | `namespaces.yaml` | Namespace 14개 + PSA 라벨(`enforce`=`warn`=`audit`) + 삭제 보호 어노테이션 | 14 | `network-policy.md` §네임스페이스 표 |
 | `policies-common.yaml` | 공통 정책 세트 5종 + 조건부 2종 | 49 | 같은 문서 §정책 세트(공통 5종 표 + 조건부 2종 표) |
-| `policies-matrix.yaml` | 클러스터 **내부** 허용 매트릭스(도착 ingress 21 + 출발 egress 10) | 31 | 같은 문서 §허용 매트릭스 — 클러스터 내부 |
+| `policies-matrix.yaml` | 클러스터 **내부** 허용 매트릭스(도착 ingress 22 + 출발 egress 11) | 33 | 같은 문서 §허용 매트릭스 — 클러스터 내부 |
 | `policies-external.yaml` | 클러스터 **밖**·노드 IP egress | 13 | 같은 문서 §허용 매트릭스 — 클러스터 밖 · 노드 IP |
 | `quota.yaml` | `jt-dev`·`jt-prod`의 ResourceQuota + LimitRange | 4 | `spec.md` FR-039 · `gitops-repo.md` §네임스페이스 |
 | `rbac-agent-view.yaml` | ServiceAccount `agent-view` + ClusterRole 2 + ClusterRoleBinding 3 + Role/RoleBinding ×3 | 12 | `tasks.md` T041 문면 · `hostnames-and-access.md` §클러스터(K8s)의 `agent-view` 항 |
@@ -103,7 +103,7 @@
 `10.42.0.0/32`를 **add-only**로 더했다. 이로써 webhook 3 ns가 계약 문면과 정확히 일치한다. 경위와 한계는
 §8, 실측 근거와 메커니즘은 `policies-common.yaml`의 `allow-apiserver-webhook` 절 머리 주석에 있다.
 
-### 3.2 클러스터 내부 매트릭스 (M, 31장)
+### 3.2 클러스터 내부 매트릭스 (M, 33장)
 
 첫 열이 계약 §허용 매트릭스 — 클러스터 내부의 **행 키 그대로**다(그 문자열로 계약에서 검색한다).
 
@@ -118,6 +118,7 @@
 | `jt-dev`·`jt-prod` → `identity` 9000·8080 | `identity/allow-from-apps` | `jt-dev/allow-egress-to-identity` · `jt-prod/allow-egress-to-identity` |
 | `jt-dev`·`jt-prod` → `monitoring` 4317·4318 | `monitoring/allow-otlp-from-apps` | `jt-dev/allow-egress-to-monitoring` · `jt-prod/allow-egress-to-monitoring` |
 | `identity` → `data` 5432 | `data/allow-from-identity` | `identity/allow-egress-to-data` |
+| `cnpg-system`(operator pod만 — `app.kubernetes.io/name=cloudnative-pg`) → `data` 8000 | `data/allow-from-cnpg-operator` | `cnpg-system/allow-egress-to-data` |
 | `identity` → `jt-prod` 8000 | `jt-prod/allow-from-identity` | `identity/allow-egress-to-apps` |
 | `identity` → `jt-dev` 8000 | `jt-dev/allow-from-identity` | `identity/allow-egress-to-apps`(prod 행과 같은 1장) |
 | `external-secrets` → `vault` 8200 | `vault/allow-from-external-secrets` | `external-secrets/allow-egress-to-vault` |
@@ -136,9 +137,13 @@
   "라벨만 SSA로 패치하고(정책은 `deny-imds`만)" 항 · cluster.tests `np-1`) 그 ns에 egress 정책을 둘 수
   없다. 계약 §허용 매트릭스 — 클러스터 내부 머리글의 "한 쌍" 문언과의 차이는 규칙 추가가 아니라 누락
   쪽이며 converge 인계 항목이다.
-- 검산: ingress 21 = `argocd` 2 · `vault` 3 · `external-secrets` 1 · `cert-manager` 1 ·
-  `cnpg-system` 1 · `data` 3 · `identity` 2 · `jt-dev` 3 · `jt-prod` 3 · `monitoring` 2.
-  egress 10 = `external-secrets` 1 · `identity` 2 · `jt-dev` 3 · `jt-prod` 3 · `monitoring` 1.
+- 검산: ingress 22 = `argocd` 2 · `vault` 3 · `external-secrets` 1 · `cert-manager` 1 ·
+  `cnpg-system` 1 · `data` 4 · `identity` 2 · `jt-dev` 3 · `jt-prod` 3 · `monitoring` 2.
+  egress 11 = `external-secrets` 1 · `cnpg-system` 1 · `identity` 2 · `jt-dev` 3 · `jt-prod` 3 · `monitoring` 1.
+- `cnpg-system`(operator) → `data` 8000 행(2026-10-13 추가 — T052 리뷰 K1): 출발 egress는 `podSelector`로 operator
+  파드(`app.kubernetes.io/name=cloudnative-pg`)만 묶고, 도착 ingress는 traefik 행과 같은 방식으로 **같은 peer 안에**
+  namespaceSelector `cnpg-system` + podSelector를 둔다(peer를 둘로 나누면 OR가 되어 `cnpg-system` 전체가 열린다).
+  5432는 열지 않는다(계약 행의 VD — T053에서 operator 로그로 판정).
 
 ### 3.3 클러스터 밖 · 노드 IP (E, 13장)
 
@@ -172,17 +177,17 @@
 ## 4. 검산
 
 ```bash
-kustomize build platform/policies | kubeconform -strict -summary   # Valid 123 / Invalid 0
+kustomize build platform/policies | kubeconform -strict -summary   # Valid 125 / Invalid 0
 kustomize build platform/policies | yq -N '.kind' | sort | uniq -c
-#   14 Namespace · 93 NetworkPolicy · 2 ResourceQuota · 2 LimitRange
-#    1 ServiceAccount · 2 ClusterRole · 3 ClusterRoleBinding · 3 Role · 3 RoleBinding   = 123
+#   14 Namespace · 95 NetworkPolicy · 2 ResourceQuota · 2 LimitRange
+#    1 ServiceAccount · 2 ClusterRole · 3 ClusterRoleBinding · 3 Role · 3 RoleBinding   = 125
 kustomize build platform/policies | yq -N 'select(.kind=="NetworkPolicy") | .metadata.name' | sort | uniq -c
 #   default-deny 13 · allow-dns 13 · allow-same-namespace 7 · allow-kube-api 10 ·
 #   allow-apiserver-webhook 4 · deny-imds 1 · allow-imds 1  (= 공통 49)
-#   + 내부 매트릭스 31 + 외부·노드 13 = 93
+#   + 내부 매트릭스 33 + 외부·노드 13 = 95
 ```
 
-NetworkPolicy 93 = 공통 49 + 내부 31 + 외부 13. 이 수치가 바뀌면 계약 표가 먼저 바뀌었어야 한다.
+NetworkPolicy 95 = 공통 49 + 내부 33 + 외부 13. 이 수치가 바뀌면 계약 표가 먼저 바뀌었어야 한다.
 전체 lint는 저장소 루트에서 `bash tests/validate.sh`(검사 5.0–5.6이 이 디렉터리를 본다).
 
 ---
@@ -295,7 +300,7 @@ kubectl delete networkpolicy -A -l app.kubernetes.io/part-of=platform-policies
 | node-exporter(hostNetwork, 노드 IP:9100) 스크레이프 egress 행 없음 · `allow-same-namespace`는 hostNetwork 파드를 덮지 못함 | Alloy → node-exporter 실패 가능 | 같은 태스크(+노드 방화벽 9100) |
 | Traefik metrics 9100(`kube-system`) 스크레이프 egress 행 없음 | Traefik 지표 누락 | 같은 태스크 |
 | cloudflared metrics 2000 스크레이프 행 없음 | 터널 지표 없음 | 같은 태스크 |
-| `cnpg-system` → `data` 8000(operator → instance status, 추정) 행 없음 | CNPG 운영 영향 가능 | CNPG 태스크에서 실측 |
+| ~~`cnpg-system` → `data` 8000(operator → instance status, 추정) 행 없음~~ **해소(2026-10-13 · T053 선행)** — 계약 §내부 매트릭스에 행 `cnpg-system`(operator pod만 — `app.kubernetes.io/name=cloudnative-pg`) → `data` 8000 추가(모노레포, T052 리뷰 K1) + 정책 한 쌍 `data/allow-from-cnpg-operator` · `cnpg-system/allow-egress-to-data`(이 PR, §3.2 표) | (해소) CNPG operator → 인스턴스 manager API 8000(`/pg/status` 상태 수집 · 백업 요청 · in-place update — CNPG 1.30 security.md·networking.md "the operator needs to communicate to each instance on TCP port 8000"). 계약 §정책 세트 `allow-same-namespace` 사유의 "CNPG operator ↔ instance"는 오분류였다(operator `cnpg-system` · 인스턴스 `data` — 다른 ns) — 같은 날 정정 | 계약 먼저(모노레포 2026-10-13 커밋) → 정책 한 쌍(이 PR). 5432는 열지 않는다(VD — T053에서 operator 로그로 판정; 필요해지면 계약 행 → 정책 순서로) |
 | ~~`allow-apiserver-webhook`의 ipBlock = 노드 A/32 — 노드 B 배치 webhook은 flannel-wg 주소로 도착할 수 있음~~ **해소(2026-09-09 · T042 PR-A)** — VD-W 실측: apiserver → 파드 IP 직접 dial의 출발 IP는 노드 A flannel-wg 주소 `10.42.0.0`(노드 A podCIDR의 네트워크 주소)이다 | (해소) cert-manager 10250 · cnpg-system 9443(T042 PR-A) · external-secrets 10250(T045 G1p)에 `10.42.0.0/32` **add-only** 추가 — 기존 `10.0.7.78/32`는 유지 | ~~계약 정정 대기~~ **해소(모노레포 `d5f8a82`, PR #13 머지 전)** — §정책 세트 `allow-apiserver-webhook` 행과 §외부 매트릭스 webhook 행의 출발 열에 "노드 A flannel 터널 장치 주소"가 들어갔고, webhook 행에 잘못 걸려 있던 port-forward 근거 문장은 삭제된 뒤 "이 정책의 두 행은 메커니즘이 다르다" 항으로 대체됐다 · **잔여 1건 `external-secrets` 해소(T045 G1p · D6 = A, 2026-09-17)** — 계약이 webhook 행에 열거하는 세 ns 중 이 ns에만 flannel 주소가 없던 **미결 결정**을 add-only로 닫았다(기존 `10.0.7.78/32` + TCP 10250 유지). 값의 검증 수단은 **머지 전 노드 A 실측**(`ip -4 -o addr show flannel-wg`의 장치 주소 · `ip route get <다른 노드(B)의 파드 IP>`의 `src` = 노드 간 경로의 출발 주소)과 하네스 `np-set-5`(노드 객체 유도값 대조)이고, **2026-09-18 실측으로 확정됐다(세 값 일치 = `10.42.0.0`: 장치 주소 · `ip route get 10.42.1.14`의 `src` · `.spec.podCIDR` `10.42.0.0/24`의 네트워크 주소)**. 기록은 모노레포 런북 `docs/runbooks/bootstrap.md` §3 T045 절이다. **증명 범위의 한계**: ESO와 API 서버가 모두 노드 A라 동일 노드에서는 kube-router의 LOCAL 예외로 flannel 주소 없이도 **통과한다**(그 예외의 체인 실물도 2026-09-18에 확인했다 — ESO webhook 파드 대상 `KUBE-POD-FW-*`에 `--src-type LOCAL -j ACCEPT` 1행. 같은 노드 경로의 출발지는 `cni0` 브리지 `10.42.0.1`이라 허용 집합 밖이었다) — 2026-09-17 G1 머지 후 · G1p 머지 전 server-side dry-run 실측(`exit 0` + `created (server dry run)`, 음성 대조 = `admission webhook "validate.externalsecret.external-secrets.io" denied the request`). 즉 **오늘의 성공은 이 추가와 무관하게 성립했다** — 이 ns의 flannel `/32`는 오늘 어떤 트래픽으로도 실증되지 않았고 **노드 간 webhook 경로는 미실측**이다. 그래서 이것은 기능 복구가 아니라 **계약 준수 + 파드가 노드 B로 옮겨져도 깨지지 않게 하는 선제 적용**이다(cnpg-system 행과 같은 취지). `platform-policies` Application은 `automated{prune:false, selfHeal:true}`라 **머지가 곧 적용**이다 |
 | ~~cert-manager `dns01RecursiveNameservers`가 1.1.1.1**/8.8.8.8** — 매트릭스에는 1.1.1.1/32 행만~~ **해소(커밋 2026-09-09 `8cb1149` · 확인 2026-09-10)** | (해소) 설계 결정 D2 = A로 values를 계약에 맞췄다 — `platform/cert-manager/kustomization.yaml`의 `dns01RecursiveNameservers`가 `"1.1.1.1:53"` **단독**이고 `dns01RecursiveNameserversOnly: true`가 짝이다. 계약 행 1개 · 정책 1장 · values 셋이 일치한다 | **규율**: 8.8.8.8이든 다른 리졸버든 되넣으려면 ① 계약 §외부 매트릭스에 행 추가 ② `policies-external.yaml`에 정책 1장 추가 ③ 그다음 values. values만 먼저 고치면 그 리졸버로 나가는 질의가 정책에 막혀 조용히 타임아웃하고, 증상은 "DNS-01이 pending에서 안 넘어간다"로만 보인다 |
 | `identity`에 `allow-kube-api` 없음(Authentik outpost의 in-cluster API 시도) | 오류 로그 가능(기능 영향 없음 추정) | Authentik 태스크에서 관찰 |

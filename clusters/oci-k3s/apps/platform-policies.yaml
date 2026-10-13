@@ -1,8 +1,8 @@
 # clusters/oci-k3s/apps/platform-policies.yaml — 네임스페이스·PSA·NetworkPolicy·쿼터·agent-view RBAC (T041 PR-B2)
 #
 # 역할: root(app-of-apps)가 이 파일을 읽어 child Application `platform-policies`를 만들고, 그 Application이
-#   `platform/policies`를 서버 사이드 적용한다. 소유 객체는 123개다 —
-#   Namespace 14 · NetworkPolicy 93 · ResourceQuota 2 · LimitRange 2 · ServiceAccount 1 ·
+#   `platform/policies`를 서버 사이드 적용한다. 소유 객체는 125개다 —
+#   Namespace 14 · NetworkPolicy 95 · ResourceQuota 2 · LimitRange 2 · ServiceAccount 1 ·
 #   ClusterRole 2 · ClusterRoleBinding 3 · Role 3 · RoleBinding 3.
 #   구성·대응표·기대 권한표는 ../../../platform/policies/README.md, 적용 절차는 ./README.md.
 #
@@ -30,7 +30,7 @@
 #
 # ── 되돌리기(prune 경로를 쓰지 않는다) ──────────────────────────────────────────────────────
 #   freeze 뒤: kubectl delete networkpolicy -A -l app.kubernetes.io/part-of=platform-policies
-#   - 이 라벨은 `platform/policies/`의 NetworkPolicy 93 · ResourceQuota 2 · LimitRange 2 = 97객체가
+#   - 이 라벨은 `platform/policies/`의 NetworkPolicy 95 · ResourceQuota 2 · LimitRange 2 = 99객체가
 #     매니페스트에 **직접** 갖고 있다. 통신을 되살리는 것은 NetworkPolicy 삭제이므로 비상 명령은
 #     networkpolicy만 지운다. 쿼터까지 걷어야 하면 같은 선택자에 resourcequota,limitrange를 더한다.
 #   - `-l argocd.argoproj.io/instance=platform-policies` 선택자는 **동작하지 않는다**: 이 클러스터의

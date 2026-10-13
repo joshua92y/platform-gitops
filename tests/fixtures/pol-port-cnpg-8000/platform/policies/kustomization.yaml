@@ -1,0 +1,9 @@
+# 부정 픽스처 pol-port-cnpg-8000 — 긍정 픽스처 platform/policies의 사본(Namespace 14개 + 정책 세트 + 매트릭스 + Quota/LimitRange).
+#   차이는 policies-matrix.yaml의 ingress `data/allow-from-cnpg-operator`(8000) 한 장 부재뿐이다(5.4 POL-port-table red 대조).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespaces.yaml
+  - policies-common.yaml
+  - policies-matrix.yaml
+  - quota.yaml

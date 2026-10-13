@@ -341,6 +341,7 @@ argocd 8084 argocd-metrics
 external-secrets 8080 eso-metrics
 cert-manager 9402 cert-manager-metrics
 cnpg-system 8080 cnpg-operator-metrics
+data 8000 cnpg-instance-manager
 data 9187 cnpg-instance-exporter
 data 9404 strimzi-kafka-exporter
 vault 8200 vault

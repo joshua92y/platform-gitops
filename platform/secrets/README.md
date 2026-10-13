@@ -7,7 +7,7 @@ ExternalSecret의 **원본은 여기가 아니라 저장소 루트 `secrets/<ns>
 
 | 파일 | 내용 |
 |---|---|
-| `kustomization.yaml` | `resources`에 `../../secrets/<ns>` 2줄만. helm 없음, 전역 `namespace:` 변환기 없음(ns가 둘이다) |
+| `kustomization.yaml` | `resources`에 `../../secrets/<ns>` 3줄만. helm 없음, 전역 `namespace:` 변환기 없음(ns가 셋이다) |
 
 > **머지 순서: G2 → G2r → (운영자) kv 시드 → G3 → G4.** 각 PR은 그 PR이 읽는 **Vault kv 경로의 시드가 끝난 뒤에만** 머지한다
 > — `kv/platform/cloudflare/dns-token`·`kv/platform/cloudflare/tunnel` 둘 다 필드 `token`, **2026-09-21 시드 완료**
@@ -16,6 +16,13 @@ ExternalSecret의 **원본은 여기가 아니라 저장소 루트 `secrets/<ns>
 > `reconcile.external-secrets.io/managed=true` 라벨 1개는 붙는다 — 메타데이터 PATCH · resourceVersion 변경) — 인수만 지연된다.
 > 시드 값이 **라이브 Secret과 다르면** 그때는 조용히 덮어쓴다(`Retain`은 값 덮어쓰기를 막지 않는다). 그래서 머지 전에
 > 기준값(해시·UID)을 캡처하고, 머지 뒤 같은 창에서 비교한다(§2).
+> **T053 선행(2026-10-13) — `data/oci-s3-backup`이 읽는 `kv/platform/oci/s3`{`access_key`,`secret_key`}도 같은 OP1 시드로 끝나 있다**
+> (2026-09-21 v1 03:25:45Z — 근거: 모노레포 런북 `bootstrap.md` §3 T045 OP1 시드 항 · `vault-unseal.md` kv 시드 표의 행 "완료 — **키 쌍
+> 정합은 미증명**(첫 증명 = T053 백업)"). 머지 전 운영자 확인(**값 미출력** · Vault는 `kubectl port-forward svc/vault 8200` 경유):
+> `vault kv get -format=json kv/platform/oci/s3 | jq -r '.data.data|keys[]'` → `access_key` · `secret_key` **두 줄**이 기대값이다.
+> 두 줄이 아니면 머지하지 않는다 — 이 ES는 `Owner`라 시드 부재는 "인수 지연"이 아니라 **Secret 부재**다: ES `SecretSyncedError`
+> (Events `Secret does not exist` — §1 표) → `platform-secrets` Degraded → root **health** Degraded → 하네스 `eso-2`·`reboot-4` FAIL,
+> 그리고 T053 `Cluster`는 백업 자격 없이 뜬다(WAL 아카이브 실패). 복구는 kv 시드(또는 정정) 한 가지다 — 다음 주기 ≤5분에 Secret이 생긴다.
 > **G3 머지 = 즉시 자동 sync = 이 클러스터에서 ExternalSecret이 처음으로 생겼다** — `../secret-stores/README.md` §3의
 > "store를 지워도 지금은 무해하다"는 그 머지와 함께 성립하지 않는다.
 > ⚠⚠ **G4 머지는 잠금 위험 단계다.** 이 PR이 더하는 ExternalSecret은 **SSH·K8s API의 유일한 경로**인 터널 커넥터의 자격
@@ -34,8 +41,11 @@ ExternalSecret의 **원본은 여기가 아니라 저장소 루트 `secrets/<ns>
 |---|---|---|---|
 | `cert-manager` | `cloudflare-dns-token` | `cloudflare-dns-token`(키 `api-token`, T042) | ClusterIssuer `letsencrypt-staging`·`letsencrypt-prod`의 DNS-01 solver |
 | `cloudflared` | `cloudflared-tunnel`(G4) | `cloudflared-tunnel`(키 `TUNNEL_TOKEN`, T039) | Deployment `cloudflared`(env — **컨테이너 시작 시마다** 다시 읽힌다) |
+| `data` | `oci-s3-backup`(T053 선행) | — (**신규** Secret · `creationPolicy: Owner` — 인수 대상 없음) | T053 `ObjectStore oci-backups`(`platform/cnpg-cluster/`)의 `s3Credentials`(키 `ACCESS_KEY_ID`·`ACCESS_SECRET_KEY`·`REGION`) |
 
-**범위(설계 D3 조건 1)**: 이 컴포넌트는 위 **ExternalSecret 2장까지만** 담는다.
+**범위(설계 D3 조건 1)**: 이 컴포넌트는 위 **ExternalSecret 3장**을 담는다 — 인수형 2장 + S3 백업 자격 1장(2026-10-13 T053 선행에서
+3장이 됐다: 원본 kv `platform/oci/s3`는 이미 있고, 소비자 `cnpg-cluster`는 계약 §sync-wave 표에서 이 배달자보다 **뒤**이며,
+인수형이 아니라 `Owner`다 — 아래 조건과 §1·§5의 "인수" 서술은 인수형 2장에만 해당한다).
 
 - CA 미러 ExternalSecret(`pg-main-ca` × 3 ns · `jt-kafka-cluster-ca-cert` × 2 ns)은 **여기 두지 않는다** —
   원본(CNPG·Strimzi CA)이 생긴 뒤인 계약 §sync-wave 표의 `cnpg-databases`·`kafka-topics` 행 소유다(T056).
@@ -53,7 +63,7 @@ ExternalSecret의 **원본은 여기가 아니라 저장소 루트 `secrets/<ns>
    (계약 §validate.yml 4 「(T045 G4) 배달자는 base를 묶기만 한다」).
 2. ClusterSecretStore 5장 → `../secret-stores/`. 오퍼레이터 본체·CRD·`eso-*` SA → `../external-secrets/`.
 3. **Secret 자체**. 이 저장소에 비밀은 없다. 값은 Vault kv에 있고, 라이브 Secret은 T042·T039에서 운영자가 만든 것을
-   ESO가 **인수**한다(삭제·재생성이 아니다 — §1).
+   ESO가 **인수**한다(삭제·재생성이 아니다 — §1). `data/oci-s3-backup`만은 ESO가 kv 값으로 **새로 만든다**(Owner).
 4. NetworkPolicy·Namespace → `../policies/`. ESO가 Vault·kube-api로 나가는 경로는 그쪽에 이미 선언돼 있다.
 
 **왜 소비자 컴포넌트가 아니라 별도 Application인가(설계 D3 = B).** ESO의 admission webhook은 `failurePolicy: Fail`이다.
@@ -124,24 +134,31 @@ ownerReference가 없는 수동 Secret은 제자리에서 관리 대상이 된�
 
 ```bash
 kustomize build platform/secrets | yq -N ea '[select(.kind=="ExternalSecret")] | length'
-#   2  (G4 뒤 = 범위의 최대치. 3이 나오면 §0의 범위를 벗어난 것이다)
+#   3  (T053 선행 뒤 = §0의 범위. 4가 나오면 §0의 범위를 벗어난 것이다)
 #   ⚠ `ea`(eval-all)가 필요하다 — `yq -N '[…] | length'`는 문서마다 따로 평가해 1을 여러 줄 찍는다
 kustomize build platform/secrets \
-  | yq -N 'select(.kind=="ExternalSecret") | .metadata.namespace + " " + .metadata.name + " cp=" + .spec.target.creationPolicy + " dp=" + .spec.target.deletionPolicy + " rp=" + .spec.refreshPolicy + " ri=" + .spec.refreshInterval'
+  | yq -N 'select(.kind=="ExternalSecret") | .metadata.namespace + " " + .metadata.name + " cp=" + .spec.target.creationPolicy + " dp=" + (.spec.target.deletionPolicy // "-") + " rp=" + .spec.refreshPolicy + " ri=" + .spec.refreshInterval'
 #   cert-manager cloudflare-dns-token cp=Orphan dp=Retain rp=Periodic ri=5m
 #   cloudflared cloudflared-tunnel cp=Orphan dp=Retain rp=Periodic ri=5m
-#   ⚠ cp=Owner가 보이면 머지하지 않는다(ES가 지워지는 어떤 경로에서든 Secret이 GC된다 — `Retain`도 막지 못한다)
+#   data oci-s3-backup cp=Owner dp=- rp=Periodic ri=5m
+#   ⚠ **인수형 2장**(cert-manager·cloudflared)에 cp=Owner가 보이면 머지하지 않는다(ES가 지워지는 어떤 경로에서든 Secret이 GC된다 —
+#     `Retain`도 막지 못한다). `data/oci-s3-backup`의 cp=Owner는 **의도**다(§0 — 신규 Secret, 인수 대상 없음)
 kustomize build platform/secrets \
   | yq -N 'select(.kind=="ExternalSecret") | .spec.secretStoreRef.kind + "/" + .spec.secretStoreRef.name + " " + (.spec.data[] | .secretKey + "<-" + .remoteRef.key + ":" + .remoteRef.property)'
 #   ClusterSecretStore/vault-platform api-token<-platform/cloudflare/dns-token:token
 #   ClusterSecretStore/vault-platform TUNNEL_TOKEN<-platform/cloudflare/tunnel:token
-#   ⚠ key에 `kv/` 접두가 붙어 있으면 안 된다(§1 provider 함정). 터널 쪽 secretKey는 소비자 env 이름과 같은 `TUNNEL_TOKEN`이다
+#   ClusterSecretStore/vault-platform access_key<-platform/oci/s3:access_key
+#   ClusterSecretStore/vault-platform secret_key<-platform/oci/s3:secret_key
+#   ⚠ key에 `kv/` 접두가 붙어 있으면 안 된다(§1 provider 함정). 터널 쪽 secretKey는 소비자 env 이름과 같은 `TUNNEL_TOKEN`이다.
+#     S3 쪽 secretKey(`access_key`·`secret_key`)는 **템플릿 변수**다 — 소비자가 읽는 Secret 키는 아래 template.data의 셋이다
 kustomize build platform/secrets | yq -N 'select(.kind=="ExternalSecret") | .spec.target.template'
-#   metadata: {}  (2줄) — template이 없으면 ESO가 ES의 라벨·어노테이션(Argo tracking-id 포함)을 Secret에 전부 복사한다
+#   metadata: {}  (인수형 2장) · data/oci-s3-backup은 metadata: {} + data: {ACCESS_KEY_ID: "{{ .access_key }}", ACCESS_SECRET_KEY: "{{ .secret_key }}", REGION: ap-chuncheon-1}
+#   — template.metadata가 비어 있지 않거나 없으면 ESO가 ES의 라벨·어노테이션(Argo tracking-id 포함)을 Secret에 전부 복사한다
 kustomize build platform/secrets \
   | yq -N 'select(.kind=="ExternalSecret") | .metadata.name + " " + .metadata.annotations["argocd.argoproj.io/sync-options"]'
 #   cloudflare-dns-token Delete=false,Prune=false
 #   cloudflared-tunnel Delete=false,Prune=false
+#   oci-s3-backup Delete=false,Prune=false   (Owner라 이 어노테이션이 빠지면 Application cascade = Secret GC = 백업 중단)
 #   ⚠ 이 어노테이션이 빠지면 Application cascade가 ES를 지운다 — 검사 3은 어노테이션을 보지 않는다(`../../tests/README.md` 한계)
 git diff --stat origin/main -- platform/cloudflared/deployment.yaml platform/cloudflared/kustomization.yaml
 #   출력 없음 — 터널 PR은 소비자 **매니페스트**를 건드리지 않는다(렌더 바이트 동일, README만 바뀐다).
@@ -298,7 +315,8 @@ kubectl get clusterissuer letsencrypt-staging letsencrypt-prod -o 'custom-column
   `platform-cloudflared`의 `external-secrets.io` 0건은 "ESO webhook 장애 중에도 터널 Deployment를 독립적으로 밀 수 있다"의
   **구조 쪽 근거**이기도 하다(§0의 분리 이유 · 라이브 드릴은 §6의 T048).
 
-**Argo 고아(orphaned) 경고는 정상이다.** 두 Secret은 `creationPolicy: Orphan`이라 ownerReference가 없고, git에 선언된
+**Argo 고아(orphaned) 경고는 정상이다.** 인수형 두 Secret(DNS 토큰·터널 토큰)은 `creationPolicy: Orphan`이라 ownerReference가 없고
+(`data/oci-s3-backup`은 `Owner`라 ownerReference가 ES를 가리켜 고아 목록에 뜨지 않는다), git에 선언된
 객체도 아니므로 AppProject `platform`의 `orphanedResources.warn: true`가 계속 경고로 표시한다. **드리프트가 아니다** —
 이 경고를 없애려고 Secret을 지우거나 정책을 `Owner`로 바꾸지 않는다(§1 ④).
 
@@ -351,7 +369,8 @@ T046 감시 대상에도 넣지 않으므로(그 수동성이 안전장치다), 
 ⚠ 터널 회전의 **Cloudflare 쪽 순서와 시작 전 전제**(Refresh의 비가역성 · 연결 삭제 시점)는 여기 복제하지 않는다 —
 정본은 `../cloudflared/README.md` ⑨이고, 그 절을 먼저 읽는다.
 
-**인수 자체를 해제해야 하는 경우**(ES는 없애고 Secret은 남긴다) — 두 ES 공통 절차다.
+**인수 자체를 해제해야 하는 경우**(ES는 없애고 Secret은 남긴다) — 인수형 두 ES 공통 절차다. ⚠ `data/oci-s3-backup`에는 성립하지
+않는다(`Owner`라 ES 삭제 = Secret GC = 백업 중단 — T053 `Cluster`가 참조하는 동안 지우지 않고, 값 문제는 kv 정정으로만 푼다).
 
 1. revert PR을 머지한다(먼저 하지 않으면 `selfHeal`이 ES를 다시 만든다).
 2. **Git 제거가 Argo에 반영됐는지 확인한다** — `platform-secrets`의 리비전이 revert 커밋이고, 해당 ES가 `requiresPruning`으로
@@ -373,7 +392,7 @@ T046 감시 대상에도 넣지 않으므로(그 수동성이 안전장치다), 
 
 **revert PR의 모양을 못박는다**(2단계 판정이 성립해야 하기 때문이다).
 
-- **ES가 2장인 지금(G4 뒤)**: 되돌릴 쪽의 **그 한 줄과 해당 `secrets/<ns>/`만** 지운다. 나머지 한 줄이 남으므로 렌더는 깨지지 않고,
+- **ES가 3장인 지금(T053 선행 뒤)**: 되돌릴 쪽의 **그 한 줄과 해당 `secrets/<ns>/`만** 지운다. 나머지 줄이 남으므로 렌더는 깨지지 않고,
   다른 ES의 인수는 그대로 간다(터널만 해제 · DNS만 해제가 각각 성립한다 — 잠금 위험 단계를 남의 사정으로 건드리지 않는다).
   **G4 PR 전체 revert(GitHub Revert 버튼)도 이 모양과 같다** — `platform/secrets/`는 남고 렌더도 깨지지 않으며 2단계 판정
   (리비전 = revert 커밋 · ES `requiresPruning`)이 그대로 성립한다. 잠금 위험 단계에서 가장 빠른 수단이다.

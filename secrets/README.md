@@ -12,8 +12,15 @@ Application `platform-secrets`가 그것을 동기화한다. 새 ns를 추가하
 |---|---|---|---|---|
 | `cert-manager` | `externalsecret-cloudflare-dns-token.yaml` | ClusterIssuer letsencrypt-{staging,prod} (DNS-01) | `Orphan` / `Retain` | `Periodic` · `5m` |
 | `cloudflared` | `externalsecret-cloudflared-tunnel.yaml`(G4) | Deployment cloudflared (`TUNNEL_TOKEN`, env — **컨테이너 시작 시마다** 다시 읽힌다) | `Orphan` / `Retain`(⚠ 잠금 경로) | `Periodic` · `5m` |
+| `data` | `externalsecret-oci-s3-backup.yaml`(T053 선행) | CNPG `ObjectStore oci-backups`(T053, `platform/cnpg-cluster/`)의 `s3Credentials` — Secret 키 `ACCESS_KEY_ID`·`ACCESS_SECRET_KEY`·`REGION`(`template.data`) | `Owner` / (미기재 = 기본 `Retain`) — **신규** Secret, 인수형 아님 | `Periodic` · `5m` |
 
-⚠ 둘 다 `Orphan`이다 — ownerReference를 만들지 않으므로 ExternalSecret을 지워도 Secret은 남는다. 대신 Argo의 고아 리소스
+⚠ **셋째 ES(`data/oci-s3-backup`)는 `Owner`다** — 인수할 수동 Secret이 없는 신규 Secret이라 계약 §ExternalSecret 규약의 기본값을
+따른다. 대가: ES가 지워지면 ownerReference GC로 Secret도 사라져 WAL 아카이브·백업이 멈춘다(`Retain`은 그 GC를 막지 못한다). 그래서
+`Delete=false,Prune=false`로 Argo 경로만 막고, T053 `Cluster`가 참조하는 동안 ES를 지우지 않는다. 하네스 `eso-4`는 인수형 2장만
+이름으로 보므로 이 ES의 Owner는 회귀가 아니다. Secret 키 셋은 `template.data`가 만든다(`data[]`의 `secretKey`는 템플릿 변수 —
+ESO `mergePolicy: Replace` 기본, 라이브 확인 VD는 파일 머리 주석).
+
+⚠ 인수형 2장(`cert-manager`·`cloudflared`)은 `Orphan`이다 — ownerReference를 만들지 않으므로 ExternalSecret을 지워도 Secret은 남는다. 대신 Argo의 고아 리소스
 목록에 계속 뜬다(드리프트가 아니다 — AppProject `platform`의 `orphanedResources.warn: true`). `Owner`로 바꾸면 **ES가 지워지는
 어떤 경로에서든**(`kubectl delete` · `Delete=false`가 빠진 Application cascade) Secret이 GC된다(`deletionPolicy: Retain`은 못
 막는다) — 이 회귀는 모노레포 하네스 `eso-4`(ES spec의 Orphan/Retain/Periodic/빈 `template.metadata`/sync-options)가 본다.
@@ -33,7 +40,9 @@ Application `platform-secrets`가 그것을 동기화한다. 새 ns를 추가하
 ⚠ **인수를 해제하려면**(ES는 지우고 Secret은 남기려면) 순서가 있다: revert PR 머지 → Argo에 반영됐는지 확인(Application 리비전 =
 revert 커밋, 해당 ES가 `requiresPruning`) → `kubectl delete externalsecret <name>`(ESO 컨트롤러·webhook이 살아 있어야 한다) →
 Secret 잔존·UID·값 확인 → 필요 시 복구 → 소비자 파드 1개씩 교체. `prune: false`라 파일만 revert하면 ES 객체가 남아 조정이 계속된다.
-지금은 ES가 2장이라 **되돌릴 쪽의 그 한 줄과 그 `secrets/<ns>/`만** 지우면 된다(다른 ES의 인수는 그대로 간다).
+지금은 ES가 3장(ns 셋)이라 **되돌릴 쪽의 그 한 줄과 그 `secrets/<ns>/`만** 지우면 된다(다른 ES는 그대로 간다).
+⚠ `data/oci-s3-backup`은 인수형이 아니다 — 위 절차의 `kubectl delete externalsecret`은 이 ES에서는 "해제"가 아니라 **Secret GC =
+백업 중단**이다. T053 `Cluster`가 그 Secret을 참조하는 동안은 지우지 않고, 값 문제는 kv 정정으로만 푼다.
 **마지막 1장까지 지워야 할 때는 그 줄을 지우지 말고 `platform/secrets/kustomization.yaml`을 `resources: []`로 바꾼다**
 (빈 `resources:`는 `kustomization.yaml is empty`로 렌더가 깨져 2단계 판정이 성립하지 않는다).
 Application 파일·디렉터리·`WAVE_TABLE` 행은 유지한다.
