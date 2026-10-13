@@ -1,0 +1,42 @@
+# platform/cnpg-cluster/scheduledbackup-pg-main-daily.yaml — ScheduledBackup `pg-main-daily`(postgresql.cnpg.io/v1 · ns data) — 리소스 wave 2 (T053)
+#
+# 매일 **17:00 UTC = 02:00 KST**에 `Cluster pg-main`의 베이스 백업을 플러그인 경로(plugin-barman-cloud → ObjectStore `oci-backups`)로 만든다.
+#   업그레이드 창 03:00–05:00 KST **앞**이라 창 안의 재부팅·SUC 플랜과 겹치지 않는다(과제 문면). research CNPG-D6 초판의 18:00 UTC(03:00 KST)가 아니다 — 문면 우선.
+#   ⚠ `schedule`은 **6필드**(초 포함 — robfig/cron 형식, CRD description)다. Kubernetes CronJob처럼 5필드로 쓰면 뜻이 바뀐다(`0 17 * * *`는 '매 시 17분 0초'로 읽힌다 — robfig/cron v1.2.0 기본 파서 `Second | Minute | Hour | Dom | Month | DowOptional`;
+#     CNPG webhook `scheduledbackup_webhook.go`는 6필드가 아니면 **경고만** 내고 거부하지 않는다).
+#     모노레포 하네스 `data.tests.ps1` backup-1이 문자열 `0 0 17 * * *`을 정확히 대조한다.
+#
+# immediate: true — 생성 직후 첫 백업을 바로 시작한다 = 과제 문면 "첫 백업 completed 확인"의 수단. 이 객체가 리소스 wave 2인 이유: Cluster(wave 1)가
+#   `Cluster in healthy state`(Argo 내장 health Healthy)가 된 뒤에 만들어지는 것이 정상 경로다. 먼저 만들어져도(Argo retry 경로 — README §1) CNPG 1.30 `backup_controller.go`는
+#   대상 파드가 Ready가 아니면 Backup을 `failed`가 아니라 **`pending`**(Events `BackupPending`/`FindingPod` · 30초 requeue)으로 들고 있다가 Ready 뒤 시작한다 —
+#   wave 2는 정확성 요건이 아니라 pending noise 회피다(kustomization 머리 주석).
+# backupOwnerReference: self — ScheduledBackup이 만드는 Backup 객체의 ownerReference를 **이 객체**로 둔다 → 이 객체를 지우면 Backup 객체(메타데이터)만 GC 되고
+#   버킷의 데이터는 그대로다(버킷 보존은 ObjectStore `retentionPolicy`가 맡는다 — Backup 객체 수와 무관). `cluster`로 두면 Cluster 삭제 시 함께 지워지고,
+#   `none`(기본)이면 ScheduledBackup 삭제 때 GC되지 않을 뿐이다 — 어느 값이든 보존 만료 뒤에는 플러그인 사이드카가 카탈로그에 없는 Backup 객체를 지운다
+#   (plugin v0.14.0 `internal/cnpgi/instance/retention.go` `deleteBackupsNotInCatalog` · 주기 = ObjectStore `retentionPolicyIntervalSeconds` 1800초 · primary에서만)
+#   → Backup 객체 수는 ≈ 보존 일수(30)로 수렴한다(README §5 · VD-13). 반대 방향(Backup 객체 삭제 → 버킷 오브젝트 삭제)은 없다(CNPG-I backup.proto에 삭제 RPC 없음).
+# method: plugin + pluginConfiguration.name — in-tree `barmanObjectStore`(기본값 · 1.31 제거) 대신 플러그인. Cluster `spec.plugins[]`의 같은 이름이 isWALArchiver라
+#   베이스 백업과 WAL 아카이브가 같은 ObjectStore에 모인다(PITR 전제). `pluginConfiguration.parameters`는 적지 않는다(ObjectStore 선택은 Cluster 쪽 `barmanObjectName`).
+# 적지 않는 것: `suspend`(하네스 backup-1은 `suspend ≠ true` — 기본 false) · `target`(인스턴스 1 = primary) · `online`(기본 true — 핫 백업) ·
+#   `onlineConfiguration`(기본 immediateCheckpoint false · waitForArchive true).
+# Backup 객체 이름: CNPG 규칙 `<ScheduledBackup 이름>-<YYYYMMDDHHMMSS>`(예 `pg-main-daily-20261013170000`) — 정확한 형태는 라이브에서 확인(README §2).
+#   하네스 backup-2는 `status.phase = completed`인 Backup ≥ 1과 최신 completed ≤ 25h(매일 + 1h 여유)를 본다 → 이 스케줄이 하루라도 빠지면 FAIL이 정상이다.
+# 삭제 보호 어노테이션은 **붙이지 않는다**: 이 객체는 상태를 갖지 않는다 — 지우고 다시 만들면 `status.lastCheckTime`이 비어 `immediate`로 즉시 백업 1회가 **추가**될 뿐
+#   데이터 손실 0(CNPG 1.30 `scheduledbackup_controller.go` `LastCheckTime == nil && IsImmediate()`). 객체를 유지한 spec 변경 머지에는 즉시 백업이 생기지 않는다 —
+#   PR 머지마다 백업이 만들어지는 것이 아니다. 보호 대상은 Cluster·ObjectStore다.
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: pg-main-daily
+  namespace: data
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"             # 리소스 수준 wave — Cluster Healthy 뒤에 만들어진다(먼저 생겨도 Backup은 pending 대기 — 머리 주석). Application 표의 숫자가 아니다
+spec:
+  cluster:
+    name: pg-main
+  schedule: "0 0 17 * * *"                        # 6필드(초 포함) = 매일 17:00 UTC = 02:00 KST(업그레이드 창 03:00–05:00 KST 앞) — 하네스 backup-1 정확 문자열
+  immediate: true                                 # 생성 직후 첫 백업 → T053 "첫 백업 completed 확인"
+  backupOwnerReference: self                      # Backup 객체의 owner = 이 ScheduledBackup(삭제 시 메타데이터만 GC · 버킷 데이터 무관)
+  method: plugin                                  # in-tree barmanObjectStore(기본값) 아님
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io          # Cluster spec.plugins[].name과 같은 플러그인

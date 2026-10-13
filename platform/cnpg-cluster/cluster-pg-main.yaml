@@ -1,0 +1,93 @@
+# platform/cnpg-cluster/cluster-pg-main.yaml — Cluster `pg-main`(postgresql.cnpg.io/v1 · ns data) — 리소스 wave 1 (T053)
+#
+# 플랫폼 공용 PostgreSQL 18 · 인스턴스 **1**(노드 B `role=data`) · local-path 40Gi · requests = limits 1 CPU / 2Gi(컨테이너 문면 — 파드 QoS는 플러그인 사이드카 때문에 **Burstable**, 아래 ⚠ · README §4 · VD-14).
+#   pod DB 4개(identity_admin · dev_identity_admin · authentik · openfga)와 role 6개는 T054의 `Database`·`DatabaseRole` CR이 이 클러스터 위에 만든다 — 여기 없다.
+#   접속: Service `pg-main-rw`(operator 생성) · scram-sha-256 + TLS(CNPG 기본 pg_hba) · CA = Secret `pg-main-ca`(operator 생성 · T056이 `ca.crt`만 앱 ns로 미러).
+#
+# 값의 출처(README §4 표가 정본):
+#   - 과제 문면(tasks.md T053): instances 1 · imageCatalogRef major 18 · storage local-path 40Gi · requests=limits 1 CPU/2Gi · shared_buffers 512MB ·
+#     max_parallel_workers 2 · max_connections 100 · archive_timeout 300(PITR RPO ≤ 5분) · affinity.nodeSelector role=data · enableSuperuserAccess false ·
+#     plugins barman-cloud isWALArchiver · 어노테이션 `Delete=false,Prune=false`.
+#   - research CNPG-D4 스니펫(2 OCPU · 2Gi 맞춤): effective_cache_size 1536MB · work_mem 8MB · maintenance_work_mem 128MB · wal_compression zstd ·
+#     bootstrap initdb database `platform` owner `platform_owner` dataChecksums true · enablePodAntiAffinity false. 스니펫의 `pg_stat_statements.max`와
+#     `postgresql.extensions`(pg_bigm)는 문면 밖이라 넣지 않는다(아래 「적지 않는 것」).
+#   - 카탈로그(T052 `platform/cnpg/clusterimagecatalog-standard-trixie.yaml`): ClusterImageCatalog `postgresql-standard-trixie` major 18 =
+#     ghcr.io/cloudnative-pg/postgresql:18.6-202610050823-standard-trixie@sha256:79be0d10… — 이미지 digest는 카탈로그가 고정한다(여기에 `imageName`을 적지 않는다).
+#
+# ⚠ 운영 성격(README §5):
+#   - local-path는 **확장 불가·용량 미강제**다 — 40Gi는 명목값이고 실제 한도는 노드 B 부트 볼륨 100 GB(`/var/lib/rancher/k3s/storage`)다. PVC reclaimPolicy Delete →
+#     Cluster(PVC) 삭제 = 데이터 삭제. `resizeInUseVolumes`는 적지 않는다(local-path에 무의미).
+#   - 인스턴스 1 → 카탈로그/이미지 갱신 · 일부 파라미터 변경(`shared_buffers` · `max_connections`는 재시작 필요) = PG 재시작 **수 초 다운타임** → 유지보수 창에 머지한다.
+#     operator 업그레이드는 `ENABLE_INSTANCE_MANAGER_INPLACE_UPDATES`(T052)로 재시작 없이 넘어간다.
+#   - `enableSuperuserAccess: false` → `postgres` 비밀번호 NULL(원격 로그인 불가 · Secret `pg-main-superuser` 없음). 관리 작업은 운영자가 `kubectl cnpg psql pg-main`
+#     (파드 안 peer 인증)으로 한다 — 앱·에이전트 경로 아니다.
+#   - requests = limits는 **Cluster 컨테이너**(postgres — CNPG는 `pkg/specs/pods.go:261`에서 bootstrap-controller init 컨테이너에도 같은 값을 복사)의 문면이다. 그러나 플러그인
+#     사이드카(`spec.initContainers`의 `plugin-barman-cloud` · restartPolicy Always = native sidecar · resources = ObjectStore `instanceSidecarConfiguration.resources` =
+#     requests 50m/128Mi · limits memory 256Mi · CPU limit 없음 → requests ≠ limits)가 같은 파드에 있어 파드 QoS는 **Burstable**이다(K8s QoS는 init 컨테이너 포함 전 컨테이너 조건).
+#     그래서 CNPG의 `PG_OOM_ADJUST_VALUE=0`(Guaranteed 조건 — 1.30 `docs/src/resource_management.md:50–54`: postmaster -997 · 자식 0) 적용은 기대하지 않는다 —
+#     research CNPG-D4의 "Guaranteed QoS" 서술은 사이드카를 빼고 본 것. 라이브 확인 = README VD-14(`kubectl -n data get pod pg-main-1 -o jsonpath='{.status.qosClass}'`).
+#     Guaranteed로 만들려면 ObjectStore 쪽 사이드카 resources를 requests = limits(cpu 포함)로 — 사이드카 CPU 상한이 백업 압축(lz4·zstd는 사이드카 안에서 돈다)을 늦추므로
+#     T097에서 VD-6 실측 뒤 결정(이 PR은 값을 바꾸지 않는다). 인스턴스 파드의 합산 요청은 여기 2Gi + 사이드카 128Mi(bootstrap-controller는 기동 때만 돈다).
+#   - PSA baseline(ns data): CNPG 인스턴스 컨테이너는 uid 26 non-root · 사이드카도 baseline을 통과한다(지시문 확정 사실 — 라이브 확인은 README §3 VD).
+#
+# 적지 않는 것(이유):
+#   - `spec.backup`(in-tree barmanObjectStore — 1.30 deprecated · 1.31 제거 · 플러그인만 쓴다) · `walStorage`(추가 뒤 제거 불가 — 단일 볼륨 시작, research CNPG-D4)
+#   - `managed.roles`(T054는 DatabaseRole CRD) · `monitoring.enablePodMonitor`(기본 false · PodMonitor CRD 없음 — 스크레이프는 T098) · `postgresql.pg_hba`(CNPG 기본 =
+#     scram-sha-256 · TLS) · `certificates`(기본 자체 CA → Secret `pg-main-ca` · `pg-main-server` · `pg-main-replication`) · `primaryUpdateStrategy`(인스턴스 1 — 의미 없음)
+#   - `imageName`(카탈로그가 digest를 고정 — 둘을 함께 쓰면 imageName이 우선해 카탈로그 갱신이 무시된다) · `postgresUID/GID`(기본 26) · `priorityClassName`.
+#   - `postgresql.extensions`(research CNPG-D4 스니펫의 `pg_bigm` — `image.reference: ghcr.io/<org>/pg_bigm:…` 자리표시자 · 문면 밖 · 이미지 미정 · 후속 과제 미지정)
+#     · `pg_stat_statements.max`(스니펫에 있지만 문면 밖).
+#
+# 삭제 보호: `argocd.argoproj.io/sync-options: Delete=false,Prune=false` — 계약 §삭제 보호 첫 항목. 모노레포 하네스 argo-4-pg-main이 **정확히 이 문자열**을 대조한다
+#   (글자·순서·공백 변경 금지). Argo의 삭제·prune만 막고 `kubectl delete`는 막지 않는다(README §5).
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: pg-main
+  namespace: data
+  annotations:
+    argocd.argoproj.io/sync-options: Delete=false,Prune=false   # 하네스 argo-4-pg-main — 글자 그대로
+    argocd.argoproj.io/sync-wave: "1"                           # 리소스 수준 wave — ObjectStore("0") 뒤 · ScheduledBackup("2") 앞. Application 표의 숫자가 아니다
+spec:
+  instances: 1                                                  # 과제 문면 — 노드 B 하나(plan A14 예산). HA 아님: 재시작 = 다운타임(머리 주석)
+  imageCatalogRef:                                              # 이미지는 ClusterImageCatalog가 고정한다(T052) — imageName을 함께 적지 않는다
+    apiGroup: postgresql.cnpg.io
+    kind: ClusterImageCatalog
+    name: postgresql-standard-trixie
+    major: 18
+  enableSuperuserAccess: false                                  # postgres 비밀번호 NULL · Secret pg-main-superuser 없음 — 관리는 kubectl cnpg psql(운영자)
+  storage:
+    storageClass: local-path                                    # K3s 기본 SC(노드 B /var/lib/rancher/k3s/storage) — 확장 불가 · 용량 미강제 · reclaimPolicy Delete
+    size: 40Gi                                                  # 명목값(실제 한도 = 노드 B 부트 볼륨 100 GB)
+  resources:
+    requests:
+      cpu: "1"
+      memory: 2Gi
+    limits:
+      cpu: "1"                                                  # 컨테이너 requests = limits(문면). 파드 QoS는 사이드카 때문에 Burstable — PG_OOM_ADJUST_VALUE=0은 기대하지 않는다(머리 주석 ⚠ · README §4 · VD-14)
+      memory: 2Gi
+  affinity:
+    enablePodAntiAffinity: false                                # 인스턴스 1 — anti-affinity는 의미 없고 노드 B 고정이 목적
+    nodeSelector:
+      role: data                                                # 노드 B(plan A14). 하네스 pg-2가 스케줄된 노드의 role=data를 본다
+  postgresql:
+    parameters:                                                 # map[string]string — 숫자도 문자열로 적는다
+      shared_buffers: 512MB                                     # 문면(2Gi의 25%)
+      max_parallel_workers: "2"                                 # 문면(2 OCPU). max_worker_processes는 CNPG 기본 32 유지(문면 밖 · 2 ≤ 32 유효 · T097 교정 대상)
+      max_connections: "100"                                    # 문면(CNPG 기본과 같은 값 · 변경은 재시작)
+      archive_timeout: "300"                                    # 문면 — 초 단위(기본 단위 s) = 5분 = PITR RPO ≤ 5분. "5min"으로 쓰지 않는다(하네스·문서 대조 단순화)
+      effective_cache_size: 1536MB                              # 아래 넷은 research CNPG-D4 스니펫(2 OCPU · 2Gi 맞춤)
+      work_mem: 8MB
+      maintenance_work_mem: 128MB
+      wal_compression: zstd                                     # PG ≥ 15 값(PG가 --with-zstd로 빌드돼야 기동 — 표준 이미지는 그렇다고 알지만 미실측 · README VD-12). ObjectStore wal.compression zstd와는 별개 층
+  bootstrap:
+    initdb:
+      database: platform                                        # research CNPG-D4 스니펫 — 부트스트랩 DB. pod DB 4개는 T054 Database CR(하네스 db-1은 Database CR만 센다)
+      owner: platform_owner                                     # 그 소유 role — 자격은 operator가 Secret pg-main-app으로 만든다(값은 저장소에 없다)
+      dataChecksums: true                                       # 페이지 체크섬 — 복구·백업 무결성 검출. initdb 때만 켤 수 있다
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io                      # T052 플러그인(Service barman-cloud · 라벨 cnpg.io/pluginName — 발견 계약)
+      enabled: true
+      isWALArchiver: true                                       # WAL 아카이브 = 이 플러그인(in-tree spec.backup 없음)
+      parameters:
+        barmanObjectName: oci-backups                           # 같은 ns의 ObjectStore(wave 0). serverName은 적지 않는다 — 기본값 pg-main(하네스 bucket-* 접두)

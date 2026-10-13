@@ -1,6 +1,48 @@
-# platform/cnpg-cluster/ — pg-main Cluster
-# sync-wave: 계약 gitops-repo.md §sync-wave 단일 표 참조(wave 번호는 표에만 기재 — 중복 금지).
-# 빈 뼈대(T003) — 실제 매니페스트는 T031+에서 작성한다.
+# platform/cnpg-cluster/ — CNPG `Cluster pg-main`(instances 1 · PostgreSQL 18 · local-path 40Gi) + `ObjectStore oci-backups`(OCI Object Storage S3 호환)
+#                          + `ScheduledBackup pg-main-daily`(매일 02:00 KST · immediate) — 순수 매니페스트 3장 (T053)
+#
+# 정본 계약(모노레포 specs/003-platform-foundation/contracts/):
+#   - gitops-repo.md §sync-wave 단일 표(wave 번호는 그 표에만 — 여기 다시 적지 않는다. `cnpg-cluster` 행 = "pg-main" → Application `platform-cnpg-cluster`
+#     하나가 이 디렉터리 하나를 적용한다. CRD 제공자 `cnpg` 행보다 뒤, 자격 Secret을 배달하는 `secrets` 행보다 뒤 — 두 전제가 이 디렉터리 밖에서 충족된다)
+#     · §삭제 보호(`Cluster pg-main`에 `argocd.argoproj.io/sync-options: Delete=false,Prune=false` — 모노레포 하네스 `cluster.tests.ps1` argo-4-pg-main이
+#       **글자 그대로** 대조한다. `ObjectStore oci-backups`도 같은 행에 있다 — 2026-10-13 T053 추가 · 그 파일 머리 주석) · §Application 규약(Application의 `Prune=confirm`·`Delete=confirm`은
+#       그 위의 두 번째 겹 — `clusters/oci-k3s/apps/platform-cnpg-cluster.yaml` 머리 주석)
+#   - network-policy.md(ns `data` = PSA **baseline** · ingress `allow-from-apps` 5432 · `allow-from-identity` 5432 · `allow-scrape-from-monitoring` 9187/9404 ·
+#     `allow-from-cnpg-operator` 8000(T053 선행 PR #46 — operator → 인스턴스 manager API `/pg/status` 상태 수집 · in-place update; 백업 시작은 pods/exec라 정책 밖) · egress `allow-kube-api` 6443(사이드카가 ObjectStore·Secret을 읽는다) ·
+#     `allow-egress-external-443`(OCI Object Storage). 이 디렉터리는 정책을 한 줄도 바꾸지 않는다)
+#
+# 설치 방식 = 순수 매니페스트 3장(`helmCharts` 없음 — `platform/cert-manager-issuers/`·`platform/secret-stores/` 선례). 로컬 재현: `kustomize build platform/cnpg-cluster`.
+#   ⚠ 리소스 수준 `argocd.argoproj.io/sync-wave`(ObjectStore "0" → Cluster "1" → ScheduledBackup "2")는 **이 Application 안의 적용 순서**다 — 계약 §sync-wave
+#     단일 표(Application 사이의 순서)의 숫자가 **아니다**(T052 카탈로그 선례 · README §1). Argo CD는 wave N의 리소스가 전부 Healthy가 된 뒤 N+1을 적용한다:
+#     ObjectStore·ScheduledBackup은 내장 health가 없어 즉시 Healthy, Cluster는 내장 health lua가 `status.phase`로 판정한다(initdb 동안 Progressing →
+#     `Cluster in healthy state`에서 Healthy) → ScheduledBackup의 `immediate` 첫 백업은 Cluster가 건강해진 뒤에만 시작된다(README §1).
+#     ⚠ 그 대기 중 Cluster가 health lua의 **Degraded** phase(`Applying configuration` · in-place 재시작 등)를 지나면 그 sync 시도는 Failed로 끝난다. 자동 sync operation은
+#     기본 retry(limit 5 · 5s ×2 · max 3m ≈ 2.6분)를 소진해 최종 Failed가 되면 같은 리비전으로 다시 시작하지 않는다(Argo v3.5.2 appcontroller.go:2377 · :2391 — 변경은 이미 적용 ·
+#     Argo만 Failed — README §1 증상표 · VD-11). 방어: Application에 `ApplyOutOfSyncOnly=true`(한 장 변경 = 단일 step → health 대기 없음 · 재시도에서는 in-sync 객체가 task에서
+#     빠진다) + `retry`(30s ×2 · 5m ≈ 12.5분 — 기본값의 **대체**로 창을 넓힌 것 · 다단계가 남는 경우용) — 계약 §Application 규약 예외(2026-10-13), 근거는
+#     `clusters/oci-k3s/apps/platform-cnpg-cluster.yaml` 머리 주석. 그래도 Failed면 운영자 수동 Sync.
+#   ⚠ 전역 `namespace:` 변환기를 두지 않는다 — 세 매니페스트가 `metadata.namespace: data`를 직접 적는다(cert-manager-issuers·secret-stores·secrets 선례와 통일).
+#     `platform/cloudflared`·`platform/system-upgrade`는 변환기를 쓰므로 거기서 복사할 때 주의한다.
+#
+# 이 디렉터리가 만들지 "않는" 것:
+#   1) Namespace `data` · PSA 라벨(baseline) · NetworkPolicy(위 8000 경로 포함) → `platform/policies/`(이미 라이브 — 정책 객체는 거기에만, validate 5.0·5.1).
+#   2) Secret `oci-s3-backup`(키 `ACCESS_KEY_ID` · `ACCESS_SECRET_KEY` · `REGION`) → ExternalSecret 원본 `secrets/data/` + 배달자 `platform/secrets/`(T053 선행 PR #46,
+#      2026-10-13 라이브 SecretSynced — 컨트롤러 전달 · `t053-verify.ps1 -Stage pre`). 여기서는 ObjectStore `s3Credentials`가 그 **이름만** 참조한다. ES를 여기 복사하지 않는다(단일 소유 — validate 7.3).
+#   3) `Database` · `DatabaseRole`(pod DB 4 · role 6) → `platform/cnpg-databases/`(T054). 부트스트랩 DB `platform`은 initdb 산출물이고 Database CR이 아니다.
+#   4) CA 미러 ExternalSecret(`pg-main-ca`의 `ca.crt`만 → 앱 ns) → `platform/kafka-topics/`(계약 §sync-wave 표의 CA 미러 행 · T056).
+#   5) Application `platform-cnpg-cluster` → `clusters/oci-k3s/apps/platform-cnpg-cluster.yaml`(T041부터 라이브). 이 PR은 그 파일에 계약 §Application 규약 **예외**
+#      (`ApplyOutOfSyncOnly=true` + `retry` — 근거는 그 파일 머리 주석 · README §5 · VD-11)만 더한다. 검사 7.1이 `source.path = platform/cnpg-cluster`를 대조한다.
+#   6) 시크릿 값: 없다. 런타임 Secret(`pg-main-ca` · `pg-main-server` · `pg-main-replication` · `pg-main-app`)은 operator가 만든다 — 희망 상태에 Secret 0장(README §0).
+#   7) 복구 런북 · 복구 클러스터(`pg-main-restored` 류) → T058. 검사 Job → `platform/policies/tests/`(T059).
+#
+# 되돌리기(순서 고정 — README §5): **Cluster 삭제 = 데이터 삭제**(local-path PVC는 reclaimPolicy Delete). revert 머지 → 렌더 0 → `OutOfSync`가 정상
+#   (`prune: false` + 객체의 `Prune=false`) → 지워야 한다면 운영자가 **마지막 Backup completed와 버킷 오브젝트를 확인한 뒤** ScheduledBackup → Cluster →
+#   ObjectStore 순으로 수동 삭제한다. ObjectStore를 먼저 지우면 WAL 아카이브가 즉시 멈추고 WAL이 PVC에 쌓인다.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-resources: []
+
+# ⚠ 전역 `namespace:` 변환기 금지(머리 주석) — 네임스페이스는 각 매니페스트의 metadata로만.
+resources:
+  - objectstore-oci-backups.yaml          # 리소스 wave 0 — 백업 대상(S3 호환). 자격 Secret은 이름만 참조
+  - cluster-pg-main.yaml                  # 리소스 wave 1 — PostgreSQL 18 인스턴스 1(initdb → Healthy에 수 분)
+  - scheduledbackup-pg-main-daily.yaml    # 리소스 wave 2 — Cluster Healthy 뒤 immediate 첫 백업
