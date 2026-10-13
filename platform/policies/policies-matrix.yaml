@@ -1,4 +1,4 @@
-# platform/policies/policies-matrix.yaml — 클러스터 내부 허용 매트릭스 (31장 = ingress 21 + egress 10)
+# platform/policies/policies-matrix.yaml — 클러스터 내부 허용 매트릭스 (33장 = ingress 22 + egress 11)
 #
 # 정본: 모노레포 specs/003-platform-foundation/contracts/network-policy.md
 #   `## 허용 매트릭스 — 클러스터 내부 (출발 ns → 도착 ns:포트)` 절.
@@ -43,12 +43,12 @@
 #   (Argo CD 추적은 어노테이션 방식이라 `argocd.argoproj.io/instance` 라벨은 존재하지 않는다).
 #
 # 검산:
-#   ingress 21 = argocd 2 · vault 3 · external-secrets 1 · cert-manager 1 · cnpg-system 1 ·
-#                data 3 · identity 2 · jt-dev 3 · jt-prod 3 · monitoring 2
-#   egress  10 = external-secrets 1 · identity 2 · jt-dev 3 · jt-prod 3 · monitoring 1
+#   ingress 22 = argocd 2 · vault 3 · external-secrets 1 · cert-manager 1 · cnpg-system 1 ·
+#                data 4 · identity 2 · jt-dev 3 · jt-prod 3 · monitoring 2
+#   egress  11 = external-secrets 1 · cnpg-system 1 · identity 2 · jt-dev 3 · jt-prod 3 · monitoring 1
 #
 # =============================================================================
-# INGRESS — 도착 ns 21장
+# INGRESS — 도착 ns 22장
 # =============================================================================
 
 # --- argocd (2) --------------------------------------------------------------
@@ -175,7 +175,7 @@ spec:
     - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: monitoring } } }]
       ports: [{ protocol: TCP, port: 8080 }]
 
-# --- data (3) ----------------------------------------------------------------
+# --- data (4) ----------------------------------------------------------------
 ---
 # 계약 §내부 매트릭스 — jt-dev·jt-prod → data 5432·9093·6379: pg-main · Kafka(SCRAM/TLS) · Dragonfly
 apiVersion: networking.k8s.io/v1
@@ -204,6 +204,23 @@ spec:
   ingress:
     - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: identity } } }]
       ports: [{ protocol: TCP, port: 5432 }]
+---
+# 계약 §내부 매트릭스 — cnpg-system(operator) → data 8000: CNPG operator → PostgreSQL 인스턴스 manager API(`/pg/status` 상태 수집 · 백업 요청 · in-place update)
+#   출발은 operator 파드만 — traefik 행과 같은 방식으로 namespaceSelector `cnpg-system` + **같은 peer 안의** podSelector
+#   `app.kubernetes.io/name=cloudnative-pg`로 좁힌다(peer를 둘로 나누면 OR가 되어 cnpg-system 전체가 열린다).
+#   5432는 열지 않는다(계약 행의 VD — T053에서 operator 로그로 판정). 짝 egress = cnpg-system/allow-egress-to-data.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-from-cnpg-operator
+  namespace: data
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: cnpg-system } }, podSelector: { matchLabels: { app.kubernetes.io/name: cloudnative-pg } } }]
+      ports: [{ protocol: TCP, port: 8000 }]
 ---
 # 계약 §내부 매트릭스 — monitoring → data 9187·9404: CNPG instance exporter · Strimzi kafka-exporter
 apiVersion: networking.k8s.io/v1
@@ -374,7 +391,7 @@ spec:
       ports: [{ protocol: TCP, port: 4317 }, { protocol: TCP, port: 4318 }]
 
 # =============================================================================
-# EGRESS — 출발 ns 10장
+# EGRESS — 출발 ns 11장
 # =============================================================================
 
 # --- external-secrets (1) ----------------------------------------------------
@@ -392,6 +409,25 @@ spec:
   egress:
     - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: vault } } }]
       ports: [{ protocol: TCP, port: 8200 }]
+
+# --- cnpg-system (1) ---------------------------------------------------------
+---
+# 계약 §내부 매트릭스 — cnpg-system(operator) → data 8000: CNPG operator → PostgreSQL 인스턴스 manager API(도착 ingress = data/allow-from-cnpg-operator)
+#   podSelector로 operator 파드(`app.kubernetes.io/name=cloudnative-pg` — 차트 selectorLabels)만 묶는다. 같은 ns의
+#   barman-cloud 플러그인 등 다른 파드에는 열지 않는다(계약 행 "operator pod만"). 목적지가 namespaceSelector라
+#   5.3(ipBlock의 ports + except 4개)의 대상이 아니다.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-to-data
+  namespace: cnpg-system
+  labels: { app.kubernetes.io/part-of: platform-policies }
+spec:
+  podSelector: { matchLabels: { app.kubernetes.io/name: cloudnative-pg } }
+  policyTypes: [Egress]
+  egress:
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: data } } }]
+      ports: [{ protocol: TCP, port: 8000 }]
 
 # --- identity (2) ------------------------------------------------------------
 ---

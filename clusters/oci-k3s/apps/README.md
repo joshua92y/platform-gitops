@@ -46,7 +46,7 @@ cascade로 지워지는 객체가 0건**이다 — 소유 객체인 ExternalSecr
 
 | 파일 | Application | source.path | 비고 |
 |---|---|---|---|
-| `platform-secrets.yaml` | `platform-secrets` | `platform/secrets` | **T045 G3**(Application) **· G4**(범위 완성). `secrets/<ns>/`의 ExternalSecret을 적용하는 **배달자** Application — 지금 **2장**이다: `cert-manager/cloudflare-dns-token`(G3) · `cloudflared/cloudflared-tunnel`(G4, ⚠ SSH·K8s API의 유일한 경로인 터널 커넥터의 자격이라 **잠금 위험 단계**로 따로 머지한다 — 사용자 입회·break-glass 확인 아래). 소비자 컴포넌트(`platform-cert-manager-issuers`·`platform-cloudflared`)의 소스에 ES를 넣지 않은 이유는 ESO webhook이 `failurePolicy: Fail`이기 때문이다 — 그렇게 하면 webhook 장애 중에 **터널 Deployment 수정도 Argo로 밀 수 없다**. 효과는 장애 제거가 아니라 **소비자 배포와 ExternalSecret 적용의 분리**다. ⚠ Vault·ESO 불가 시 이 Application과 root **health**는 Degraded가 되지만 root **sync**는 이 wave에서 기다리지 않는다(위 `platform-secret-stores` 행과 같은 성질). destination.namespace가 `kube-system`인 것은 표 3열이 `-`이기 때문이다(`platform-policies`와 같은 처리). ⚠ **이 Application을 지워도 ExternalSecret은 남는다** — ES에 `Delete=false`가 붙어 있어 cascade에서 빠지고(Argo v3.5.2 `shouldBeDeleted`가 리소스 어노테이션을 앱 수준 옵션보다 먼저 읽는다 · 소스 판독 · 라이브 미실측), 삭제 대상이 0건이라 승인 어노테이션도 요구되지 않는다. 남은 ES는 추적 없이 5분마다 조정을 계속하므로, 인수 해제는 `../../../platform/secrets/README.md` §5의 `kubectl delete externalsecret`으로만 된다. 상세는 파일 머리 주석과 `../../../platform/secrets/README.md` |
+| `platform-secrets.yaml` | `platform-secrets` | `platform/secrets` | **T045 G3**(Application) **· G4**(인수형 2장) **· T053 선행**(3장). `secrets/<ns>/`의 ExternalSecret을 적용하는 **배달자** Application — 지금 **3장**이다: `cert-manager/cloudflare-dns-token`(G3) · `cloudflared/cloudflared-tunnel`(G4, ⚠ SSH·K8s API의 유일한 경로인 터널 커넥터의 자격이라 **잠금 위험 단계**로 따로 머지한다 — 사용자 입회·break-glass 확인 아래) · `data/oci-s3-backup`(T053 선행 · **신규** Secret = `creationPolicy: Owner`, 인수형이 아니다 · S3 백업 자격 — Secret 키 `ACCESS_KEY_ID`·`ACCESS_SECRET_KEY`·`REGION` · 소비자 `ObjectStore oci-backups`는 계약 §sync-wave 표의 `cnpg-cluster` 행이라 이 배달자보다 뒤 · ⚠ Owner라 ES 삭제 = Secret GC = 백업 중단 — 아래 "인수 해제" 절차의 대상이 아니다). 소비자 컴포넌트(`platform-cert-manager-issuers`·`platform-cloudflared`)의 소스에 ES를 넣지 않은 이유는 ESO webhook이 `failurePolicy: Fail`이기 때문이다 — 그렇게 하면 webhook 장애 중에 **터널 Deployment 수정도 Argo로 밀 수 없다**. 효과는 장애 제거가 아니라 **소비자 배포와 ExternalSecret 적용의 분리**다. ⚠ Vault·ESO 불가 시 이 Application과 root **health**는 Degraded가 되지만 root **sync**는 이 wave에서 기다리지 않는다(위 `platform-secret-stores` 행과 같은 성질). destination.namespace가 `kube-system`인 것은 표 3열이 `-`이기 때문이다(`platform-policies`와 같은 처리). ⚠ **이 Application을 지워도 ExternalSecret은 남는다** — ES에 `Delete=false`가 붙어 있어 cascade에서 빠지고(Argo v3.5.2 `shouldBeDeleted`가 리소스 어노테이션을 앱 수준 옵션보다 먼저 읽는다 · 소스 판독 · 라이브 미실측), 삭제 대상이 0건이라 승인 어노테이션도 요구되지 않는다. 남은 ES는 추적 없이 5분마다 조정을 계속하므로, 인수 해제는 `../../../platform/secrets/README.md` §5의 `kubectl delete externalsecret`으로만 된다. 상세는 파일 머리 주석과 `../../../platform/secrets/README.md` |
 
 앱 Application(`<pod>-<env>`)은 후속 PR에서 이 디렉터리에 추가된다.
 
@@ -114,7 +114,7 @@ kubectl apply -f "$REPO/bootstrap/root-app.yaml"     # automated 복원 = 적용
 
 ```bash
 kubectl -n argocd get app root platform-argocd platform-policies   # 전부 Synced/Healthy
-kubectl get networkpolicy -A --no-headers | wc -l                  # 93
+kubectl get networkpolicy -A --no-headers | wc -l                  # 95
 kubectl get ns -L pod-security.kubernetes.io/enforce               # 14개 ns에 라벨(kube-system 포함)
 kubectl -n cloudflared get pods -o wide                            # 파드 이름·RESTARTS 불변
 kubectl -n cloudflared logs deploy/cloudflared --since=5m | grep -Ei 'error|Unregistered|failed'   # 0
@@ -137,7 +137,7 @@ kubectl delete networkpolicy -A -l app.kubernetes.io/part-of=platform-policies
 ```
 
 - **child만 `automated: null`로 패치하는 것은 무효다** — 이 Application 객체를 root가 git에서 관리하고 root는 `selfHeal: true`이므로 라이브 패치가 되돌려지고 `default-deny`가 재생성된다. freeze를 쓸 수 없으면 root와 child를 **둘 다** 패치한다.
-- 선택자가 `app.kubernetes.io/part-of`인 이유: 리소스 추적 방식이 어노테이션이라(`bootstrap/argocd/argocd-cm.yaml:16`) `argocd.argoproj.io/instance` 라벨은 객체에 **존재하지 않는다**. 이 라벨은 NetworkPolicy 93 · ResourceQuota 2 · LimitRange 2 = 97객체가 매니페스트에 직접 갖고 있고, Namespace와 agent-view RBAC에는 없다(비상 삭제가 tester 경로와 ns를 함께 지우지 않게 하려는 의도).
+- 선택자가 `app.kubernetes.io/part-of`인 이유: 리소스 추적 방식이 어노테이션이라(`bootstrap/argocd/argocd-cm.yaml:16`) `argocd.argoproj.io/instance` 라벨은 객체에 **존재하지 않는다**. 이 라벨은 NetworkPolicy 95 · ResourceQuota 2 · LimitRange 2 = 99객체가 매니페스트에 직접 갖고 있고, Namespace와 agent-view RBAC에는 없다(비상 삭제가 tester 경로와 ns를 함께 지우지 않게 하려는 의도).
 - `automated.prune: false`라 **`git revert`만으로는 정책이 클러스터에서 사라지지 않는다.** 롤백 경로는 위 3단계뿐이다.
 - **금지:** 이 Application의 cascade 삭제(Namespace 14개 삭제 시도 — 그래서 finalizer가 없다) · `argocd app sync --prune`(agent-view RBAC까지 prune) · `kubectl delete networkpolicy -A --all`(kube-system 포함).
 

@@ -1,12 +1,12 @@
-# platform/policies/ — Namespace 14개·PSA 라벨·NetworkPolicy 93장·ResourceQuota/LimitRange·agent-view RBAC
+# platform/policies/ — Namespace 14개·PSA 라벨·NetworkPolicy 95장·ResourceQuota/LimitRange·agent-view RBAC
 #
 # Application `platform-policies`가 이 디렉터리를 source.path로 읽는다(destination ns는 kube-system).
 # sync-wave: 계약 gitops-repo.md §sync-wave 단일 표 참조(wave 번호는 표에만 기재 — 중복 금지).
 # 구성·대응표·되돌리기 절차는 같은 디렉터리의 README.md에 있다.
 #
-# 렌더 검산(README §검산과 같은 값): Namespace 14 · NetworkPolicy 93(공통 49 + 내부 매트릭스 31 +
+# 렌더 검산(README §검산과 같은 값): Namespace 14 · NetworkPolicy 95(공통 49 + 내부 매트릭스 33 +
 #   외부·노드 13) · ResourceQuota 2 · LimitRange 2 · ServiceAccount 1 · ClusterRole 2 ·
-#   ClusterRoleBinding 3 · Role 3 · RoleBinding 3 = 123객체.
+#   ClusterRoleBinding 3 · Role 3 · RoleBinding 3 = 125객체.
 #
 # 트랜스포머를 두지 않는다:
 #   - 공통 `labels:`(구 `commonLabels`)는 **모든** 객체에 라벨을 붙인다. 그러면
