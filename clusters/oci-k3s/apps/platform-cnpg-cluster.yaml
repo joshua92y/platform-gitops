@@ -3,9 +3,9 @@
 # 역할: root(app-of-apps)가 이 파일을 읽어 child Application `platform-cnpg-cluster`를 만들고,
 #   그 Application이 `platform/cnpg-cluster`를 서버 사이드 적용한다.
 #
-# 현재 상태(T041 시점): `platform/cnpg-cluster/kustomization.yaml`은 `resources: []` 뼈대다 → 렌더 결과 0개.
-#   리소스 0인 Application이 Synced/Healthy가 되는지는 설계 VD-E로 실측한다(아니면 이 Application을 컴포넌트
-#   태스크로 이월). 실제 매니페스트(`Cluster pg-main` · `ScheduledBackup`)는 T053이 채운다.
+# 상태: T041(PR-C)에는 `platform/cnpg-cluster/kustomization.yaml`이 `resources: []` 뼈대였다(렌더 0개 — 리소스 0인 Application이
+#   Synced/Healthy가 되는지는 설계 VD-E로 실측). **T053(2026-10-13)이 채웠다**: 순수 매니페스트 3장 — `ObjectStore oci-backups`(리소스 wave 0) →
+#   `Cluster pg-main`(1) → `ScheduledBackup pg-main-daily`(2). 값·근거·VD는 `platform/cnpg-cluster/README.md`.
 #
 # 상태를 가진 컴포넌트(최우선 보호 대상): `Cluster pg-main`은 계약 §삭제 보호 목록의 첫 항목이고, 객체 자신에
 #   `argocd.argoproj.io/sync-options: Delete=false,Prune=false`가 붙는다(T053). 이 Application의 `Prune=confirm`·
@@ -21,8 +21,25 @@
 #   finalizer를 빼는 것은 `platform-argocd`·`platform-policies` 둘뿐이다 — 그 둘의 cascade는 Argo CD 자신과
 #   Namespace 14개를 지울 수 있어 되돌릴 컨트롤러조차 남지 않는다.
 #
-# syncPolicy: 계약 §Application 규약의 플랫폼 표준 그대로. `CreateNamespace=true`는 PR-B2의 platform/policies가
-#   Namespace 14개의 선언 정본이라 실질 no-op이다.
+# syncPolicy: 계약 §Application 규약의 플랫폼 표준 + **예외 2항목**(계약 §Application 규약 예외, 2026-10-13 T053 — 모노레포 `a1bf712`).
+#   `CreateNamespace=true`는 PR-B2의 platform/policies가 Namespace 14개의 선언 정본이라 실질 no-op이다.
+#   예외의 이유: 이 Application은 Argo가 **health를 추적하는 CR**(CNPG `Cluster`)을 **다단계 리소스 wave**(0 → 1 → 2) 안에 가진 저장소의 첫 사례다.
+#   Argo CD v3.5.2 내장 health lua(resource_customizations/postgresql.cnpg.io/Cluster/health.lua)는 `Applying configuration` ·
+#   `Primary instance is being restarted in-place` · `… without a switchover` · `Switchover in progress` · `Failing over` · `Waiting for user action` ·
+#   major 업그레이드 · 온라인 업그레이드 phase를 **Degraded**로 매핑한다. 다단계 sync는 다음 wave로 가기 전 running task의 health를 기다리고,
+#   Degraded를 보면 task Failed → operation Failed로 닫는다(gitops-engine pkg/sync/sync_context.go). 자동 sync operation은 **기본 retry**(limit 5 · 5s ×2 ·
+#   max 3m ≈ 2.6분 — controller/appcontroller.go:2377 `RetryStrategy{Limit: 5}` · pkg/apis/application/v1alpha1/application_defaults.go `DefaultSyncRetry*`)를
+#   이미 가지며, 그것을 소진해 최종 Failed가 되면 **같은 리비전으로 다시 시작하지 않는다**(appcontroller.go:2391 "Skipping auto-sync: failed previous sync
+#   attempt … will not retry"). 즉 파라미터 한 줄 변경이 reload/재시작 phase를 그 창보다 오래 지나면 sync가 Failed로 남는다 — 소스 판독,
+#   라이브 미실측(README VD-11로 기록).
+#   - `ApplyOutOfSyncOnly=true`: in-sync 리소스를 task에서 빼므로 Cluster 한 장 변경은 **단일 step**이 되어 health 대기 자체가 없다(바로 Succeeded).
+#     첫 배포는 3장이 모두 OutOfSync라 wave 순서가 그대로 유지된다.
+#   - `retry`(limit 5 · backoff 30s ×2 · maxDuration 5m ≈ 12.5분): 새 안전망이 아니라 **기본 retry의 대체**(appcontroller.go:2379 `op.Retry = *app.Spec.SyncPolicy.Retry`)로
+#     창을 넓힌 것 — 두 장 이상이 함께 바뀌어 다단계가 남는 경우용. 재시도에서는 이미 적용돼 in-sync인 리소스가 task에서 빠지므로(sync_context.go
+#     `filterOutOfSyncTasks`) 남은 장만 health 대기 없이 적용된다(첫 배포 예: Cluster가 빠지고 ScheduledBackup만 — 그 Backup은 CNPG가 pending으로 들고 있다).
+#     모양은 bootstrap/root-app.yaml의 retry와 같고 값만 CNPG 재시작 창에 맞춰 길다.
+#   둘 다 **이 Application에만** 둔다 — 다른 플랫폼 Application은 계약 표준 그대로다(health 추적 CR을 다단계 wave로 갖게 되는 컴포넌트(T055 Kafka 등)가
+#   생기면 계약 예외 문단에 그 이름을 더한 뒤에 같은 모양을 쓴다).
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -47,7 +64,14 @@ spec:
       selfHeal: true
     syncOptions:
       - ServerSideApply=true
+      - ApplyOutOfSyncOnly=true
       - CreateNamespace=true
       - Prune=confirm
       - Delete=confirm
       - SkipDryRunOnMissingResource=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m

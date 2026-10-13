@@ -1,0 +1,10 @@
+# 경계 픽스처 crd-schema/repo-first — 검사 1 · CRD 스키마는 저장소 렌더에 나온 CustomResourceDefinition에서 파생한 것이 1순위, datreeio 카탈로그는 폴백
+#   (T053 · 계약 gitops-repo.md §validate.yml 1 — 2026-10-13 개정). 이 트리의 렌더에 최소 ObjectStore CRD(enum bzip2·gzip·lz4·snappy = 라이브 차트
+#   plugin-barman-cloud 0.7.1 · appVersion v0.14.0 CRD의 해당 부분)가 들어 있으므로 ObjectStore `data.compression: lz4`는 1 KUST PASS여야 한다 —
+#   datreeio 사본(2025-06-17 · enum에 lz4 없음)만 보던 코드는 FAIL이었다(2026-10-13 실측 = validate.tests.sh crd-schema-repo-first의 red).
+#   부분 트리 — 다른 검사의 FAIL은 판정 근거가 아니다(validate.tests.sh 머리 주석). 짝 = ../../../reject(zstd → 파생 스키마가 거부).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - crd.yaml
+  - objectstore.yaml

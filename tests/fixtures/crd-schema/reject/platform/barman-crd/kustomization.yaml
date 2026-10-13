@@ -1,0 +1,10 @@
+# 부정 픽스처 crd-schema/reject — 검사 1 · 저장소 렌더 CRD에서 파생한 스키마가 실제로 적용됐다는 증명(T053 · 계약 gitops-repo.md §validate.yml 1).
+#   ../../repo-first와 같은 최소 ObjectStore CRD에 ObjectStore `data.compression: zstd`(CRD enum 밖 — zstd는 실제 CRD에서도 wal.compression에만 있다)
+#   → 1 KUST FAIL이어야 하고, kubeconform 메시지의 enum에 **lz4가 있고** 스키마 경로가 파생 디렉터리(validate-crd-schemas.*)여야 한다 —
+#   datreeio 사본이 거부했다면 enum이 bzip2·gzip·snappy(lz4 없음)이고 경로가 raw.githubusercontent.com/datreeio/… 다.
+#   부분 트리 — 다른 검사의 FAIL은 판정 근거가 아니다(validate.tests.sh 머리 주석).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - crd.yaml
+  - objectstore.yaml

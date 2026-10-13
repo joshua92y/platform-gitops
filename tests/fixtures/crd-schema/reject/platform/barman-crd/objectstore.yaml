@@ -1,0 +1,12 @@
+# crd-schema/reject — 판정 대상은 data.compression 한 줄(zstd = enum 밖 → 어느 스키마든 거부). 메시지의 enum(lz4 포함)과 스키마 경로(validate-crd-schemas.*)가
+#   파생 스키마가 적용됐다는 증명이다. 나머지는 ../../repo-first 와 같다.
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: oci-backups
+  namespace: data
+spec:
+  configuration:
+    destinationPath: s3://example/x/
+    data:
+      compression: zstd
