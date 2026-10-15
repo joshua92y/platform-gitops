@@ -1,0 +1,21 @@
+# 부정 픽스처 3.8 CNPG-retain (absent) — Database `ensure: absent`: reclaim이 retain이어도 인스턴스 매니저가 DROP DATABASE를 낸다 → FAIL.
+#   이웃 pg-main-keep(ensure: present · retain)은 찍히지 않아야 한다(격리).
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata: { name: pg-main-gone, namespace: data }
+spec:
+  cluster: { name: pg-main }
+  name: gone
+  owner: gone_owner
+  ensure: absent                             # ← FAIL(reclaim과 무관)
+  databaseReclaimPolicy: retain
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata: { name: pg-main-keep, namespace: data }
+spec:
+  cluster: { name: pg-main }
+  name: keep
+  owner: keep_owner
+  ensure: present
+  databaseReclaimPolicy: retain

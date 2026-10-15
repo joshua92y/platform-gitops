@@ -1,0 +1,27 @@
+# 경계 픽스처 3.8 CNPG-retain (pass) — 계약 §validate.yml 3 「(2026-10-14 T054) CNPG 데이터 보존」이 허용하는 모양만:
+#   ① ensure 생략(= CRD 기본값 present) + databaseReclaimPolicy: retain 명시  ② ensure: present + 따옴표 "retain"(문자열 retain이면 된다)
+#   ③ 다른 API 그룹의 kind: Database — apiVersion 접두 postgresql.cnpg.io/ 가 아니므로 대상 밖(reclaim 필드가 없어도 찍히지 않는다)
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata: { name: pg-main-alpha, namespace: data }
+spec:
+  cluster: { name: pg-main }
+  name: alpha
+  owner: alpha_owner
+  databaseReclaimPolicy: retain              # ensure 생략 = present — 허용
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata: { name: pg-main-beta, namespace: data }
+spec:
+  cluster: { name: pg-main }
+  name: beta
+  owner: beta_owner
+  ensure: present
+  databaseReclaimPolicy: "retain"            # 따옴표가 있어도 문자열 retain — 허용
+---
+apiVersion: example.com/v1                   # 대상 밖(API 그룹이 다르다)
+kind: Database
+metadata: { name: not-cnpg, namespace: data }
+spec:
+  engine: mysql

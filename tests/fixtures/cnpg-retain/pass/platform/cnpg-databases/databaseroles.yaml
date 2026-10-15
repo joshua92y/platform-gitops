@@ -1,0 +1,21 @@
+# 경계 픽스처 3.8 CNPG-retain (pass) — DatabaseRole: databaseRoleReclaimPolicy: retain 명시(ensure는 있어도 없어도 된다)
+apiVersion: postgresql.cnpg.io/v1
+kind: DatabaseRole
+metadata: { name: pg-main-alpha-owner, namespace: data }
+spec:
+  cluster: { name: pg-main }
+  name: alpha_owner
+  ensure: present
+  login: true
+  passwordSecret: { name: pg-main-alpha-owner }
+  databaseRoleReclaimPolicy: retain
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: DatabaseRole
+metadata: { name: pg-main-beta-owner, namespace: data }
+spec:
+  cluster: { name: pg-main }
+  name: beta_owner
+  login: true
+  passwordSecret: { name: pg-main-beta-owner }
+  databaseRoleReclaimPolicy: retain

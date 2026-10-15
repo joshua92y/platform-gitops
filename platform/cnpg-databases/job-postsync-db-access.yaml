@@ -1,0 +1,570 @@
+# platform/cnpg-databases/job-postsync-db-access.yaml — Argo CD PostSync hook Job `cnpg-databases-access`(ns data) (T054)
+#
+# 하는 일 세 가지 — 실행 순서대로(컨트롤러 결정 D7 · C1(2026-10-14) · 과제 문면 · 모노레포 data-model §7):
+#   ⓪ **pod DB CONNECT 제한**(C1) — `identity_admin` · `dev_identity_admin`에 각 pod owner 자격으로 과제 문면 SQL 그대로(멱등):
+#        REVOKE CONNECT ON DATABASE <db> FROM PUBLIC; GRANT CONNECT ON DATABASE <db> TO <db>_app, <db>_owner;
+#      문면상 이 SQL은 각 pod migrate Job의 첫 단계(템플릿 T072)이고 그 단계는 그대로 둔다 — 이 Job이 먼저 내 두는 것이다(이중 멱등). 이유: migrate Job은
+#      US6(T072·T075)에야 생기므로 그 전까지 `dev_identity_admin_app`이 prod `identity_admin`에 붙는 창이 열려 있고, T059(US3 E2E)의 교차 DB 거부 증거
+#      (검사 Job data-assert의 pg-cross-db-denied · catalog-connect-false · revoke-public)가 구조적으로 FAIL한다(data-model §7 접근 경계 행 2026-10-14).
+#      되읽기 = `pg_database.datacl`이 NULL(= 기본 PUBLIC CONNECT 허용)이 아니고 PUBLIC의 CONNECT(`=…c/` 항목)가 없으며, `<db>_app` · `<db>_owner`가 CONNECT를
+#      가져야(`aclexplode` privilege_type `CONNECT`) PASS. GRANT 대상 `<db>_app`은 인스턴스 매니저가 DatabaseRole마다 비동기로 만든다 → owner 접속 뒤 그 role이
+#      `pg_roles`에 보일 때까지 기다린다(없는 role에 GRANT하면 오류다. `psql -c` 한 문자열은 한 트랜잭션이라 그때는 REVOKE도 함께 취소된다 — PUBLIC을 연 채로
+#      FAIL하지, PUBLIC을 닫고 app을 잠근 채로 끝나지 않는다).
+#   ① **공유 DB CONNECT 제한** — `authentik` · `openfga`에 각 owner 자격으로 과제 문면 SQL 그대로(멱등):
+#        REVOKE CONNECT ON DATABASE <db> FROM PUBLIC; GRANT CONNECT ON DATABASE <db> TO <db>_owner;
+#      공유 컴포넌트는 pod가 아니라 migrate Job이 없다 → 이 Job이 대신한다(공유 DB에는 app role이 없어 owner만). 되읽기 = `pg_database.datacl`에 PUBLIC의
+#      CONNECT(`=…c/` 항목)가 없고 NULL(= 기본 PUBLIC CONNECT 허용)도 아니어야 PASS. 판정식은 검사 Job data-assert의 revoke-public과 같다.
+#   ② **app role 세션 기본값** — `identity_admin_app`(DB `identity_admin`) · `dev_identity_admin_app`(DB `dev_identity_admin`)에 **그 role 자신의 자격으로**:
+#        ALTER ROLE CURRENT_USER SET statement_timeout = '15s'; ALTER ROLE CURRENT_USER SET idle_in_transaction_session_timeout = '30s';
+#      일반 role은 자기 세션 기본값을 바꿀 수 있다(superuser 불필요 — PostgreSQL ALTER ROLE 문서 "Ordinary roles can only set defaults for themselves").
+#      CNPG `DatabaseRole` CRD(1.30)에 role 수준 GUC 필드가 없어서다. 되읽기 = `pg_roles.rolconfig`(DB 무관 설정)에 두 값이 정확히 있어야 PASS
+#      (DB별 덮어쓰기 `ALTER ROLE … IN DATABASE … SET`(pg_db_role_setting setdatabase ≠ 0)은 보지 않는다 — data-assert app-session-timeouts도 같다).
+#      app은 **⓪이 끝난 뒤에만** 자기 DB에 붙는다 — 이 접속의 성공 자체가 "PUBLIC을 닫은 뒤에도 `<db>_app` CONNECT가 된다"의 실증이다(순서가 바뀌면 app 접속이
+#      PUBLIC 권한으로 성공해 GRANT를 증명하지 못하고, PUBLIC이 이미 닫힌 DB에서는 GRANT 전 접속이 `permission denied for database`로 FAIL한다).
+#
+# 왜 PostSync hook인가: CRD로 표현할 수 없는 SQL을 **전체 sync**(새 리비전의 자동 sync · 그 operation의 재시도 · 리소스를 고르지 않은 수동 Sync)마다 멱등으로
+#   다시 낸다. selfHeal 자동 sync(같은 리비전 — OutOfSync 리소스만 `op.Sync.Resources`에 넣는 부분 sync · Argo CD v3.5.2 controller/appcontroller.go:2412–2420) ·
+#   리소스를 고른 수동 Sync · Apply only는 hook을 **건너뛴다**(controller/sync.go:311 skipHooks = apply 전략 또는 Resources ≥ 1 → gitops-engine
+#   pkg/sync/sync_context.go:980). Argo는 Sync 단계 리소스(ES → role → database)가 전부 적용되고 Healthy가 된 뒤 PostSync를 실행한다(그 시도의 task 기준 —
+#   재시도에서는 `ApplyOutOfSyncOnly`가 in-sync ES를 health와 무관하게 빼므로 ES가 아직 Degraded여도 이 Job이 뜬다 → Secret 파일이 없으면 아래 FAIL 줄로 끝나
+#   다음 재시도로 넘어간다 · README §1). 단 DatabaseRole/Database는 Argo 내장 health가 없어 **적용 즉시 Healthy**다(sync_context.go:559) —
+#   PG에 role·비밀번호·database가 실제로 생기는 것은 인스턴스 매니저(pg-main-1)의 비동기 조정이다. 그래서 이 Job이 **스스로 접속을 기다린다**
+#   (SELECT 1을 RETRY_INTERVAL_S 간격 재시도 · ⓪은 GRANT 대상 app role도 기다린다). 실패 사유는 바뀔 때만 NOTE 한 줄(대기마다 최대 5줄).
+#   **대기 예산 WAIT_BUDGET_S는 Job 전체 공유**: 첫 컨테이너(`pod-db-connect`)가 시작 시각 + 예산을 /work/deadline에 적고 뒤의 두 컨테이너가 같은 시한을 쓴다.
+#   시한 계산(activeDeadlineSeconds 600): 대기 루프는 시한 전에 시작한 시도만 하고, 시한이 지난 뒤 들어온 대상은 접속을 한 번만 시도한다 → 서버 불통의 최악도
+#   시한 + 대상 6개 × 1회(connect_timeout 10초) = 시한 + 60초 → 파드 기동·컨테이너 전환(이미지가 노드에 있다 — 수 초)을 더해 ≈ 480 + 60 + 10 = 550초 < 600.
+#   hook은 Application의 `ApplyOutOfSyncOnly`와 무관하게 전체 sync마다 실행된다(sync_context.go:761–765 filterOutOfSyncTasks가 hook을 남긴다). Job이 실패하면
+#   hook 실패 = operation Failed(:349–361 · :636–639) → Application `retry`가 operation을 다시 돌고, 그때 BeforeHookCreation이 앞 Job을 지우고 새로 만든다.
+#   ⚠ hook 결과는 Application sync·health 집계에 들어가지 않는다(controller/health.go:30 · controller/state.go:981) — Job이 실패해도 앱은 Synced/Healthy일 수 있다.
+#     판정은 `operationState.phase` · hook `hookPhase` · Job `succeeded` · 로그 `SUMMARY`(README §3 VD-4).
+#   ⚠ hook 매니페스트만 바꾼 커밋은 Application을 OutOfSync로 만들지 않는다(controller/state.go:981–985 — hook은 sync 상태에 들어가지 않는다)
+#     → 자동 sync가 돌지 않아 새 Job도 돌지 않는다. 그때는 운영자가 **전체** 수동 Sync(리소스 선택 없음 · Apply only 끔 — README §1 · VD-6).
+#
+# 자격 격리(검사 Job data-assert의 다단 구성과 같다 — 한 컨테이너가 두 종류 이상의 자격을 보지 않는다):
+#   **initContainer `pod-db-connect`**(⓪) = pod owner Secret 2장만 · **initContainer `shared-db-connect`**(①) = 공유 owner Secret 2장만 ·
+#   **본 컨테이너 `app-session-defaults`**(②) = app Secret 2장만 마운트한다. 두 init은 판정 줄을 emptyDir 파일(/work/pod.result · /work/shared.result)에 적고,
+#   본 컨테이너가 그 줄을 같은 로그 스트림으로 다시 낸 뒤(파일 순서 — ⓪ → ①) 자기 판정과 SUMMARY를 찍는다. `kubectl logs job/<이름>`은 본 컨테이너만 보여 주므로
+#   판정은 한 스트림에 모인다. init은 판정과 무관하게 exit 0으로 끝난다(판정은 FAIL 줄로 남긴다 · 순서는 K8s가 initContainers를 차례로 돌리는 것으로 보장된다).
+# 비밀 취급: 비밀번호는 Secret 볼륨 파일에서 `PGPASSWORD="$(cat …/password)"`로 **그 psql 한 번의 환경으로만** 넘긴다 — argv · conninfo · 로그에 없다 · `set -x` 없음.
+#   psql은 `-w`(비밀번호 프롬프트 금지) · stdin /dev/null. 로그에 남는 것은 role·DB 이름 · datacl · rolconfig의 두 GUC 값 · psql 오류 첫 줄뿐이다.
+#   Secret의 `username` 파일은 role 이름 대조에만 쓴다(값을 출력하지 않는다 — 다르면 CNPG도 그 비밀번호를 적용하지 않는다: roles/runnable.go:366–369).
+# 로그 계약 = 검사 Job과 같다(platform/policies/tests/README.md §로그 계약): `RESULT: PASS|FAIL <id> …` 정확히 한 줄씩 · 보조 줄은 `NOTE:` · `EVIDENCE:`뿐 ·
+#   마지막 줄 `SUMMARY: pass=<n> fail=<n>` · 실패 ≥ 1이면 exit 1. id 6개(출력 순서) = pod-connect-identity_admin · pod-connect-dev_identity_admin ·
+#   shared-connect-authentik · shared-connect-openfga · app-session-defaults-prod · app-session-defaults-dev.
+#   최대 줄 수 = RESULT 6 + NOTE ≤ 54(⓪ 대상마다 접속 대기 5 + 성공 1 + role 대기 5 + 확인 1 + 서버 메시지 1 = 13 · ① ② 대상마다 대기 5 + 성공 1 + 서버 메시지 1 = 7
+#   → 2×13 + 2×7 + 2×7) + EVIDENCE 2 + SUMMARY 1 = 63(README §1). EVIDENCE 2줄 = pod DB 두 곳의 pg_extension `vector` 버전·schema(관측 시점 기록 — 판정 아님 · VD-3).
+#
+# 이미지 = 카탈로그 major 18 운영 이미지(platform/cnpg/clusterimagecatalog-standard-trixie.yaml과 같은 digest — `pg-main-1`이 이미 노드 B에서 쓰고 있어 새 pull ·
+#   새 레지스트리가 없고 psql 클라이언트 버전 = 서버 버전). arm64 manifest의 config(2026-10-14 ghcr 익명 토큰 조회): `User "26"`(숫자) · PATH에
+#   `/usr/lib/postgresql/18/bin`. `/usr/bin/psql`은 pg_wrapper(perl)로 가는 링크라 바이너리 `/usr/lib/postgresql/18/bin/psql`을 직접 부른다(없으면 PATH의 psql).
+#   `/bin/sh` = dash(merged-usr · /usr/bin/sh → dash) — 스크립트는 POSIX sh다(local · 배열 · [[ ]] 없음).
+# securityContext: restricted 수준(ns `data`의 PSA는 baseline — 그보다 엄격). `runAsUser/runAsGroup/fsGroup 26` = 이미지 User 26 · CNPG Cluster의
+#   postgresUID/postgresGID 기본값 26/26(같은 이미지를 그렇게 돌린다). Secret 볼륨은 `defaultMode 0440`(10진 288) + `fsGroup 26` — 파일이 root:26 0440이 되어
+#   비루트 UID 26이 그룹 권한으로 읽는다. 볼륨은 `optional: true` — Secret이 없을 때 파드가 ContainerCreating에 묶여 activeDeadlineSeconds까지 말없이 멈추는
+#   대신, 스크립트가 "Secret 파일 없음"을 FAIL 줄로 바로 남긴다. CA는 `pg-main-ca`(operator 산출물)의 `ca.crt`만 마운트한다(`ca.key`는 오지 않는다).
+# 네트워크: Job 파드(ns data) → `pg-main-rw.data.svc:5432`는 ns `data`의 `allow-same-namespace`(ingress·egress) + `allow-dns`로 이미 열려 있다 — 정책 변경 없음
+#   (platform/policies 렌더 확인). `sslmode=verify-full` — 서버 인증서 SAN에 `pg-main-rw.data.svc`가 있다.
+# spec: backoffLimit 0(실패는 조용히 재시도하지 않는다 — Application `retry`가 operation을 다시 돈다) · activeDeadlineSeconds 600 · ttlSecondsAfterFinished 7일
+#   (로그 보존 — VD 증거. BeforeHookCreation은 hook을 실행하는 다음 **전체** sync 직전에 지운다) · automountServiceAccountToken false(K8s API를 쓰지 않는다) ·
+#   nodeSelector role=data. requests 명시 · limits는 memory만(CPU limit 없음 — 저장소 관례). initContainer는 차례로 돌므로 파드 실효 요청은 컨테이너 하나 몫이다.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cnpg-databases-access
+  namespace: data
+  labels:
+    app.kubernetes.io/name: cnpg-databases-access
+    app.kubernetes.io/component: postsync-sql
+    app.kubernetes.io/part-of: platform-cnpg-databases
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 600
+  ttlSecondsAfterFinished: 604800
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cnpg-databases-access
+        app.kubernetes.io/component: postsync-sql
+        app.kubernetes.io/part-of: platform-cnpg-databases
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      nodeSelector:
+        role: data                                   # 노드 B — 이미지가 이미 있다(pg-main-1과 같은 digest)
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 26
+        runAsGroup: 26
+        fsGroup: 26
+        seccompProfile:
+          type: RuntimeDefault
+      volumes:
+        - name: work
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+        - name: pg-ca
+          secret:
+            secretName: pg-main-ca                   # operator 산출물(ns data) — ca.crt만
+            optional: true
+            defaultMode: 288                         # 0440
+            items:
+              - { key: ca.crt, path: ca.crt }
+        - name: cred-prod-owner                      # initContainer pod-db-connect 전용(⓪)
+          secret:
+            secretName: pg-main-identity-admin-owner
+            optional: true
+            defaultMode: 288
+            items:
+              - { key: username, path: username }
+              - { key: password, path: password }
+        - name: cred-dev-owner                       # initContainer pod-db-connect 전용(⓪)
+          secret:
+            secretName: pg-main-dev-identity-admin-owner
+            optional: true
+            defaultMode: 288
+            items:
+              - { key: username, path: username }
+              - { key: password, path: password }
+        - name: cred-authentik-owner                 # initContainer shared-db-connect 전용(①)
+          secret:
+            secretName: pg-main-authentik-owner
+            optional: true
+            defaultMode: 288
+            items:
+              - { key: username, path: username }
+              - { key: password, path: password }
+        - name: cred-openfga-owner                   # initContainer shared-db-connect 전용(①)
+          secret:
+            secretName: pg-main-openfga-owner
+            optional: true
+            defaultMode: 288
+            items:
+              - { key: username, path: username }
+              - { key: password, path: password }
+        - name: cred-prod-app                        # 본 컨테이너 전용(②)
+          secret:
+            secretName: pg-main-identity-admin-app
+            optional: true
+            defaultMode: 288
+            items:
+              - { key: username, path: username }
+              - { key: password, path: password }
+        - name: cred-dev-app                         # 본 컨테이너 전용(②)
+          secret:
+            secretName: pg-main-dev-identity-admin-app
+            optional: true
+            defaultMode: 288
+            items:
+              - { key: username, path: username }
+              - { key: password, path: password }
+      initContainers:
+        # ⓪ pod DB CONNECT 제한 — pod owner 자격 2장만 본다. Job 공유 대기 시한을 처음 적는다
+        - name: pod-db-connect
+          image: ghcr.io/cloudnative-pg/postgresql:18.6-202610050823-standard-trixie@sha256:79be0d10e78b7ac4520cf6c5db199a8bb7f6de53b3229f47e90cab5865528a0d
+          imagePullPolicy: IfNotPresent
+          workingDir: /tmp
+          command: [/bin/sh, -c]
+          args:
+            - |
+              set -u
+              export HOME=/tmp
+              WORK=/work
+              CREDS=/creds
+              CA=/etc/pg/ca.crt
+              PGRW=pg-main-rw.data.svc
+              PSQL=/usr/lib/postgresql/18/bin/psql
+              [ -x "$PSQL" ] || PSQL=psql
+              BUDGET=${WAIT_BUDGET_S:-480}
+              STEP=${RETRY_INTERVAL_S:-10}
+              out="$WORK/pod.result"
+              : > "$out"
+              emit() { printf '%s\n' "$*" >>"$out"; printf '%s\n' "$*"; }
+              first() { printf '%s\n' "$1" | head -n 1 | sed 's/^.* failed: //' | cut -c1-200; }
+              # 대기 예산은 Job 전체가 공유한다 — 첫 컨테이너인 여기서 시한을 적고 뒤의 두 컨테이너가 같은 시한을 읽는다
+              deadline=$(( $(date +%s) + BUDGET ))
+              printf '%s\n' "$deadline" > "$WORK/deadline"
+
+              # pg <db> <role> <자격 디렉터리> <psql 인자…> — 비밀번호는 이 psql 한 번의 환경(PGPASSWORD)으로만
+              pg() {
+                _db=$1; _role=$2; _dir=$3; shift 3
+                PGPASSWORD="$(cat "$_dir/password")" "$PSQL" -X -w -v ON_ERROR_STOP=1 \
+                  -d "host=$PGRW port=5432 dbname=$_db user=$_role sslmode=verify-full sslrootcert=$CA connect_timeout=10 application_name=cnpg-databases-access" \
+                  "$@" </dev/null 2>&1
+              }
+
+              # wait_connect <db> <role> <자격 디렉터리> — SELECT 1이 될 때까지 STEP초 간격 · 시한 넘으면 1
+              wait_connect() {
+                _n=0; _last=''; _notes=0
+                while :; do
+                  _n=$((_n + 1))
+                  _o=$(pg "$1" "$2" "$3" -tAc 'SELECT 1')
+                  if [ $? -eq 0 ]; then
+                    [ "$_n" -eq 1 ] || emit "NOTE: $1 <- $2 접속 성공(시도 ${_n}회)"
+                    return 0
+                  fi
+                  _r=$(first "$_o")
+                  if [ "$_r" != "$_last" ] && [ "$_notes" -lt 5 ]; then
+                    emit "NOTE: $1 <- $2 접속 대기(시도 ${_n}): $_r"
+                    _last=$_r; _notes=$((_notes + 1))
+                  fi
+                  [ $(( $(date +%s) + STEP )) -le "$deadline" ] || return 1
+                  sleep "$STEP"
+                done
+              }
+
+              # wait_role <db> <접속 role> <자격 디렉터리> <기다릴 role> — GRANT 대상 role이 pg_roles에 보일 때까지(인스턴스 매니저가 비동기로 만든다)
+              wait_role() {
+                _n=0; _last=''; _notes=0
+                while :; do
+                  _n=$((_n + 1))
+                  _o=$(pg "$1" "$2" "$3" -tAc "SELECT count(*) FROM pg_roles WHERE rolname = '$4'")
+                  _rc=$?
+                  if [ "$_rc" -eq 0 ] && [ "$_o" = 1 ]; then
+                    [ "$_n" -eq 1 ] || emit "NOTE: $1 <- $2 GRANT 대상 role $4 확인(시도 ${_n}회)"
+                    return 0
+                  fi
+                  if [ "$_rc" -eq 0 ]; then _r="role $4 이 아직 없다(pg_roles ${_o}행)"; else _r=$(first "$_o"); fi
+                  if [ "$_r" != "$_last" ] && [ "$_notes" -lt 5 ]; then
+                    emit "NOTE: $1 <- $2 GRANT 대상 role 대기(시도 ${_n}): $_r"
+                    _last=$_r; _notes=$((_notes + 1))
+                  fi
+                  [ $(( $(date +%s) + STEP )) -le "$deadline" ] || return 1
+                  sleep "$STEP"
+                done
+              }
+
+              # pod_connect <db> <owner role> <app role> <자격 디렉터리> <Secret 이름>
+              pod_connect() {
+                db=$1; role=$2; app=$3; dir=$4; sec=$5; id="pod-connect-$1"
+                if [ ! -r "$dir/username" ] || [ ! -r "$dir/password" ]; then
+                  emit "FAIL $id Secret $sec 의 username/password 파일이 없다 — ExternalSecret $sec 상태(SecretSyncedError?)를 본다"
+                  return
+                fi
+                if [ "$(tr -d '[:space:]' < "$dir/username")" != "$role" ]; then
+                  emit "FAIL $id Secret $sec 의 username이 role $role 과 다르다 — CNPG도 이 비밀번호를 적용하지 않는다(DatabaseRole status.message)"
+                  return
+                fi
+                if ! wait_connect "$db" "$role" "$dir"; then
+                  emit "FAIL $id ${BUDGET}초(Job 공유 예산) 안에 $db 에 $role 로 접속하지 못했다(마지막 사유는 위 NOTE)"
+                  return
+                fi
+                if ! wait_role "$db" "$role" "$dir" "$app"; then
+                  emit "FAIL $id ${BUDGET}초(Job 공유 예산) 안에 GRANT 대상 role $app 이 보이지 않았다 — REVOKE도 하지 않았다(PUBLIC CONNECT 그대로 · 마지막 사유는 위 NOTE)"
+                  return
+                fi
+                m=$(pg "$db" "$role" "$dir" -q -c "REVOKE CONNECT ON DATABASE $db FROM PUBLIC; GRANT CONNECT ON DATABASE $db TO $app, $role;")
+                if [ $? -ne 0 ]; then
+                  emit "FAIL $id REVOKE/GRANT 실패(한 트랜잭션 — REVOKE도 취소됐다): $(first "$m")"
+                  return
+                fi
+                [ -z "$m" ] || emit "NOTE: $id REVOKE/GRANT 서버 메시지: $(first "$m")"
+                o=$(pg "$db" "$role" "$dir" -tAc "SELECT CASE WHEN datacl IS NULL THEN 'default-public-connect' WHEN EXISTS (SELECT 1 FROM unnest(datacl) AS a WHERE a::text LIKE '=%c/%') THEN 'public-connect' WHEN NOT EXISTS (SELECT 1 FROM aclexplode(datacl) AS x JOIN pg_roles AS r ON r.oid = x.grantee WHERE r.rolname = '$app' AND x.privilege_type = 'CONNECT') THEN 'app-no-connect' WHEN NOT EXISTS (SELECT 1 FROM aclexplode(datacl) AS x JOIN pg_roles AS r ON r.oid = x.grantee WHERE r.rolname = '$role' AND x.privilege_type = 'CONNECT') THEN 'owner-no-connect' ELSE 'revoked' END || ' ' || coalesce(datacl::text, 'NULL') FROM pg_database WHERE datname = current_database()")
+                rc=$?
+                case "$rc:$o" in
+                  '0:revoked '*) emit "PASS $id $db: PUBLIC CONNECT 회수 · $app · $role CONNECT — datacl ${o#revoked }" ;;
+                  '0:app-no-connect '*|'0:owner-no-connect '*) emit "FAIL $id $db: GRANT 뒤에도 CONNECT가 없다(${o%% *}) — $(first "$o")" ;;
+                  0:*) emit "FAIL $id $db: PUBLIC CONNECT가 남아 있다 — $(first "$o")" ;;
+                  *) emit "FAIL $id datacl 되읽기 실패(rc=$rc): $(first "$o")" ;;
+                esac
+              }
+
+              if [ ! -r "$CA" ]; then
+                emit "FAIL pod-connect-identity_admin CA 파일 $CA 이 없다 — Secret pg-main-ca(operator 산출물 · ns data)"
+                emit "FAIL pod-connect-dev_identity_admin CA 파일 $CA 이 없다 — Secret pg-main-ca(operator 산출물 · ns data)"
+                exit 0
+              fi
+              pod_connect identity_admin identity_admin_owner identity_admin_app "$CREDS/prod-owner" pg-main-identity-admin-owner
+              pod_connect dev_identity_admin dev_identity_admin_owner dev_identity_admin_app "$CREDS/dev-owner" pg-main-dev-identity-admin-owner
+              exit 0
+          env:
+            - name: WAIT_BUDGET_S                    # Job 전체 공유 대기 예산(초) — 시한 계산은 머리 주석(≈ 550초 < activeDeadlineSeconds 600)
+              value: "480"
+            - name: RETRY_INTERVAL_S
+              value: "10"
+          volumeMounts:
+            - { name: work, mountPath: /work }
+            - { name: tmp, mountPath: /tmp }
+            - { name: pg-ca, mountPath: /etc/pg, readOnly: true }
+            - { name: cred-prod-owner, mountPath: /creds/prod-owner, readOnly: true }
+            - { name: cred-dev-owner, mountPath: /creds/dev-owner, readOnly: true }
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 64Mi                           # CPU limit 없음(저장소 관례)
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+        # ① 공유 DB CONNECT 제한 — 공유 owner 자격 2장만 본다. 시한은 pod-db-connect가 적은 Job 공유 시한
+        - name: shared-db-connect
+          image: ghcr.io/cloudnative-pg/postgresql:18.6-202610050823-standard-trixie@sha256:79be0d10e78b7ac4520cf6c5db199a8bb7f6de53b3229f47e90cab5865528a0d
+          imagePullPolicy: IfNotPresent
+          workingDir: /tmp
+          command: [/bin/sh, -c]
+          args:
+            - |
+              set -u
+              export HOME=/tmp
+              WORK=/work
+              CREDS=/creds
+              CA=/etc/pg/ca.crt
+              PGRW=pg-main-rw.data.svc
+              PSQL=/usr/lib/postgresql/18/bin/psql
+              [ -x "$PSQL" ] || PSQL=psql
+              BUDGET=${WAIT_BUDGET_S:-480}
+              STEP=${RETRY_INTERVAL_S:-10}
+              out="$WORK/shared.result"
+              : > "$out"
+              emit() { printf '%s\n' "$*" >>"$out"; printf '%s\n' "$*"; }
+              first() { printf '%s\n' "$1" | head -n 1 | sed 's/^.* failed: //' | cut -c1-200; }
+              # 시한 = pod-db-connect가 적은 Job 공유 시한(없거나 숫자가 아니면 지금부터 BUDGET초 — 본 컨테이너도 같은 값을 쓰도록 다시 적는다)
+              deadline=$(cat "$WORK/deadline" 2>/dev/null || true)
+              case "$deadline" in
+                ''|*[!0-9]*) deadline=$(( $(date +%s) + BUDGET )); printf '%s\n' "$deadline" > "$WORK/deadline" ;;
+              esac
+
+              # pg <db> <role> <자격 디렉터리> <psql 인자…> — 비밀번호는 이 psql 한 번의 환경(PGPASSWORD)으로만
+              pg() {
+                _db=$1; _role=$2; _dir=$3; shift 3
+                PGPASSWORD="$(cat "$_dir/password")" "$PSQL" -X -w -v ON_ERROR_STOP=1 \
+                  -d "host=$PGRW port=5432 dbname=$_db user=$_role sslmode=verify-full sslrootcert=$CA connect_timeout=10 application_name=cnpg-databases-access" \
+                  "$@" </dev/null 2>&1
+              }
+
+              # wait_connect <db> <role> <자격 디렉터리> — SELECT 1이 될 때까지 STEP초 간격 · 시한 넘으면 1
+              wait_connect() {
+                _n=0; _last=''; _notes=0
+                while :; do
+                  _n=$((_n + 1))
+                  _o=$(pg "$1" "$2" "$3" -tAc 'SELECT 1')
+                  if [ $? -eq 0 ]; then
+                    [ "$_n" -eq 1 ] || emit "NOTE: $1 <- $2 접속 성공(시도 ${_n}회)"
+                    return 0
+                  fi
+                  _r=$(first "$_o")
+                  if [ "$_r" != "$_last" ] && [ "$_notes" -lt 5 ]; then
+                    emit "NOTE: $1 <- $2 접속 대기(시도 ${_n}): $_r"
+                    _last=$_r; _notes=$((_notes + 1))
+                  fi
+                  [ $(( $(date +%s) + STEP )) -le "$deadline" ] || return 1
+                  sleep "$STEP"
+                done
+              }
+
+              # shared_connect <db> <owner role> <자격 디렉터리> <Secret 이름>
+              shared_connect() {
+                db=$1; role=$2; dir=$3; sec=$4; id="shared-connect-$1"
+                if [ ! -r "$dir/username" ] || [ ! -r "$dir/password" ]; then
+                  emit "FAIL $id Secret $sec 의 username/password 파일이 없다 — ExternalSecret $sec 상태(SecretSyncedError?)를 본다"
+                  return
+                fi
+                if [ "$(tr -d '[:space:]' < "$dir/username")" != "$role" ]; then
+                  emit "FAIL $id Secret $sec 의 username이 role $role 과 다르다 — CNPG도 이 비밀번호를 적용하지 않는다(DatabaseRole status.message)"
+                  return
+                fi
+                if ! wait_connect "$db" "$role" "$dir"; then
+                  emit "FAIL $id ${BUDGET}초(Job 공유 예산) 안에 $db 에 $role 로 접속하지 못했다(마지막 사유는 위 NOTE)"
+                  return
+                fi
+                m=$(pg "$db" "$role" "$dir" -q -c "REVOKE CONNECT ON DATABASE $db FROM PUBLIC; GRANT CONNECT ON DATABASE $db TO $role;")
+                if [ $? -ne 0 ]; then
+                  emit "FAIL $id REVOKE/GRANT 실패: $(first "$m")"
+                  return
+                fi
+                [ -z "$m" ] || emit "NOTE: $id REVOKE/GRANT 서버 메시지: $(first "$m")"
+                o=$(pg "$db" "$role" "$dir" -tAc "SELECT CASE WHEN datacl IS NULL THEN 'default-public-connect' WHEN EXISTS (SELECT 1 FROM unnest(datacl) AS a WHERE a::text LIKE '=%c/%') THEN 'public-connect' ELSE 'revoked' END || ' ' || coalesce(datacl::text, 'NULL') FROM pg_database WHERE datname = current_database()")
+                rc=$?
+                case "$rc:$o" in
+                  '0:revoked '*) emit "PASS $id $db: PUBLIC CONNECT 회수 · $role CONNECT — datacl ${o#revoked }" ;;
+                  0:*) emit "FAIL $id $db: PUBLIC CONNECT가 남아 있다 — $(first "$o")" ;;
+                  *) emit "FAIL $id datacl 되읽기 실패(rc=$rc): $(first "$o")" ;;
+                esac
+              }
+
+              if [ ! -r "$CA" ]; then
+                emit "FAIL shared-connect-authentik CA 파일 $CA 이 없다 — Secret pg-main-ca(operator 산출물 · ns data)"
+                emit "FAIL shared-connect-openfga CA 파일 $CA 이 없다 — Secret pg-main-ca(operator 산출물 · ns data)"
+                exit 0
+              fi
+              shared_connect authentik authentik_owner "$CREDS/authentik-owner" pg-main-authentik-owner
+              shared_connect openfga openfga_owner "$CREDS/openfga-owner" pg-main-openfga-owner
+              exit 0
+          env:
+            - name: WAIT_BUDGET_S                    # pod-db-connect가 /work/deadline을 남기지 못했을 때만 쓰는 대체값
+              value: "480"
+            - name: RETRY_INTERVAL_S
+              value: "10"
+          volumeMounts:
+            - { name: work, mountPath: /work }
+            - { name: tmp, mountPath: /tmp }
+            - { name: pg-ca, mountPath: /etc/pg, readOnly: true }
+            - { name: cred-authentik-owner, mountPath: /creds/authentik-owner, readOnly: true }
+            - { name: cred-openfga-owner, mountPath: /creds/openfga-owner, readOnly: true }
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 64Mi                           # CPU limit 없음(저장소 관례)
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+      containers:
+        # ② app role 세션 기본값 — app 자격 2장만 본다. ⓪ ①의 판정 줄을 다시 내고 SUMMARY(⓪ 뒤라 app 접속은 GRANT로만 된다)
+        - name: app-session-defaults
+          image: ghcr.io/cloudnative-pg/postgresql:18.6-202610050823-standard-trixie@sha256:79be0d10e78b7ac4520cf6c5db199a8bb7f6de53b3229f47e90cab5865528a0d
+          imagePullPolicy: IfNotPresent
+          workingDir: /tmp
+          command: [/bin/sh, -c]
+          args:
+            - |
+              set -u
+              export HOME=/tmp
+              WORK=/work
+              CREDS=/creds
+              CA=/etc/pg/ca.crt
+              PGRW=pg-main-rw.data.svc
+              PSQL=/usr/lib/postgresql/18/bin/psql
+              [ -x "$PSQL" ] || PSQL=psql
+              BUDGET=${WAIT_BUDGET_S:-480}
+              STEP=${RETRY_INTERVAL_S:-10}
+              pass=0
+              fail=0
+              ok() { pass=$((pass + 1)); printf 'RESULT: PASS %s\n' "$*"; }
+              ng() { fail=$((fail + 1)); printf 'RESULT: FAIL %s\n' "$*"; }
+              emit() { printf '%s\n' "$*"; }
+              first() { printf '%s\n' "$1" | head -n 1 | sed 's/^.* failed: //' | cut -c1-200; }
+
+              # 시한 = 첫 initContainer가 적은 Job 공유 시한(없거나 숫자가 아니면 지금부터 BUDGET초)
+              deadline=$(cat "$WORK/deadline" 2>/dev/null || true)
+              case "$deadline" in ''|*[!0-9]*) deadline=$(( $(date +%s) + BUDGET )) ;; esac
+
+              pg() {
+                _db=$1; _role=$2; _dir=$3; shift 3
+                PGPASSWORD="$(cat "$_dir/password")" "$PSQL" -X -w -v ON_ERROR_STOP=1 \
+                  -d "host=$PGRW port=5432 dbname=$_db user=$_role sslmode=verify-full sslrootcert=$CA connect_timeout=10 application_name=cnpg-databases-access" \
+                  "$@" </dev/null 2>&1
+              }
+
+              wait_connect() {
+                _n=0; _last=''; _notes=0
+                while :; do
+                  _n=$((_n + 1))
+                  _o=$(pg "$1" "$2" "$3" -tAc 'SELECT 1')
+                  if [ $? -eq 0 ]; then
+                    [ "$_n" -eq 1 ] || emit "NOTE: $1 <- $2 접속 성공(시도 ${_n}회)"
+                    return 0
+                  fi
+                  _r=$(first "$_o")
+                  if [ "$_r" != "$_last" ] && [ "$_notes" -lt 5 ]; then
+                    emit "NOTE: $1 <- $2 접속 대기(시도 ${_n}): $_r"
+                    _last=$_r; _notes=$((_notes + 1))
+                  fi
+                  [ $(( $(date +%s) + STEP )) -le "$deadline" ] || return 1
+                  sleep "$STEP"
+                done
+              }
+
+              # relay <결과 파일> <기대 id…> — initContainer 판정 줄을 같은 로그 스트림으로 옮긴다(id마다 한 번 — 없으면 FAIL)
+              relay() {
+                _f=$1; shift
+                _seen=' '
+                if [ -r "$_f" ]; then
+                  while IFS= read -r l; do
+                    case "$l" in
+                      'PASS '*|'FAIL '*)
+                        sid=${l#* }; sid=${sid%% *}
+                        _seen="$_seen$sid "
+                        case "$l" in 'PASS '*) pass=$((pass + 1)) ;; *) fail=$((fail + 1)) ;; esac
+                        printf 'RESULT: %s\n' "$l"
+                        ;;
+                      *) printf '%s\n' "$l" ;;
+                    esac
+                  done < "$_f"
+                fi
+                for sid in "$@"; do
+                  case "$_seen" in
+                    *" $sid "*) ;;
+                    *) ng "$sid initContainer가 판정 줄을 남기지 않았다($_f)" ;;
+                  esac
+                done
+              }
+              relay "$WORK/pod.result" pod-connect-identity_admin pod-connect-dev_identity_admin
+              relay "$WORK/shared.result" shared-connect-authentik shared-connect-openfga
+
+              # app_defaults <env> <db> <app role> <자격 디렉터리> <Secret 이름>
+              app_defaults() {
+                db=$2; role=$3; dir=$4; sec=$5; id="app-session-defaults-$1"
+                if [ ! -r "$dir/username" ] || [ ! -r "$dir/password" ]; then
+                  ng "$id Secret $sec 의 username/password 파일이 없다 — ExternalSecret $sec 상태(SecretSyncedError?)를 본다"
+                  return
+                fi
+                if [ "$(tr -d '[:space:]' < "$dir/username")" != "$role" ]; then
+                  ng "$id Secret $sec 의 username이 role $role 과 다르다 — CNPG도 이 비밀번호를 적용하지 않는다(DatabaseRole status.message)"
+                  return
+                fi
+                if ! wait_connect "$db" "$role" "$dir"; then
+                  ng "$id ${BUDGET}초(Job 공유 예산) 안에 $db 에 $role 로 접속하지 못했다(마지막 사유는 위 NOTE)"
+                  return
+                fi
+                m=$(pg "$db" "$role" "$dir" -q -c "ALTER ROLE CURRENT_USER SET statement_timeout = '15s'; ALTER ROLE CURRENT_USER SET idle_in_transaction_session_timeout = '30s';")
+                if [ $? -ne 0 ]; then
+                  ng "$id ALTER ROLE 실패: $(first "$m")"
+                  return
+                fi
+                [ -z "$m" ] || emit "NOTE: $id ALTER ROLE 서버 메시지: $(first "$m")"
+                o=$(pg "$db" "$role" "$dir" -tAc "SELECT coalesce((SELECT c FROM unnest(rolconfig) AS c WHERE split_part(c, '=', 1) = 'statement_timeout'), 'statement_timeout=<unset>') || ' ' || coalesce((SELECT c FROM unnest(rolconfig) AS c WHERE split_part(c, '=', 1) = 'idle_in_transaction_session_timeout'), 'idle_in_transaction_session_timeout=<unset>') FROM pg_roles WHERE rolname = current_user")
+                rc=$?
+                if [ "$rc" -ne 0 ]; then
+                  ng "$id rolconfig 되읽기 실패(rc=$rc): $(first "$o")"
+                elif [ "$o" = 'statement_timeout=15s idle_in_transaction_session_timeout=30s' ]; then
+                  ok "$id $role: $o (pg_roles.rolconfig)"
+                else
+                  ng "$id $role: rolconfig가 기대(statement_timeout=15s idle_in_transaction_session_timeout=30s)와 다르다 — $(first "$o")"
+                fi
+                # VD-3 보조 증거(판정 아님): 이 DB의 pgvector 설치 버전 · schema — 관측 시점 값
+                v=$(pg "$db" "$role" "$dir" -tAc "SELECT coalesce((SELECT e.extversion || ' schema=' || n.nspname FROM pg_extension AS e JOIN pg_namespace AS n ON n.oid = e.extnamespace WHERE e.extname = 'vector'), '-')")
+                [ $? -ne 0 ] || emit "EVIDENCE: $db pg_extension vector=$v (관측 시점 — 판정은 Database status.extensions · VD-3)"
+              }
+
+              if [ ! -r "$CA" ]; then
+                ng "app-session-defaults-prod CA 파일 $CA 이 없다 — Secret pg-main-ca(operator 산출물 · ns data)"
+                ng "app-session-defaults-dev CA 파일 $CA 이 없다 — Secret pg-main-ca(operator 산출물 · ns data)"
+              else
+                app_defaults prod identity_admin identity_admin_app "$CREDS/prod-app" pg-main-identity-admin-app
+                app_defaults dev dev_identity_admin dev_identity_admin_app "$CREDS/dev-app" pg-main-dev-identity-admin-app
+              fi
+
+              printf 'SUMMARY: pass=%d fail=%d\n' "$pass" "$fail"
+              [ "$fail" -eq 0 ] || exit 1
+          env:
+            - name: WAIT_BUDGET_S                    # init이 /work/deadline을 남기지 못했을 때만 쓰는 대체값
+              value: "480"
+            - name: RETRY_INTERVAL_S
+              value: "10"
+          volumeMounts:
+            - { name: work, mountPath: /work, readOnly: true }
+            - { name: tmp, mountPath: /tmp }
+            - { name: pg-ca, mountPath: /etc/pg, readOnly: true }
+            - { name: cred-prod-app, mountPath: /creds/prod-app, readOnly: true }
+            - { name: cred-dev-app, mountPath: /creds/dev-app, readOnly: true }
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]

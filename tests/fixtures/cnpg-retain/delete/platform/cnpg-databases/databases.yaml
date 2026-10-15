@@ -1,0 +1,20 @@
+# 부정 픽스처 3.8 CNPG-retain (delete) — Database reclaim 값이 retain이 아니다:
+#   pg-main-drop `delete`(CR 삭제 = DROP DATABASE) · pg-main-case `Retain`(대소문자 — 글자 그대로 retain만 허용. API 서버 enum도 거절하지만 검사는 엄격한 쪽)
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata: { name: pg-main-drop, namespace: data }
+spec:
+  cluster: { name: pg-main }
+  name: drop_me
+  owner: drop_owner
+  ensure: present
+  databaseReclaimPolicy: delete              # ← FAIL
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata: { name: pg-main-case, namespace: data }
+spec:
+  cluster: { name: pg-main }
+  name: case_db
+  owner: case_owner
+  databaseReclaimPolicy: Retain              # ← FAIL(retain과 다른 글자)

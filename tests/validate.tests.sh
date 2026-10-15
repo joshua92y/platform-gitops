@@ -171,6 +171,8 @@ DIGEST_FILE='apps/identity-admin/overlays/dev/kustomization.yaml'
 
 # 도구 의존 검사의 PASS 단언은 도구가 있을 때만(없으면 SKIP이 정답)
 positive_asserts=('+[PASS] 2 APP-SSA' '+[PASS] 3 ES' '+[PASS] 3.5 ES-⑤⑥' '+[PASS] 4a IMG-newTag'
+  # 3.8 CNPG-retain(T054): 긍정 트리에는 postgresql.cnpg.io Database·DatabaseRole이 없다 — 대상 0의 안정 어구만(yq만 필요 · kustomize 유무와 무관)
+  '+[PASS] 3.8 CNPG-retain — postgresql.cnpg.io Database·DatabaseRole 대상 0개(파일+렌더링) — 대상 없음'
   # 4a IMG-entry(T047 G4c): overlays/dev · overlays/prod의 images 항목 각 1개(name + newName + digest)
   '+[PASS] 4a IMG-entry — kustomization images 2개 항목(kustomization 2개): 항목마다 name(문자열)·digest 있음 · 키 ⊆ {name, newName, digest}'
   '+[PASS] 5.1 POL-ns' '+[PASS] 5.2 POL-set' '+[PASS] 5.3 POL-egress' '+[PASS] 5.4 POL-port' '+[PASS] 5.5 POL-limitrange'
@@ -274,6 +276,59 @@ run_case es-6-automount "$FIX/es-6-automount" 1 \
 run_case es-7-workers-path "$FIX/es-7-workers-path" 1 \
   "+[FAIL] 3.7 ES-⑦ — apps/identity-admin/base/externalsecret-env.yaml ExternalSecret/-/identity-admin-env: apps/**의 key 'dev/access/service-token'는 Workers 전용 경로" \
   "+key 'dev/web/session'는 Workers 전용 경로"
+
+# --- 3.8 CNPG-retain(T054 · 계약 §validate.yml 3 「(2026-10-14 T054) CNPG 데이터 보존」) ----------------------------------------------------
+#   postgresql.cnpg.io Database: spec.ensure ≠ absent · spec.databaseReclaimPolicy: retain 명시 / DatabaseRole: spec.databaseRoleReclaimPolicy: retain 명시 —
+#   원본 파일 + kustomize 렌더. 모든 트리가 부분 트리다(exit 1은 판정 근거가 아니다 — 머리 주석). 근거 = `+[FAIL] 3.8 CNPG-retain — …` 고유 단언 +
+#   그룹 PASS 줄 부재 `-[PASS] 3.8 CNPG-retain` + 결함 없는 이웃 객체가 찍히지 않는다는 `-…` 음성 단언(격리). 단언은 원본 라벨로 건다(kustomize 없어도
+#   성립) — render만 렌더 라벨이다(kustomize 없으면 SKIP이 정답 · 5.6 render 관례). yq만 쓴다(helm·네트워크 불필요).
+#   pass    : ensure 생략(= present) · ensure: present · 따옴표 "retain" · 다른 API 그룹의 kind: Database(대상 밖) → PASS 줄을 개수까지 단언
+#             (원본 2 · 렌더 2 — kustomize 없으면 렌더 0)
+#   absent  : Database ensure: absent(reclaim은 retain) → FAIL · 이웃 present는 찍히지 않는다
+#   delete  : Database reclaim delete · Retain(대소문자 — 글자 그대로 retain만) · DatabaseRole reclaim delete → 각각 FAIL · 이웃 retain은 찍히지 않는다
+#   missing : Database reclaim 생략 · null(~) · spec 없음 · DatabaseRole reclaim 생략 · 다른 kind의 필드(databaseReclaimPolicy)만 적음 → 각각 FAIL
+#   render  : 원본은 전부 present·retain인데 kustomization patches가 렌더에서만 delete · absent로 바꾼다 → 렌더 라벨로만 FAIL(원본 라벨 FAIL 없음 =
+#             렌더까지 본다는 증명)
+#   alias   : 별칭(`ensure: *state`) · 병합 키(`<<: *ext`)로 숨긴 absent → explode(.) 뒤 판정이라 원본 라벨로 FAIL(풀지 않으면 값이 `*state` · 없음으로
+#             읽혀 통과한다 — 2026-10-15 실측)
+CNPG_DB='platform/cnpg-databases/databases.yaml'
+CNPG_ROLE='platform/cnpg-databases/databaseroles.yaml'
+cnpg_pass_asserts=('-[FAIL] 3.8 CNPG-retain')
+if command -v kustomize >/dev/null 2>&1; then
+  cnpg_pass_asserts+=('+[PASS] 3.8 CNPG-retain — postgresql.cnpg.io Database 4개(원본 2 · 렌더 2): ensure ≠ absent · databaseReclaimPolicy: retain 명시 · DatabaseRole 4개(원본 2 · 렌더 2): databaseRoleReclaimPolicy: retain 명시')
+else
+  cnpg_pass_asserts+=('+[PASS] 3.8 CNPG-retain — postgresql.cnpg.io Database 2개(원본 2 · 렌더 0): ensure ≠ absent · databaseReclaimPolicy: retain 명시 · DatabaseRole 2개(원본 2 · 렌더 0): databaseRoleReclaimPolicy: retain 명시')
+fi
+run_case cnpg-retain-pass "$FIX/cnpg-retain/pass" 1 "${cnpg_pass_asserts[@]}"
+run_case cnpg-retain-absent "$FIX/cnpg-retain/absent" 1 \
+  "+[FAIL] 3.8 CNPG-retain — $CNPG_DB Database/data/pg-main-gone: spec.ensure: absent — 인스턴스 매니저가 reclaim과 무관하게 DROP DATABASE" \
+  "-$CNPG_DB Database/data/pg-main-keep" "-$CNPG_ROLE DatabaseRole/data/" '-[PASS] 3.8 CNPG-retain'
+run_case cnpg-retain-delete "$FIX/cnpg-retain/delete" 1 \
+  "+[FAIL] 3.8 CNPG-retain — $CNPG_DB Database/data/pg-main-drop: spec.databaseReclaimPolicy 'delete'(태그 !!str) ≠ retain — CR 삭제(revert · Application cascade 포함)가 DROP DATABASE가 된다" \
+  "+[FAIL] 3.8 CNPG-retain — $CNPG_DB Database/data/pg-main-case: spec.databaseReclaimPolicy 'Retain'(태그 !!str) ≠ retain" \
+  "+[FAIL] 3.8 CNPG-retain — $CNPG_ROLE DatabaseRole/data/pg-main-drop-owner: spec.databaseRoleReclaimPolicy 'delete'(태그 !!str) ≠ retain — CR 삭제(revert · Application cascade 포함)가 DROP ROLE이 된다" \
+  "-$CNPG_ROLE DatabaseRole/data/pg-main-keep-owner" '-[PASS] 3.8 CNPG-retain'
+run_case cnpg-retain-missing "$FIX/cnpg-retain/missing" 1 \
+  "+[FAIL] 3.8 CNPG-retain — $CNPG_DB Database/data/pg-main-implicit: spec.databaseReclaimPolicy 없음 — retain을 명시해야 한다(CRD 기본값도 retain이지만 생략을 허용하면 기본값 변경·오타가 조용히 통과한다)" \
+  "+[FAIL] 3.8 CNPG-retain — $CNPG_DB Database/data/pg-main-nullpolicy: spec.databaseReclaimPolicy ''(태그 !!null) ≠ retain" \
+  "+[FAIL] 3.8 CNPG-retain — $CNPG_DB Database/data/pg-main-nospec: spec 없음 — reclaim policy를 판정할 수 없다(fail-closed)" \
+  "+[FAIL] 3.8 CNPG-retain — $CNPG_ROLE DatabaseRole/data/pg-main-implicit-owner: spec.databaseRoleReclaimPolicy 없음 — retain을 명시해야 한다" \
+  "+[FAIL] 3.8 CNPG-retain — $CNPG_ROLE DatabaseRole/data/pg-main-wrongfield-owner: spec.databaseRoleReclaimPolicy 없음" \
+  '-[PASS] 3.8 CNPG-retain'
+cnpg_render_asserts=()
+if command -v kustomize >/dev/null 2>&1; then
+  cnpg_render_asserts+=("+[FAIL] 3.8 CNPG-retain — platform/cnpg-databases (rendered) Database/data/pg-main-alpha: spec.databaseReclaimPolicy 'delete'(태그 !!str) ≠ retain" \
+    "+[FAIL] 3.8 CNPG-retain — platform/cnpg-databases (rendered) Database/data/pg-main-beta: spec.ensure: absent" \
+    "+[FAIL] 3.8 CNPG-retain — platform/cnpg-databases (rendered) DatabaseRole/data/pg-main-alpha-owner: spec.databaseRoleReclaimPolicy 'delete'(태그 !!str) ≠ retain" \
+    "-$CNPG_DB Database/" "-$CNPG_ROLE DatabaseRole/" '-[PASS] 3.8 CNPG-retain')
+else
+  cnpg_render_asserts+=('+[SKIP] 1 KUST — 도구 없음(kustomize)')
+fi
+run_case cnpg-retain-render "$FIX/cnpg-retain/render" 1 "${cnpg_render_asserts[@]}"
+run_case cnpg-retain-alias "$FIX/cnpg-retain/alias" 1 \
+  "+[FAIL] 3.8 CNPG-retain — $CNPG_DB Database/data/pg-main-alias: spec.ensure: absent" \
+  "+[FAIL] 3.8 CNPG-retain — $CNPG_DB Database/data/pg-main-merge: spec.ensure: absent" \
+  "-$CNPG_ROLE DatabaseRole/data/" '-[PASS] 3.8 CNPG-retain'
 
 # --- 이미지 -------------------------------------------------------------------
 run_case img-newtag "$FIX/img-newtag" 1 \

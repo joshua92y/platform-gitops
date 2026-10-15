@@ -38,7 +38,7 @@
 #     창을 넓힌 것 — 두 장 이상이 함께 바뀌어 다단계가 남는 경우용. 재시도에서는 이미 적용돼 in-sync인 리소스가 task에서 빠지므로(sync_context.go
 #     `filterOutOfSyncTasks`) 남은 장만 health 대기 없이 적용된다(첫 배포 예: Cluster가 빠지고 ScheduledBackup만 — 그 Backup은 CNPG가 pending으로 들고 있다).
 #     모양은 bootstrap/root-app.yaml의 retry와 같고 값만 CNPG 재시작 창에 맞춰 길다.
-#   둘 다 **이 Application에만** 둔다 — 다른 플랫폼 Application은 계약 표준 그대로다(health 추적 CR을 다단계 wave로 갖게 되는 컴포넌트(T055 Kafka 등)가
+#   둘 다 **이 Application과 `platform-cnpg-databases`(두 번째 사례 · T054)에만** 둔다 — 다른 플랫폼 Application은 계약 표준 그대로다(health 추적 CR을 다단계 wave로 갖게 되는 컴포넌트(T055 Kafka 등)가
 #   생기면 계약 예외 문단에 그 이름을 더한 뒤에 같은 모양을 쓴다).
 apiVersion: argoproj.io/v1alpha1
 kind: Application

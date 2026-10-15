@@ -281,7 +281,7 @@ Application `platform-cnpg-cluster`는 `prune: false` + `Prune=confirm` + `Delet
 ## 6. 인계
 
 - **T054(`platform/cnpg-databases/`)**: `Database` 4(identity_admin · dev_identity_admin · authentik · openfga — owner `<app>_owner`) · `DatabaseRole` 6(app 2 **`login: true` 명시** · pod owner 2
-  `bypassrls: true` · 공유 owner 2). 전부 `cluster.name: pg-main`(1.30부터 immutable). 비밀번호 Secret은 Vault → ESO(`vault-data`). 하네스 db-1·db-2·role-1·role-2·job-1·job-2가 PASS로 바뀐다.
+  `bypassrls: true` · 공유 owner 2). 전부 `cluster.name: pg-main`(1.30부터 immutable). 비밀번호 Secret은 Vault → ESO(`vault-data`). 하네스 db-1·db-2·role-1·role-2가 PASS로 바뀐다(job-1·job-2는 T059가 검사 Job을 배포한 뒤).
 - **T056(`platform/kafka-topics/`)**: CA 미러 ES — `remoteRef.key: pg-main-ca` · `property: ca.crt`**만**(`dataFrom` 금지 — `ca.key` 복사 방지). 원본 Secret은 VD-9.
 - **T058(복구 런북)**: PITR은 **클러스터 전체**(재해 복구 전용) — 새 Cluster(`pg-main-restored`류)를 `bootstrap.recovery.source` + `externalClusters[].plugin`(barmanObjectName `oci-backups` ·
   serverName `pg-main`)으로 만들고 자기 아카이브는 `plugins[].parameters.serverName`을 다른 이름으로(research CNPG-D8 — 같은 serverName으로 아카이브하면 WAL 덮어쓰기 위험). 단일 DB 복구 =

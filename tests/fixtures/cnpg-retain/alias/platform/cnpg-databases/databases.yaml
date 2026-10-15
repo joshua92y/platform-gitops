@@ -1,0 +1,29 @@
+# 부정 픽스처 3.8 CNPG-retain (alias) — YAML 별칭·병합 키로 숨긴 `absent`(글자 검색으로는 `ensure: absent`가 보이지 않는다):
+#   pg-main-alias  `ensure: *state` — 앵커는 어노테이션 값(문자열)에 둔다. 풀지 않고 읽으면 값이 `*state`로 보여 통과한다(2026-10-15 실측)
+#   pg-main-merge  `<<: *ext` — extensions 항목(name · ensure: absent)을 spec에 병합한다. 명시 키(name 등)는 병합보다 뒤에 적어 이기고, ensure는 병합에서만 와 absent가 된다.
+#                  풀지 않고 읽으면 spec에 ensure가 없는 것으로 보여 통과한다(2026-10-15 실측). 확장 항목 자체의 ensure: absent(DROP EXTENSION)는 이 검사의 대상이 아니다.
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: pg-main-alias
+  namespace: data
+  annotations:
+    fixture/state: &state absent
+spec:
+  cluster: { name: pg-main }
+  name: alias_db
+  owner: alias_owner
+  ensure: *state                             # ← 풀면 absent → FAIL
+  databaseReclaimPolicy: retain
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata: { name: pg-main-merge, namespace: data }
+spec:
+  extensions:
+    - &ext { name: vector, ensure: absent }
+  <<: *ext                                   # ← 병합으로 spec.ensure = absent → FAIL
+  cluster: { name: pg-main }
+  name: merge_db
+  owner: merge_owner
+  databaseReclaimPolicy: retain
