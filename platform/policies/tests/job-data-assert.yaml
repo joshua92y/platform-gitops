@@ -4,9 +4,10 @@
 # 실행하지 않는다. 이 Job이 클러스터 안에서 실행하고 tester는 `kubectl -n jt-dev logs job/data-assert`만 읽는다.
 #
 # 검사 id(quickstart §US3 ①–④ + VD-4): pg-cross-db-denied · catalog-connect-false · revoke-public ·
-#   ssl-verify-full · acl-list · noperm  — 로그 계약(줄 형식·종료 코드)은 README.md §로그 계약.
+#   ssl-verify-full · role-attrs · app-session-timeouts · acl-list · noperm  — 로그 계약(줄 형식·종료 코드)은 README.md §로그 계약.
+#   role-attrs · app-session-timeouts는 T054가 더했다(모노레포 build-notes 「T050 · T051」 T054 몫 · 하네스 tests/platform/data.tests.ps1 job-2).
 #
-# 컨테이너 2단 구성 이유: 하나의 로그 스트림에 6개 판정을 모으기 위해서다. `kubectl logs job/<name>`은
+# 컨테이너 2단 구성 이유: 하나의 로그 스트림에 8개 판정을 모으기 위해서다. `kubectl logs job/<name>`은
 #   컨테이너가 여러 개면 컨테이너를 골라야 하므로(tester 계약은 `logs job/…` 한 줄), Dragonfly 검사는
 #   **initContainer**가 수행해 결과 줄을 emptyDir 파일에 적고, 본 컨테이너(psql)가 자기 판정과 함께 그 줄을
 #   다시 출력한다. initContainer는 실패해도 exit 0으로 끝난다(판정은 FAIL 줄로 남기고 파드를 죽이지 않는다).
@@ -143,9 +144,9 @@ spec:
               ok() { pass=$((pass + 1)); printf 'RESULT: PASS %s\n' "$*"; }
               ng() { fail=$((fail + 1)); printf 'RESULT: FAIL %s\n' "$*"; }
 
-              # fail-closed: 필요한 값이 하나라도 비면 네 검사 모두 FAIL로 기록한다(조용한 통과 금지).
+              # fail-closed: 필요한 값이 하나라도 비면 pg 여섯 검사 모두 FAIL로 기록한다(조용한 통과 금지).
               miss=''
-              for v in DATABASE_URL PGUSER PGPASSWORD PGHOST PGPORT PGSSLROOTCERT DEV_DB PROD_DB SHARED_DBS PROD_APP_ROLE; do
+              for v in DATABASE_URL PGUSER PGPASSWORD PGHOST PGPORT PGSSLROOTCERT DEV_DB PROD_DB SHARED_DBS PROD_APP_ROLE PROD_OWNER_ROLE DEV_OWNER_ROLE DEV_APP_ROLE; do
                 eval "val=\${$v:-}"
                 [ -n "$val" ] || miss="$miss $v"
               done
@@ -154,6 +155,8 @@ spec:
                 ng "catalog-connect-false 필수 값 없음:$miss"
                 ng "revoke-public 필수 값 없음:$miss"
                 ng "ssl-verify-full 필수 값 없음:$miss"
+                ng "role-attrs 필수 값 없음:$miss"
+                ng "app-session-timeouts 필수 값 없음:$miss"
               else
                 CONN="host=$PGHOST port=$PGPORT user=$PGUSER sslmode=verify-full sslrootcert=$PGSSLROOTCERT connect_timeout=10"
 
@@ -225,9 +228,55 @@ spec:
                     ng "ssl-verify-full DATABASE_URL에 sslmode=verify-full 이 없다(Vault dev/db/dev_identity_admin/app.url 확인)"
                     ;;
                 esac
+
+                # ⑤ role-attrs(T054) — 로그인 없이 카탈로그(pg_roles)로 DatabaseRole 선언이 PG에 실제로 적용됐는지:
+                #    app 2 = bypassrls f · super f, pod owner 2 = bypassrls t · super f(build-notes 「T050 · T051」) +
+                #    넷 다 createdb f · createrole f(과제 문면) · login t(gitops platform/cnpg-databases — 결정 D4).
+                q="SELECT rolname || ' super=' || CASE WHEN rolsuper THEN 't' ELSE 'f' END || ' bypassrls=' || CASE WHEN rolbypassrls THEN 't' ELSE 'f' END || ' createdb=' || CASE WHEN rolcreatedb THEN 't' ELSE 'f' END || ' createrole=' || CASE WHEN rolcreaterole THEN 't' ELSE 'f' END || ' login=' || CASE WHEN rolcanlogin THEN 't' ELSE 'f' END FROM pg_roles WHERE rolname IN ('$PROD_APP_ROLE','$DEV_APP_ROLE','$PROD_OWNER_ROLE','$DEV_OWNER_ROLE') ORDER BY 1"
+                o=$(psql "$DATABASE_URL" -tAc "$q" 2>&1)
+                rc=$?
+                if [ "$rc" -ne 0 ]; then
+                  ng "role-attrs 카탈로그 조회 실패: $(printf '%s' "$o" | head -n 1 | cut -c1-120)"
+                else
+                  bad=''
+                  for r in "$PROD_APP_ROLE:f" "$DEV_APP_ROLE:f" "$PROD_OWNER_ROLE:t" "$DEV_OWNER_ROLE:t"; do
+                    n=${r%:*}
+                    if ! printf '%s\n' "$o" | grep -qxF "$n super=f bypassrls=${r##*:} createdb=f createrole=f login=t"; then
+                      got=$(printf '%s\n' "$o" | awk -v n="$n" '$1 == n' | head -n 1)
+                      bad="$bad [${got:-$n 없음}]"
+                    fi
+                  done
+                  if [ -z "$bad" ]; then
+                    ok "role-attrs app(${PROD_APP_ROLE},${DEV_APP_ROLE}) bypassrls=f super=f · owner(${PROD_OWNER_ROLE},${DEV_OWNER_ROLE}) bypassrls=t super=f · 넷 다 createdb=f createrole=f login=t (pg_roles)"
+                  else
+                    ng "role-attrs pg_roles가 기대와 다름:$bad"
+                  fi
+                fi
+
+                # ⑥ app-session-timeouts(T054) — pg_roles.rolconfig(DB 무관 role 설정)에 app 2 모두 statement_timeout=15s **그리고**
+                #    idle_in_transaction_session_timeout=30s. 적용 주체 = gitops platform/cnpg-databases의 PostSync Job(app role 자신의 ALTER ROLE CURRENT_USER SET).
+                q="SELECT r.rolname || ' ' || coalesce((SELECT c FROM unnest(r.rolconfig) AS c WHERE split_part(c, '=', 1) = 'statement_timeout'), 'statement_timeout=<unset>') || ' ' || coalesce((SELECT c FROM unnest(r.rolconfig) AS c WHERE split_part(c, '=', 1) = 'idle_in_transaction_session_timeout'), 'idle_in_transaction_session_timeout=<unset>') FROM pg_roles AS r WHERE r.rolname IN ('$PROD_APP_ROLE','$DEV_APP_ROLE') ORDER BY 1"
+                o=$(psql "$DATABASE_URL" -tAc "$q" 2>&1)
+                rc=$?
+                if [ "$rc" -ne 0 ]; then
+                  ng "app-session-timeouts 카탈로그 조회 실패: $(printf '%s' "$o" | head -n 1 | cut -c1-120)"
+                else
+                  bad=''
+                  for n in "$PROD_APP_ROLE" "$DEV_APP_ROLE"; do
+                    if ! printf '%s\n' "$o" | grep -qxF "$n statement_timeout=15s idle_in_transaction_session_timeout=30s"; then
+                      got=$(printf '%s\n' "$o" | awk -v n="$n" '$1 == n' | head -n 1)
+                      bad="$bad [${got:-$n 없음}]"
+                    fi
+                  done
+                  if [ -z "$bad" ]; then
+                    ok "app-session-timeouts ${PROD_APP_ROLE} · ${DEV_APP_ROLE}: statement_timeout=15s idle_in_transaction_session_timeout=30s (pg_roles.rolconfig)"
+                  else
+                    ng "app-session-timeouts rolconfig가 기대와 다름:$bad"
+                  fi
+                fi
               fi
 
-              # ⑤⑥ initContainer(Dragonfly)의 판정 줄을 같은 로그 스트림으로 옮긴다.
+              # ⑦⑧ initContainer(Dragonfly)의 판정 줄을 같은 로그 스트림으로 옮긴다.
               if [ -r /work/dragonfly.result ]; then
                 while IFS= read -r l; do
                   case "$l" in

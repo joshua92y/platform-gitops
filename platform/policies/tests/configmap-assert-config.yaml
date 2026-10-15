@@ -6,7 +6,8 @@
 #
 # 값의 출처(추측 금지 — 근거 없는 값은 README §계약 공백에 등재했다):
 #   - PG 호스트·SSL 형식        contracts/pod-template.md §DB 연결(`pg-main-rw.data.svc:5432`, `sslmode=verify-full`, `/etc/pg/ca.crt`)
-#   - DB·role 이름              data-model.md §7(prod `identity_admin`·`identity_admin_app`, dev `dev_` 접두, 공유 DB `authentik`·`openfga`)
+#   - DB·role 이름              data-model.md §7(prod `identity_admin`·`identity_admin_app`·`identity_admin_owner`, dev `dev_` 접두, 공유 DB `authentik`·`openfga`)
+#                               — 선언 정본은 gitops `platform/cnpg-databases/databaseroles.yaml`(T054)
 #   - Dragonfly ACL 사용자·패턴 tasks.md T057 · contracts/denylist.md(dev 전용 검사 계정 `sample-pod`, 읽기 전용 패턴 `%R~revoked:*`)
 #   - Kafka 토픽·사용자         tasks.md T056(`dev.identity-admin.session.revoked` · KafkaUser `dev-identity-admin`)
 #   - Kafka bootstrap 호스트    Strimzi 관례 `<cluster>-kafka-bootstrap`(T055 클러스터 이름 `jt-kafka`, listener `tls` 9093) — **계약 미기재, T055에서 확인**
@@ -37,6 +38,11 @@ data:
   SHARED_DBS: "authentik openfga"
   # 카탈로그 검사에서 "prod role은 dev·공유 DB에 CONNECT가 없다"를 확인할 때 쓰는 role 이름.
   PROD_APP_ROLE: "identity_admin_app"
+  # role-attrs · app-session-timeouts(T054)가 pg_roles에서 대조하는 나머지 role 이름(PG role은 클러스터 전역이라 env마다 다르다 — data-model §7).
+  # app 둘(PROD_APP_ROLE · DEV_APP_ROLE) = bypassrls f · 세션 기본값 15s/30s, owner 둘 = bypassrls t.
+  DEV_APP_ROLE: "dev_identity_admin_app"
+  PROD_OWNER_ROLE: "identity_admin_owner"
+  DEV_OWNER_ROLE: "dev_identity_admin_owner"
 
   # --- Dragonfly(dragonfly-dev, ns data) --------------------------------------
   # 읽기 전용 패턴(`%R~revoked:*`)을 가진 dev 전용 검사 계정. prod aclfile에는 없다(T057).

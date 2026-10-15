@@ -2,7 +2,7 @@
 
 컴포넌트마다 `kustomization.yaml`(helmCharts values 인라인 또는 순수 매니페스트). 계약 §sync-wave 단일 표에 없는 디렉터리를 만들면 validate가 실패한다. 디렉터리 21개 중 19개는 T003이 뼈대로 만들었고(`secret-stores/`는 T045 G2, `secrets/`는 T045 G3에서 신설), 그 뒤 컴포넌트 태스크가 하나씩 채우고 있다.
 
-**채워진 컴포넌트**(2026-10-13 기준 14개) — 각 디렉터리의 `README.md`가 운영자 절차 정본이다.
+**채워진 컴포넌트**(2026-10-14 기준 15개) — 각 디렉터리의 `README.md`가 운영자 절차 정본이다.
 
 | 디렉터리 | 채운 태스크 | 내용 |
 |---|---|---|
@@ -20,5 +20,6 @@
 | `reloader/` | T046 G1 | helmCharts 인플레이트 Reloader 차트 2.2.16 **scoped 모드**(감시 ns `identity`·`jt-dev`·`jt-prod` — `cloudflared` 제외 · ClusterRole 0 · 렌더 가드 validate 10). 감시 ns 목록의 정본은 계약, 절차는 그 디렉터리 README |
 | `cnpg/` | T052 | helmCharts 인플레이트 **2항목** — cloudnative-pg 0.29.0(CNPG operator 1.30.0 · CRD 11장) + plugin-barman-cloud 0.7.1(v0.14.0 · CRD 1장, operator와 **같은 ns**여야 발견된다) + ClusterImageCatalog `postgresql-standard-trixie`(upstream vendoring · major 18 = 18.6 digest 고정). 둘 다 노드 B(`role=data`) · CRD 12장 `Delete=false,Prune=false` 패치 · 이미지 3 digest 병기. `Cluster`·`ObjectStore`·`ScheduledBackup`은 `cnpg-cluster/`(T053) |
 | `cnpg-cluster/` | T053 | 순수 매니페스트 **3장**(ns `data`) — `ObjectStore oci-backups`(OCI Object Storage S3 호환 · 버킷 실명 `joshuatech-backup`의 `pg-main/` 접두 · 자격은 Secret `oci-s3-backup` **키 참조**만 — ES는 `secrets/data/`·배달자 `secrets/` 소유 · wal zstd / data lz4 · retention 30d) + `Cluster pg-main`(PostgreSQL 18 = 카탈로그 major 18 · 인스턴스 1 · 노드 B · local-path 40Gi · 1 CPU/2Gi requests = limits(파드 QoS는 플러그인 사이드카 때문에 **Burstable** — 그 디렉터리 README §4 · VD-14) · superuser 비활성 · 플러그인 barman-cloud WAL 아카이버) + `ScheduledBackup pg-main-daily`(`0 0 17 * * *` = 02:00 KST · immediate). Cluster·ObjectStore에 `Delete=false,Prune=false`(계약 §삭제 보호 — **Cluster 삭제 = 데이터 삭제**). 세 객체의 리소스 수준 sync-wave는 Application 표의 숫자가 아니다(그 디렉터리 README §1). `Database`·`DatabaseRole`은 `cnpg-databases/`(T054) |
+| `cnpg-databases/` | T054 | 순수 매니페스트 **17장**(ns `data`) — 비밀번호 `ExternalSecret` 6(pod role 4 = store `vault-data` · 공유 owner 2 = `vault-platform` · type `kubernetes.io/basic-auth` + 라벨 `cnpg.io/reload`) + `DatabaseRole` 6(PG role은 클러스터 전역이라 env마다 나눈다 — prod·dev `identity_admin_{owner,app}` + 공유 `authentik_owner`·`openfga_owner` · `login: true` 전부 · pod owner만 BYPASSRLS) + `Database` 4(`identity_admin`·`dev_identity_admin`(둘 다 확장 `vector`) · `authentik`·`openfga`) + PostSync hook Job(⓪ pod DB CONNECT 제한 — migrate Job T072 첫 단계와 이중 멱등 · ① 공유 DB CONNECT 제한 · ② app role 세션 기본값 — init 2 + 본 컨테이너 1 자격 격리). reclaim `retain` — CR 삭제 ≠ PG 객체 삭제(단 Database `ensure: absent`·reclaim `delete` 변경은 `DROP DATABASE` — 데이터 삭제 PR · validate **3.8 `CNPG-retain`** 검사가 고정(계약 §validate.yml 3 하위 항목 「CNPG 데이터 보존」 · 기대 PASS 줄 `[PASS] 3.8 CNPG-retain — …` — 전문은 그 디렉터리 README §0 P6) · 그 디렉터리 README §5). 리소스 수준 sync-wave는 Application 표의 숫자가 아니다(그 디렉터리 README §1) |
 
-**아직 뼈대**(`resources: []`) — `cnpg-databases/`(T054) · `kafka/`(T055) · `kafka-topics/`(T056) · `dragonfly/`(T057) · `authentik/`(T080) · `openfga/`(T082) · `monitoring/`(T098).
+**아직 뼈대**(`resources: []`) — `kafka/`(T055) · `kafka-topics/`(T056) · `dragonfly/`(T057) · `authentik/`(T080) · `openfga/`(T082) · `monitoring/`(T098).

@@ -1,0 +1,174 @@
+# platform/cnpg-databases/databaseroles.yaml — CNPG `DatabaseRole` 6장(postgresql.cnpg.io/v1 · ns data · cluster pg-main) — 리소스 wave 1 (T054)
+#
+# **PG role은 클러스터 전역이므로 env마다 나눈다**(모노레포 data-model §7): pod role 4 = prod `identity_admin_{owner,app}` · dev `dev_identity_admin_{owner,app}`
+#   + 공유 컴포넌트 owner 2 = `authentik_owner` · `openfga_owner`(pod가 아니라 env 접두 없음 · app role 없음).
+# 속성(과제 문면 · 컨트롤러 결정 D4 · CNPG CRD 원문 대조 — 저장소 렌더 platform/cnpg의 CRD `spec` = 배포본 태그 v1.30.0 config/crd/bases 원문과 JSON 동일
+#   (CRD 어노테이션 제외). 아래 CNPG 줄 번호도 전부 태그 v1.30.0 기준 — release-1.30 브랜치와 다르다):
+#   - `login: true` — 6장 **전부**. CRD 기본값이 false다(owner도 migrate Job · Authentik · OpenFGA가 로그인한다 — 하네스 role-2는 app 둘의 login=true를 본다).
+#   - `superuser` · `createdb` · `createrole` · `replication: false` 명시. `bypassrls`: pod owner 2 = **true**(FORCE RLS 우회 — 마이그레이션·시드 전용,
+#     data-model §7) · app 2 · 공유 owner 2 = false 명시. 인스턴스 매니저는 적용할 때마다 `ALTER ROLE … [NO]BYPASSRLS [NO]CREATEDB [NO]CREATEROLE [NO]INHERIT
+#     [NO]LOGIN [NO]REPLICATION [NO]SUPERUSER CONNECTION LIMIT n PASSWORD …`를 통째로 낸다(CNPG v1.30.0 internal/management/controller/roles/postgres.go:114–140 ·
+#     :338–382) — 선언과 다른 수동 ALTER는 그 객체가 **다시 적용될 때**(spec 변경 · Secret resourceVersion 변경) 되돌아가고, 그 전까지는 남는다
+#     (이미 적용된 객체는 다시 ALTER하지 않는다 — 아래 세션 기본값 문단).
+#   - `passwordSecret.name` = 같은 이름의 Secret(externalsecrets.yaml, 리소스 wave 0) · `databaseRoleReclaimPolicy: retain`(CRD 기본값 명시 — CR이 지워져도
+#     role을 DROP하지 않는다 · internal/management/controller/databaserole_controller.go:189–198 shouldDropRole) · `ensure: present`(CRD 기본값 명시 —
+#     DatabaseRole은 `absent`를 CEL과 인스턴스 매니저(:121–128) 둘 다 거부한다). ⚠ reclaim을 `delete`로 바꾼 뒤 CR을 지우면 `DROP ROLE`이다 — 그 값을 바꾸는
+#     PR은 삭제 PR로 다룬다(README §5).
+#   - 적지 않는 것: `connectionLimit`(기본 -1 — 교정은 T097) · `validUntil` · `inRoles` · `inherit`(기본 true) · `disablePassword`(passwordSecret과 배타) ·
+#     `clientCertificate`(인증서 로그인 안 씀).
+#     ⚠ `inRoles`가 비어 있으면 재적용(비밀번호 회전 · spec 변경) 때 인스턴스 매니저가 **이 role이 멤버인** 부모 멤버십(`pg_auth_members.member` = 이 role)을 **전부 REVOKE**한다
+#     (roles/postgres.go:300–324 GetParentRoles → roles/runnable.go:422–436 getRolesToRevoke → roles/postgres.go:271–275 `REVOKE <부모> FROM <이 role>`). 방향에 주의 —
+#     이 role을 남에게 준 `GRANT <이 role> TO <다른 role>`은 이 role의 재적용과 무관하고, 받는 쪽이 DatabaseRole이면 그쪽 재적용 때 회수된다. 멤버십이 필요해지면
+#     밖에서 `GRANT <부모> TO <이 role>`하지 말고 멤버 쪽 DatabaseRole의 `inRoles`에 부모 이름을 적는다(README §6 T072).
+#   - `cluster.name: pg-main` — 1.30부터 생성 뒤 **불변**(CEL `self == oldSelf`). `spec.name`도 불변(CEL) — 이름을 바꾸려면 새 객체 + 수동 정리(README §5).
+#   - `comment`: 용도 한 줄(ASCII). 인스턴스 매니저가 `COMMENT ON ROLE`로 반영한다(roles/postgres.go:168–176 · 값이 바뀌면 UpdateComment).
+# 세션 기본값(app role `statement_timeout 15s` · `idle_in_transaction_session_timeout 30s`)은 이 CRD에 role 수준 GUC 필드가 없어 여기서 표현하지 못한다 →
+#   job-postsync-db-access.yaml(PostSync hook)이 **app role 자신의 자격으로** `ALTER ROLE CURRENT_USER SET …`을 낸다(data-model §7 app role 행 2026-10-14).
+#   CNPG의 role 적용은 rolconfig를 건드리지 않는다: 위 ALTER ROLE 문장에 SET/RESET이 없고, 비교용 roles.List(roles/postgres.go:44–55)가 읽는 pg_authid 열에
+#   rolconfig가 없으며, 이미 적용된 객체는 generation과 Secret resourceVersion이 그대로면 다시 ALTER하지 않는다(databaserole_controller.go:271–289) — README §4 · VD-5.
+# 이름: metadata.name = `pg-main-<role 이름의 _를 ->`(K8s 이름에 `_` 불가) = passwordSecret 이름 = ES 이름. PG role 이름은 `spec.name`이다.
+# health: Argo CD v3.5.2에는 DatabaseRole 내장 health가 없다(resource_customizations/postgresql.cnpg.io에는 Cluster뿐) → 적용 즉시 Healthy
+#   (gitops-engine pkg/sync/sync_context.go:559 "do not have health, and they automatically success"). 실제 PG 반영은 인스턴스 매니저(pg-main-1)가 비동기로 하고
+#   `status.applied` · `status.message`로 알린다(README §2) — 그래서 PostSync Job이 접속을 스스로 기다린다.
+# 인스턴스 매니저는 이 객체에 finalizer `cnpg.io/deleteRole`을 붙인다(databaserole_controller.go:111–117 · pkg/utils/finalizers.go:41) — 희망 상태에는 없다.
+
+# --- pod role(prod) ----------------------------------------------------------------------------------------------------------
+apiVersion: postgresql.cnpg.io/v1
+kind: DatabaseRole
+metadata:
+  name: pg-main-identity-admin-owner
+  namespace: data
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"          # 리소스 수준 wave — ES("0") 뒤 · Database("2") 앞. Application 표의 숫자가 아니다
+spec:
+  cluster:
+    name: pg-main
+  name: identity_admin_owner
+  comment: "identity-admin prod owner: migrations and seed only (BYPASSRLS) - platform-gitops T054"
+  ensure: present
+  login: true
+  superuser: false
+  createdb: false
+  createrole: false
+  replication: false
+  bypassrls: true                              # owner = FORCE RLS 우회(마이그레이션·시드 전용) — 런타임 pod에는 이 자격이 없다(<pod>-migrate만)
+  passwordSecret:
+    name: pg-main-identity-admin-owner
+  databaseRoleReclaimPolicy: retain
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: DatabaseRole
+metadata:
+  name: pg-main-identity-admin-app
+  namespace: data
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  cluster:
+    name: pg-main
+  name: identity_admin_app
+  comment: "identity-admin prod app role: runtime DML only - platform-gitops T054"
+  ensure: present
+  login: true                                  # CRD 기본값 false — 명시하지 않으면 런타임 pod가 로그인하지 못한다
+  superuser: false
+  createdb: false
+  createrole: false
+  replication: false
+  bypassrls: false                             # app = RLS 적용 대상
+  passwordSecret:
+    name: pg-main-identity-admin-app
+  databaseRoleReclaimPolicy: retain
+---
+# --- pod role(dev) -----------------------------------------------------------------------------------------------------------
+apiVersion: postgresql.cnpg.io/v1
+kind: DatabaseRole
+metadata:
+  name: pg-main-dev-identity-admin-owner
+  namespace: data
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  cluster:
+    name: pg-main
+  name: dev_identity_admin_owner
+  comment: "identity-admin dev owner: migrations and seed only (BYPASSRLS) - platform-gitops T054"
+  ensure: present
+  login: true
+  superuser: false
+  createdb: false
+  createrole: false
+  replication: false
+  bypassrls: true
+  passwordSecret:
+    name: pg-main-dev-identity-admin-owner
+  databaseRoleReclaimPolicy: retain
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: DatabaseRole
+metadata:
+  name: pg-main-dev-identity-admin-app
+  namespace: data
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  cluster:
+    name: pg-main
+  name: dev_identity_admin_app
+  comment: "identity-admin dev app role: runtime DML only - platform-gitops T054"
+  ensure: present
+  login: true
+  superuser: false
+  createdb: false
+  createrole: false
+  replication: false
+  bypassrls: false
+  passwordSecret:
+    name: pg-main-dev-identity-admin-app
+  databaseRoleReclaimPolicy: retain
+---
+# --- 공유 컴포넌트 owner(env 접두 없음 · app role 없음) ----------------------------------------------------------------------
+apiVersion: postgresql.cnpg.io/v1
+kind: DatabaseRole
+metadata:
+  name: pg-main-authentik-owner
+  namespace: data
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  cluster:
+    name: pg-main
+  name: authentik_owner
+  comment: "Authentik database owner (shared component, no app role) - platform-gitops T054"
+  ensure: present
+  login: true
+  superuser: false
+  createdb: false
+  createrole: false
+  replication: false
+  bypassrls: false
+  passwordSecret:
+    name: pg-main-authentik-owner
+  databaseRoleReclaimPolicy: retain
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: DatabaseRole
+metadata:
+  name: pg-main-openfga-owner
+  namespace: data
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  cluster:
+    name: pg-main
+  name: openfga_owner
+  comment: "OpenFGA database owner (shared component, no app role) - platform-gitops T054"
+  ensure: present
+  login: true
+  superuser: false
+  createdb: false
+  createrole: false
+  replication: false
+  bypassrls: false
+  passwordSecret:
+    name: pg-main-openfga-owner
+  databaseRoleReclaimPolicy: retain

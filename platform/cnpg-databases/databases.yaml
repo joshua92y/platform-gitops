@@ -1,0 +1,91 @@
+# platform/cnpg-databases/databases.yaml — CNPG `Database` 4장(postgresql.cnpg.io/v1 · ns data · cluster pg-main) — 리소스 wave 2 (T054)
+#
+# SP-1 범위(FR-016 · 모노레포 data-model §7): `identity_admin`(prod) · `dev_identity_admin`(dev) · 공유 `authentik` · `openfga`. 나머지 pod DB는 각 pod feature가 더한다.
+# owner = `<db>_owner`(databaseroles.yaml · 리소스 wave 1) — 하네스 db-2가 이 대응을 글자 그대로 본다. wave 1 뒤라 owner role **선언**이 먼저 적용되지만 PG의
+#   role 생성은 인스턴스 매니저가 비동기로 하므로 첫 `CREATE DATABASE … OWNER …`가 "role does not exist"로 실패할 수 있다 → 인스턴스 매니저가 30초 뒤 다시 한다
+#   (CNPG v1.30.0 internal/management/controller/database_controller.go:93 databaseReconciliationInterval · :195–206 실패 시 markAsFailed + RequeueAfter —
+#   이 파일의 CNPG 줄 번호는 전부 배포본 태그 v1.30.0 기준).
+# `databaseReclaimPolicy: retain`(CRD 기본값 명시 — CR이 지워져도 DROP DATABASE 하지 않는다 · database_controller.go:215–218 evaluateDropDatabase) ·
+#   `ensure: present`(CRD 기본값 명시 — 하네스 db-1은 absent 객체를 존재로 세지 않는다).
+#   ⚠ **`ensure: absent`는 reclaim과 무관하게 DB를 지운다**: 인스턴스 매니저가 조정마다 `DROP DATABASE IF EXISTS`를 낸다(database_controller.go:299–300 →
+#     database_controller_sql.go:227–243 · FORCE 없음 — 연결이 끊기는 순간 실행된다). 이 Application은 automated + selfHeal이라 머지가 곧 drop이다.
+#     `databaseReclaimPolicy: delete` + CR 삭제(Application cascade 포함)도 DROP이다 → 두 값을 바꾸는 PR은 **데이터 삭제 PR**로 다룬다(README §5).
+# 확장 `vector`(pgvector — 카탈로그 major 18 이미지 빌드 인자 EXTENSIONS에 postgresql-18-pgvector 포함 · 이미지 config history 2026-10-14 조회)를 `identity_admin`과
+#   `dev_identity_admin` **둘 다**에 둔다(env 패리티 — dev 마이그레이션이 prod보다 먼저 돈다 · data-model §7 확장 행 2026-10-14). CNPG가 superuser로 search_path
+#   `"$user", public`에서 `CREATE EXTENSION vector`를 낸다(database_controller_sql.go:267–312) → schema public · 버전 = 이미지 기본 버전(VD-3에서 기록).
+#   확장 적용이 실패하면 그 Database의 `status.applied`가 false가 된다(database_controller.go:316–320 — 하네스 db-1 FAIL로 드러난다). 공유 DB에는 확장이 없다.
+# encoding · locale 계열 · template · tablespace는 적지 않는다(클러스터 initdb 기본값). encoding · locale 계열 · template은 생성 뒤 **불변**(CEL)이라 나중에 바꿀 수 없고,
+#   `tablespace`는 바꿀 수 있다(CEL 불변 규칙 없음 — 인스턴스 매니저가 `ALTER DATABASE … SET TABLESPACE`를 낸다 · database_controller_sql.go:211–222 · DB 파일 이동·잠금) —
+#   적지 않는 이유는 기본값 유지다.
+# **CONNECT 제한은 이 CRD로 표현할 수 없다**(v1.30.0 Database CRD에 database 수준 권한 필드가 없다 — 과제 문면): CNPG가 만든 DB는 `datacl` NULL = PUBLIC CONNECT 허용이다.
+#   pod DB(`identity_admin` · `dev_identity_admin`) · 공유 DB(`authentik` · `openfga`) 모두 이 디렉터리의 PostSync Job(job-postsync-db-access.yaml — ⓪ pod DB · ① 공유 DB)이
+#   첫 성공 sync에서 닫는다(컨트롤러 결정 C1 2026-10-14). pod DB는 각 pod의 migrate Job 첫 단계(T072 템플릿)가 같은 SQL을 다시 낸다(이중 멱등). Database 생성 ~ PostSync ⓪
+#   성공 사이에는 pod DB의 PUBLIC CONNECT가 열려 있다(README §5 위험).
+# 이름: metadata.name = `pg-main-<db 이름의 _를 ->`. PG database 이름은 `spec.name`(생성 뒤 불변 · CEL).
+# health: Argo CD v3.5.2에는 Database 내장 health가 없다 → 적용 즉시 Healthy(databaseroles.yaml 머리 주석). 인스턴스 매니저는 finalizer `cnpg.io/deleteDatabase`를 붙인다.
+
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: pg-main-identity-admin
+  namespace: data
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"          # 리소스 수준 wave — DatabaseRole("1") 뒤. Application 표의 숫자가 아니다
+spec:
+  cluster:
+    name: pg-main
+  name: identity_admin
+  owner: identity_admin_owner
+  ensure: present
+  databaseReclaimPolicy: retain
+  extensions:
+    - name: vector                             # pgvector — assistant 대비(data-model §7). 버전·schema 미기재 = 이미지 기본 · public
+      ensure: present
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: pg-main-dev-identity-admin
+  namespace: data
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  cluster:
+    name: pg-main
+  name: dev_identity_admin
+  owner: dev_identity_admin_owner
+  ensure: present
+  databaseReclaimPolicy: retain
+  extensions:
+    - name: vector                             # env 패리티 — 과제 문면은 identity_admin만 적었다(data-model §7 2026-10-14 정정)
+      ensure: present
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: pg-main-authentik
+  namespace: data
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  cluster:
+    name: pg-main
+  name: authentik
+  owner: authentik_owner
+  ensure: present
+  databaseReclaimPolicy: retain
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: pg-main-openfga
+  namespace: data
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  cluster:
+    name: pg-main
+  name: openfga
+  owner: openfga_owner
+  ensure: present
+  databaseReclaimPolicy: retain

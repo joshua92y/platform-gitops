@@ -1,6 +1,52 @@
-# platform/cnpg-databases/ — Database·DatabaseRole
-# sync-wave: 계약 gitops-repo.md §sync-wave 단일 표 참조(wave 번호는 표에만 기재 — 중복 금지).
-# 빈 뼈대(T003) — 실제 매니페스트는 T031+에서 작성한다.
+# platform/cnpg-databases/ — CNPG `DatabaseRole` 6 · `Database` 4 + 비밀번호 ExternalSecret 6 + PostSync SQL Job 1 — 순수 매니페스트 17장 (T054)
+#
+# 정본 계약(모노레포 specs/003-platform-foundation/):
+#   - contracts/gitops-repo.md §sync-wave 단일 표(wave 번호는 그 표에만 — 여기 다시 적지 않는다. `cnpg-databases` 행 = "Database·DatabaseRole" → Application
+#     `platform-cnpg-databases` 하나가 이 디렉터리 하나를 적용한다. `cnpg-cluster` 행(pg-main)보다 뒤 — pg-main이 Healthy여야 인스턴스 매니저가 조정한다)
+#     · §Application 규약 **예외 두 번째 사례**(2026-10-14 T054 — `ApplyOutOfSyncOnly=true` + `retry`; 근거는 `clusters/oci-k3s/apps/platform-cnpg-databases.yaml`
+#     머리 주석) · §ExternalSecret 규약(store `vault-data` 열거 접두 · `vault-platform` platform/ 접두 — validate 3.3) · §공유 컴포넌트 비밀(`kv/platform/db/{authentik,openfga}/owner`)
+#   - data-model.md §7(role env 분리 · owner bypassrls · app role 세션 기본값의 적용 주체 = 이 디렉터리의 PostSync Job · 접근 경계 · 비밀 행 · 확장 행) · §8(kv 경로·키)
+#   - network-policy.md(ns `data` = PSA baseline · `allow-same-namespace` — PostSync Job → `pg-main-rw:5432`가 이미 열려 있다. 이 디렉터리는 정책을 한 줄도 바꾸지 않는다)
+#
+# 설치 방식 = 순수 매니페스트(`helmCharts` 없음 — platform/cnpg-cluster/ 선례). 로컬 재현: `kustomize build platform/cnpg-databases`(문서 17 · 전부 ns data).
+#   ⚠ 리소스 수준 `argocd.argoproj.io/sync-wave`(ExternalSecret "0" → DatabaseRole "1" → Database "2")는 **이 Application 안의 적용 순서**다 — 계약 §sync-wave
+#     단일 표(Application 사이의 순서)의 숫자가 **아니다**(T052 카탈로그 · T053 선례 · README §1). 순서의 이유(research CNPG-D10): 비밀번호 Secret이 있어야 role이,
+#     role이 있어야 database owner가 선다. Argo는 wave N이 전부 Healthy여야 N+1을 적용한다 — ES는 내장 health(Ready=True = SecretSynced)가 있고,
+#     DatabaseRole·Database는 내장 health가 없어 적용 즉시 Healthy다(PG 반영은 인스턴스 매니저가 비동기로 — README §1).
+#     단 이 순서 보장은 **첫 시도에만** 있다: 재시도에서는 Application의 `ApplyOutOfSyncOnly`가 in-sync 리소스를 health와 무관하게 건너뛰므로(Degraded ES 포함)
+#     DatabaseRole·Database가 Secret보다 먼저 적용될 수 있다 — CNPG 쪽은 무해(applied=false · 30초 재시도)하고 PostSync Job은 FAIL로 다음 재시도를 부른다(README §1).
+#   ⚠ PostSync hook Job(`cnpg-databases-access`)은 wave와 별개로 Sync 단계가 끝난 뒤 **전체 sync**마다 돈다(⓪ pod DB CONNECT 제한 · ① 공유 DB CONNECT 제한 ·
+#     ② app role 세션 기본값 — 그 파일 머리 주석). selfHeal(부분 sync) · 리소스를 고른 Sync · Apply only는 hook을 건너뛴다(Argo CD v3.5.2 controller/sync.go:311 · README §1).
+#     hook 매니페스트만 바뀐 커밋은 Application을 OutOfSync로 만들지 않는다 → 전체 수동 Sync(리소스 선택 없음 · Apply only 끔)가 필요하다(README §1).
+#   ⚠ 전역 `namespace:` 변환기를 두지 않는다 — 네 파일이 `metadata.namespace: data`를 직접 적는다(cnpg-cluster · secret-stores · secrets 선례와 통일).
+#
+# 이 디렉터리가 만들지 "않는" 것:
+#   1) app role의 테이블 GRANT(SELECT/INSERT/UPDATE/DELETE) → 각 pod 마이그레이션(T072 템플릿). ⚠ pod DB(`identity_admin` · `dev_identity_admin`)의
+#      `REVOKE CONNECT … FROM PUBLIC; GRANT CONNECT … TO <db>_app, <db>_owner;`는 여기 들지 **않는다** — 이 디렉터리의 PostSync Job ⓪(`pod-db-connect`)이 먼저 낸다
+#      (컨트롤러 결정 C1 2026-10-14 · README §1). 과제 문면의 migrate Job 첫 단계(템플릿 T072 · 단언 T050 revoke-public)는 그대로 두어 **이중 멱등**이다.
+#      Database 생성 ~ PostSync ⓪ 성공 사이에만 pod DB의 PUBLIC CONNECT가 열려 있다(README §5 위험 — 데이터·소비자 없음).
+#   2) CA 미러(`pg-main-ca`의 `ca.crt`만 → 앱 ns) → `platform/kafka-topics/`(T056). 여기서는 ns data의 원본을 PostSync Job이 `ca.crt`만 마운트한다.
+#   3) `connectionLimit` · 자원 교정 → T097. 비밀번호 회전 절차(`secret-rotation.md`) → 런북 후속. 검사 Job(`platform/policies/tests/` data-assert)의 **배포** → T057/T059.
+#   4) Vault kv 값 → 운영자 시드(모노레포 런북 bootstrap.md §4 · README §0 P3 — **머지 전**). 이 저장소에 비밀은 없다(Secret 0장 — ESO가 런타임에 만든다).
+#   5) Namespace `data` · PSA · NetworkPolicy → `platform/policies/`. Cluster `pg-main` → `platform/cnpg-cluster/`(T053).
+#   6) `postgres` · `platform`(initdb 부트스트랩 DB) · `template1`의 PUBLIC CONNECT 회수 → 이 Job의 자격(비superuser owner)으로는 할 수 없다 — 회수하지 않고 기록 ·
+#      README §3 VD-9로 실측 · 결정은 T097/T116(data-model §7 접근 경계 행).
+#
+# 되돌리기(README §5): **reclaim policy `retain`** — DatabaseRole·Database CR을 지워도 PG의 role·database는 지워지지 않는다(CR 삭제 경로의 데이터 보호). revert 머지 →
+#   렌더 0 → `prune: false`라 객체는 남고 Application은 `OutOfSync`가 정상. PG 객체까지 치우는 절차는 README §5(CR 수동 삭제 → 데이터·백업 확인 → 운영자 SQL).
+#   ES를 지우면 Secret이 GC되지만 PG의 비밀번호는 그대로다.
+# ⚠ Git 경로의 데이터 손실(README §5 · retain이 막지 못한다): ① Database `ensure: absent` — reclaim과 무관하게 DROP DATABASE(automated + selfHeal = 머지가 곧 drop)
+#   ② `databaseReclaimPolicy: delete` + CR 삭제(Application cascade 포함) — DROP DATABASE. 이 두 값(과 DatabaseRole `databaseRoleReclaimPolicy`)을 바꾸는 PR은
+#   **데이터 삭제 PR**로 다룬다. validate **3.8 `CNPG-retain`**이 이 값들을 고정한다(계약 §validate.yml 3 하위 항목 「CNPG 데이터 보존」 2026-10-14 — 모든 원본·렌더의 Database
+#   `ensure ≠ absent` + `databaseReclaimPolicy: retain` 명시 · DatabaseRole `databaseRoleReclaimPolicy: retain` 명시 · 기대 PASS 줄 `[PASS] 3.8 CNPG-retain — postgresql.cnpg.io
+#   Database 8개(원본 4 · 렌더 4): … · DatabaseRole 12개(원본 6 · 렌더 6): …` — 전문은 README §0 P6): 의도된 삭제는 계약 행과 그 검사를 같은 PR에서
+#   고치는 것으로만 연다 — 사람 리뷰는 그 위의 두 번째 관문이다(README §5).
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-resources: []
+
+# ⚠ 전역 `namespace:` 변환기 금지(머리 주석) — 네임스페이스는 각 매니페스트의 metadata로만.
+resources:
+  - externalsecrets.yaml           # 리소스 wave 0 — 비밀번호 Secret 6장(type basic-auth · 라벨 cnpg.io/reload)
+  - databaseroles.yaml             # 리소스 wave 1 — role 6(app 2 · pod owner 2 · 공유 owner 2)
+  - databases.yaml                 # 리소스 wave 2 — database 4(pod DB 2에 vector)
+  - job-postsync-db-access.yaml    # PostSync hook — ⓪ pod DB CONNECT 제한 · ① 공유 DB CONNECT 제한 · ② app role 세션 기본값(init 2 + 본 컨테이너 1)

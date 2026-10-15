@@ -14,7 +14,7 @@ Job은 **dev scope 자격만** 받는다. prod 자격은 없다 — dev 자격�
 | `kustomization.yaml` | **독립 kustomization**(`namespace: jt-dev`, resources 5). 상위 `platform/policies/kustomization.yaml`은 이 디렉터리를 참조하지 않는다 |
 | `externalsecret-assert-env.yaml` | dev scope 자격 하나 — ExternalSecret `assert-env`(store `vault-dev`, `dev/` 키만) |
 | `configmap-assert-config.yaml` | 비밀이 아닌 값(엔드포인트·DB/토픽/role 이름·합성 식별자) |
-| `job-data-assert.yaml` | pg-main 4검사(initContainer가 Dragonfly 2검사) |
+| `job-data-assert.yaml` | pg-main 6검사(T054가 `role-attrs` · `app-session-timeouts`를 더했다) + initContainer가 Dragonfly 2검사 |
 | `job-kafka-assert.yaml` | Kafka 2검사 |
 | `job-authz-assert.yaml` | OpenFGA 2검사 |
 
@@ -33,8 +33,10 @@ SUMMARY: pass=<n> fail=<n>
 - 마지막 줄은 항상 `SUMMARY: pass=<n> fail=<n>`이다.
 - **종료 코드**: `fail=0`이면 0, 하나라도 실패하면 1. 즉 `status.succeeded ≥ 1`은 "모든 검사 PASS"와 같다.
 - 보조 줄은 `EVIDENCE:`(원문 증거)와 `NOTE:`(정리 작업 기록)뿐이다. 파서는 `^RESULT:`·`^SUMMARY:`만 본다.
-- **출력은 짧게 유지한다.** `cluster.tests.ps1`의 `np-2-*`는 `kubectl logs job/<이름> --tail=50`을 읽으므로,
-  모든 `RESULT:`와 `SUMMARY:`는 마지막 50줄 안에 들어와야 한다(현재 최대 11줄).
+- **출력은 짧게 유지한다.** `cluster.tests.ps1`의 `np-2-*`와 모노레포 `data.tests.ps1`의 `job-2`는 `kubectl logs job/<이름> --tail=50`을 읽으므로,
+  모든 `RESULT:`와 `SUMMARY:`는 마지막 50줄 안에 들어와야 한다(현재 최대 **16줄** = data-assert: pg `RESULT` 6 + initContainer 줄 ≤ 9
+  (`EVIDENCE:` 머리 1 + ACL LIST ≤ 6(`head -n 6`) + `RESULT` 2) + `SUMMARY` 1 · kafka-assert ≤ 4 · authz-assert ≤ 5 — T054 재계산. 이전 표기 "11줄"은
+  ACL LIST 6줄 상한을 덜 센 값이었다(T054 전 data-assert 최대 = 14줄)).
 - 값 자체(비밀번호·토큰·URL의 자격 부분)는 절대 출력하지 않는다. `ACL LIST` 증거의 비밀번호 해시(`#<hex>`)는
   `#<redacted>`로 치환한 뒤 찍는다.
 
@@ -56,6 +58,8 @@ kubectl -n jt-dev logs job/data-assert | grep 'NOPERM'          # 읽기 전용 
 | | `catalog-connect-false` | 로그인 없이 카탈로그로 `has_database_privilege(<prod app role>, {dev DB, 공유 DB}, 'CONNECT')` = 전부 false | quickstart §US3 ③ |
 | | `revoke-public` | 4개 DB 모두 PUBLIC의 CONNECT가 회수됨(`datacl`이 NULL이면 기본 권한이 살아 있다는 뜻이라 FAIL) | quickstart §US3 ④ · data-model :113 |
 | | `ssl-verify-full` | `sslmode=verify-full` URL로 붙은 세션의 `pg_stat_ssl`(자기 backend)이 `ssl=t` | quickstart §US3 ④ · pod-template §DB 연결 |
+| | `role-attrs` | 로그인 없이 카탈로그(`pg_roles`)로 app 2(`identity_admin_app`·`dev_identity_admin_app`) `rolbypassrls=f`·`rolsuper=f`, pod owner 2(`identity_admin_owner`·`dev_identity_admin_owner`) `rolbypassrls=t`·`rolsuper=f` — 넷 다 `rolcreatedb=f`·`rolcreaterole=f`·`rolcanlogin=t`(DatabaseRole 선언이 PG에 실제로 적용됐는지). role 이름은 ConfigMap `PROD_APP_ROLE`·`DEV_APP_ROLE`·`PROD_OWNER_ROLE`·`DEV_OWNER_ROLE` | tasks.md T054 문면 · data-model §7 · 모노레포 build-notes 「T050 · T051」(T054 몫) |
+| | `app-session-timeouts` | `pg_roles.rolconfig`(DB 무관 role 설정)에 app 2 모두 `statement_timeout=15s` **그리고** `idle_in_transaction_session_timeout=30s` — 적용 주체는 gitops `platform/cnpg-databases`의 PostSync Job(app role 자신의 `ALTER ROLE CURRENT_USER SET`). **role 수준 기본값만 본다** — DB별 덮어쓰기(`ALTER ROLE … IN DATABASE … SET` = `pg_db_role_setting.setdatabase ≠ 0`, app role 자신도 낼 수 있다)는 보지 않는다(실효 값이 달라도 PASS — security r2 K13 · 확장은 후속) | data-model §7 app role 행(2026-10-14) · 같은 build-notes |
 | | `acl-list` | Dragonfly `ACL LIST`에 dev 검사 계정(`sample-pod`) 행이 있고 읽기 전용 패턴 `%R~revoked:*`를 포함 | quickstart §US3 VD-4 · T057 · denylist.md |
 | | `noperm` | 그 계정으로 `DEL revoked:sub:assert-probe` → `NOPERM` | quickstart §US3 · T057 |
 | `kafka-assert` | `roundtrip` | dev 토픽에 produce → 같은 토픽에서 마커 consume 성공(경과 시간 함께 출력) | quickstart §US3 |
@@ -135,7 +139,7 @@ kubectl -n jt-dev logs job/data-assert | grep 'NOPERM'          # 읽기 전용 
 
 Job의 `spec`은 immutable이므로 Argo CD가 같은 이름의 Job을 갱신할 수 없다. 후보는 둘이다.
 
-- **A. Argo Sync hook** — Application의 sync마다 실행. `argocd.argoproj.io/hook: Sync` +
+- **A. Argo Sync hook** — Application의 전체 sync마다 실행(selfHeal 부분 sync · 리소스 선택 Sync · Apply only는 hook을 건너뛴다 — Argo CD v3.5.2 `controller/sync.go:311`). `argocd.argoproj.io/hook: Sync` +
   `hook-delete-policy: BeforeHookCreation`. 장점: sync 1회 = 검사 1회. 단점: 실패가 sync 실패로 이어져
   `argo-1` 판정과 얽힌다.
 - **B. 일반 리소스 + 수동 재실행** — `kubectl -n jt-dev delete job <이름>` 후 sync(또는 `Replace=true`).
@@ -185,3 +189,21 @@ ESO가 `assert-env` Secret을 만드는 경로는 `external-secrets → vault 82
   스텁으로 정상 경로(6·2·2 PASS)와 음성 대조(교차 DB 접속 성공 / `verify-full` 없음 / PUBLIC CONNECT 잔존 /
   다른 테넌트 allowed=true / 환경변수 결손)에서 FAIL·종료 코드 1을 확인했다.
 - **클러스터에서는 아직 한 번도 실행되지 않았다**(Application 없음). 첫 실행은 대상이 생기는 태스크에서 한다.
+
+## 검증 기록 (T054 — data-assert에 `role-attrs` · `app-session-timeouts` 추가, 저장소 로컬)
+
+- `kustomize build platform/policies/tests` exit 0 — 객체 5개 그대로(ConfigMap 1 · ExternalSecret 1 · Job 3). ConfigMap에 `DEV_APP_ROLE` ·
+  `PROD_OWNER_ROLE` · `DEV_OWNER_ROLE` 3키 추가(비밀 아님 — role 이름).
+- 렌더에서 뽑은 pg-assert 스크립트: `sh -n` · `dash -n` · `bash --posix -n` 통과. dash + 모의 psql로 6경우 — 전부 PASS(8/0 · exit 0 · 16줄) /
+  owner bypassrls=f · app role 없음 · rolconfig에 30s 없음 · pg_roles 조회 실패(각 해당 id FAIL · 7/1 · exit 1) / ConfigMap 키 결손(pg 6 id 전부
+  FAIL "필수 값 없음" · 2/6 · exit 1). 출력에 비밀번호 0건.
+- 모노레포 하네스 `tests/platform/data.tests.ps1`의 **판정 함수 `Test-JobLog` 자체**(AST로 읽어 실행 — 파일 수정 없음)를 위 로그의 `--tail=50`에 적용:
+  전부 PASS 경우만 ok, 나머지 5경우 not ok(해당 id FAIL · SUMMARY fail≠0). 같은 모의로 T054 **전**(main `a769359`) 스크립트는
+  "missing RESULT line for role-attrs … app-session-timeouts"로 not ok — 빨강 → 초록 확인.
+- 이 Job은 여전히 **배포되지 않는다**(Application 없음 — T057/T059). 하네스 `job-1`·`job-2`는 그때까지 FAIL이 정상이다.
+- **배포한 뒤**: pod DB(`identity_admin` · `dev_identity_admin`)의 PUBLIC CONNECT는 gitops `platform/cnpg-databases/`의 PostSync Job ⓪(`pod-db-connect` — 컨트롤러 결정 C1
+  2026-10-14)이 `REVOKE CONNECT … FROM PUBLIC; GRANT CONNECT … TO <db>_app, <db>_owner;`로 **먼저 닫아 두므로**, `pg-cross-db-denied` · `catalog-connect-false` · `revoke-public`은
+  T072/T075(migrate Job 첫 단계 — 같은 SQL을 다시 내는 이중 멱등)를 기다리지 않고 **PASS 후보**다(이전 서술 "pod DB REVOKE 전까지 FAIL"은 철회). 공유 DB 2의 CONNECT 제한은
+  같은 Job ①. 남는 선행 산출물은 CA 미러 T056(`DATABASE_URL`의 `verify-full` · 접속 자체) · Dragonfly T057(`acl-list` · `noperm`)이다(gitops `platform/cnpg-databases/README.md` §6 T059).
+  ⚠ 그 PostSync Job이 FAIL이면(Argo operation Failed — Application은 Synced/Healthy로 남는다) pod DB가 열린 채라 세 id가 FAIL하고 Job이 exit 1이라 `job-1` · `job-2`도 FAIL한다
+  → 먼저 gitops README §3 VD-4의 네 판정(operationState.phase · hookPhase · Job succeeded · 로그 SUMMARY)으로 PostSync 결과를 확인한다.
