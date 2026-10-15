@@ -1,0 +1,24 @@
+# 부정 픽스처 3.8 CNPG-retain (render) — **원본은 전부 retain·present인데 kustomize 렌더에서만** 값이 바뀌는 경우.
+#   Argo CD가 적용하는 것은 렌더 결과이므로 3.8은 원본 파일과 렌더를 모두 본다 — 이 트리는 렌더 라벨(`platform/cnpg-databases (rendered)`)로만 FAIL해야 한다.
+#   실제 platform/cnpg-databases/kustomization.yaml은 트랜스포머를 두지 않는다(그 머리 주석) — 이 픽스처는 그 규율을 어겼을 때 3.8이 잡는지를 고정한다.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - databases.yaml
+  - databaseroles.yaml
+patches:
+  - target: { group: postgresql.cnpg.io, version: v1, kind: Database, name: pg-main-alpha }
+    patch: |-
+      - op: replace
+        path: /spec/databaseReclaimPolicy
+        value: delete
+  - target: { group: postgresql.cnpg.io, version: v1, kind: Database, name: pg-main-beta }
+    patch: |-
+      - op: replace
+        path: /spec/ensure
+        value: absent
+  - target: { group: postgresql.cnpg.io, version: v1, kind: DatabaseRole, name: pg-main-alpha-owner }
+    patch: |-
+      - op: replace
+        path: /spec/databaseRoleReclaimPolicy
+        value: delete

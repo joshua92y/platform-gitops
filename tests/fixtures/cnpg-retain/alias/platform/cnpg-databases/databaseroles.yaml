@@ -1,0 +1,11 @@
+# 부정 픽스처 3.8 CNPG-retain (alias) — 결함 없는 DatabaseRole(찍히지 않아야 한다)
+apiVersion: postgresql.cnpg.io/v1
+kind: DatabaseRole
+metadata: { name: pg-main-alias-owner, namespace: data }
+spec:
+  cluster: { name: pg-main }
+  name: alias_owner
+  ensure: present
+  login: true
+  passwordSecret: { name: pg-main-alias-owner }
+  databaseRoleReclaimPolicy: retain

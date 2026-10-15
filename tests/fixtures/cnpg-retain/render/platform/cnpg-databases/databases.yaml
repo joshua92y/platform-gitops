@@ -1,0 +1,21 @@
+# 부정 픽스처 3.8 CNPG-retain (render) — 이 원본은 계약과 정확히 일치한다(present · retain). 같은 디렉터리의 kustomization.yaml이 patches로
+#   pg-main-alpha의 reclaim을 delete로, pg-main-beta의 ensure를 absent로 바꾼다 → 렌더 소스에서만 3.8 FAIL.
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata: { name: pg-main-alpha, namespace: data }
+spec:
+  cluster: { name: pg-main }
+  name: alpha
+  owner: alpha_owner
+  ensure: present
+  databaseReclaimPolicy: retain
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata: { name: pg-main-beta, namespace: data }
+spec:
+  cluster: { name: pg-main }
+  name: beta
+  owner: beta_owner
+  ensure: present
+  databaseReclaimPolicy: retain

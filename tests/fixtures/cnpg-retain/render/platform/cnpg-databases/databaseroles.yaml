@@ -1,0 +1,11 @@
+# 부정 픽스처 3.8 CNPG-retain (render) — 원본은 retain. kustomization.yaml의 patches가 렌더에서 databaseRoleReclaimPolicy를 delete로 바꾼다.
+apiVersion: postgresql.cnpg.io/v1
+kind: DatabaseRole
+metadata: { name: pg-main-alpha-owner, namespace: data }
+spec:
+  cluster: { name: pg-main }
+  name: alpha_owner
+  ensure: present
+  login: true
+  passwordSecret: { name: pg-main-alpha-owner }
+  databaseRoleReclaimPolicy: retain

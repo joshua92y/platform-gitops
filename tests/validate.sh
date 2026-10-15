@@ -25,6 +25,14 @@
 #   3.5  ES-⑤              Deployment·StatefulSet·DaemonSet·CronJob의 `-migrate` Secret 참조 금지
 #   3.6  ES-⑥              automountServiceAccountToken: false (apps/** · platform/cloudflared · platform/dragonfly)
 #   3.7  ES-⑦              apps/** 의 key가 (dev|prod)/(access|web)/ 접두면 FAIL(Workers 전용)
+#   3.8  CNPG-retain        (T054 · 계약 §validate.yml 3 하위 항목 「(2026-10-14 T054) CNPG 데이터 보존」) 모든 원본 파일 + kustomize 렌더에서
+#                           apiVersion이 postgresql.cnpg.io/ 로 시작하는 Database: spec.ensure ≠ absent(생략 = present 허용) · spec.databaseReclaimPolicy ==
+#                           retain **명시** / DatabaseRole: spec.databaseRoleReclaimPolicy == retain **명시**. 생략 · 다른 값(delete · Retain · null · 불리언 —
+#                           문자열 retain만) · spec 없음·맵 아님은 FAIL(fail-closed). 문서는 explode(.)로 풀어 본다(별칭 `ensure: *x` · 병합 키 `<<`로 숨긴 absent).
+#                           이유: CNPG 1.30에서 Database ensure: absent는 reclaim과 무관하게 DROP DATABASE를 조정마다 재시도하고, reclaim delete는 CR 삭제 =
+#                           DROP — Application이 automated + selfHeal이라 그런 PR의 머지가 곧 데이터 삭제다(CRD 기본값도 retain이지만 생략을 허용하면 기본값
+#                           변경·오타가 조용히 통과한다). 대상 0이면 PASS(대상 없음). PASS 줄에 kind별 원본·렌더 수. 의도된 삭제는 계약 행과 이 검사를
+#                           같은 PR에서 고치는 것으로만(리뷰에 드러나게)
 #   4a   IMG-newTag         kustomization images[].newTag 금지(digest 형식도 검사)
 #   4a   IMG-name           (T047 · 계약 §이미지·승격 「항목마다 name과 digest」) images 항목마다 name — 없음 · 빈 값 · 문자열이 아님이면 FAIL
 #   4a   IMG-digest         images 항목마다 digest — 없음 · 빈 값(null · "")이면 FAIL. 형식 오류는 IMG-newTag가 찍으므로 다시 찍지 않는다 —
@@ -681,6 +689,15 @@ YQ_ES='select(.kind == "ExternalSecret") | [ (.apiVersion // "-"), (.metadata.na
 # (yq v4의 `,` 합집합은 수집자 안에서 두 번째 가지를 잃으므로 배열 셋을 `+`로 이어 붙인다)
 YQ_WL='select(.kind == "Deployment" or .kind == "StatefulSet" or .kind == "DaemonSet" or .kind == "Job" or .kind == "CronJob") | (.spec.jobTemplate.spec.template.spec // .spec.template.spec // {}) as $ps | (($ps.containers // []) + ($ps.initContainers // [])) as $cs | [ .kind, (.metadata.namespace // "-"), (.metadata.name // "-"), ($ps.automountServiceAccountToken | tostring), (([ $cs[] | (.envFrom // [])[] | .secretRef.name | select(. != null) ] + [ $cs[] | (.env // [])[] | .valueFrom.secretKeyRef.name | select(. != null) ] + [ ($ps.volumes // [])[] | .secret.secretName | select(. != null) ]) | join(",")) ] | join(strenv(YQ_SEP))'
 YQ_APP='explode(.) | select(.kind == "Application" and ((.apiVersion // "") | test("^argoproj.io/"))) | [ (.metadata.name // "-"), ((.metadata.annotations["argocd.argoproj.io/sync-wave"] // "-") | tostring), (.spec.source.path // ((.spec.sources // [])[0].path // "-")), ((.spec.syncPolicy.syncOptions // []) | join(";")) ] | join(strenv(YQ_SEP))'
+# 3.8 — postgresql.cnpg.io Database · DatabaseRole 문서 1개 = 1행(14열 · 첫 필드 C): kind · ns · 이름 · spec 노드 종류(map|seq|scalar|none) ·
+#   ensure 유무 · ensure 태그(없으면 -) · ensure 값(tostring — 없으면 빈 값) · databaseReclaimPolicy 유무·태그·값 · databaseRoleReclaimPolicy 유무·태그·값.
+#   두 reclaim 필드를 모두 내고 kind에 맞는 쪽을 셸이 고른다(yq v4.53.6에는 if가 없다 — 12.4 주석). 문서를 explode(.)로 푼 뒤 본다(위 「앵커·별칭·병합 키」 —
+#   `ensure: *state`는 풀어야 absent로 읽히고, `<<: *m`으로 들인 ensure도 풀어야 보인다: 2026-10-15 실측 — 풀지 않으면 값이 `*state`·없음으로 읽혀 통과한다).
+#   풀지 못하면 yq가 실패하고 collect_rows가 "yq 추출 실패"로 FAIL(fail-closed). 맵 문서만 본다(select(kind == "map") — 빈 문서·시퀀스 문서 제외).
+#   ⚠ has()는 그 키를 traverse하기 **전에** 바인딩한다(YQ_CSS 주석 — 없는 경로를 traverse하면 키가 생긴다): spec 종류는 has("spec") 뒤에만 .spec을 읽고,
+#   세 필드도 각각 select(has(…)) 뒤에만 읽는다. 조건마다 바인딩을 괄호 안에 가둔다(13.1 주석 — `as $v | … and …`는 앞 바인딩을 잃는다)
+# shellcheck disable=SC2016  # $kk·$k·$ns·$n·$spk·$sp·$he·$et·$ev·$hd·$dt·$dv·$hr·$rt·$rv 는 yq 변수다
+YQ_CNPG_RETAIN='explode(.) | select(kind == "map") | select((((.apiVersion // "") | tostring) | test("^postgresql\\.cnpg\\.io/")) and ((((.kind // "") | tostring) as $kk | ($kk == "Database" or $kk == "DatabaseRole")))) | (.kind | tostring) as $k | (((.metadata | select(kind == "map") | .namespace | select(kind == "scalar")) // "-") | tostring) as $ns | (((.metadata | select(kind == "map") | .name | select(kind == "scalar")) // "-") | tostring) as $n | ((select(has("spec")) | .spec | kind) // "none") as $spk | ((.spec | select(kind == "map")) // {}) as $sp | (($sp | has("ensure")) | tostring) as $he | (($sp | select(has("ensure")) | .ensure | tag) // "-") as $et | ((($sp | select(has("ensure")) | .ensure) // "") | tostring) as $ev | (($sp | has("databaseReclaimPolicy")) | tostring) as $hd | (($sp | select(has("databaseReclaimPolicy")) | .databaseReclaimPolicy | tag) // "-") as $dt | ((($sp | select(has("databaseReclaimPolicy")) | .databaseReclaimPolicy) // "") | tostring) as $dv | (($sp | has("databaseRoleReclaimPolicy")) | tostring) as $hr | (($sp | select(has("databaseRoleReclaimPolicy")) | .databaseRoleReclaimPolicy | tag) // "-") as $rt | ((($sp | select(has("databaseRoleReclaimPolicy")) | .databaseRoleReclaimPolicy) // "") | tostring) as $rv | [ "C", $k, $ns, $n, $spk, $he, $et, $ev, $hd, $dt, $dv, $hr, $rt, $rv ] | join(strenv(YQ_SEP))'
 YQ_NS='select(.kind == "Namespace") | (.metadata.name // "-")'
 YQ_NP='select(.kind == "NetworkPolicy") | [ (.metadata.namespace // "-"), (.metadata.name // "-") ] | join(strenv(YQ_SEP))'
 # shellcheck disable=SC2016
@@ -1317,6 +1334,64 @@ check_3_workloads() {
     fi
   done < <(printf '%s' "$ROWS")
   finish_group "3.5 ES-⑤⑥" "워크로드 ${n}개(파일+렌더링) ⑤⑥ 통과" "$fails_before"
+}
+
+# 3.8 — CNPG 데이터 보존(T054 · 계약 §validate.yml 3 하위 항목 「(2026-10-14 T054) CNPG 데이터 보존」): Git 변경만으로 DB·role이 지워지지 않게.
+#   대상 = 모든 원본 파일 + 모든 kustomize 렌더(검사 3·3.5와 같은 all 관례 — 원본은 retain인데 patches가 렌더에서만 delete로 바꾸는 경로를 렌더가 잡는다.
+#   같은 객체가 원본과 렌더에 있으면 두 소스 라벨로 각각 보고된다)에서 apiVersion postgresql.cnpg.io/… · kind Database·DatabaseRole인 문서(YQ_CNPG_RETAIN).
+#   판정: Database — spec.ensure == absent → FAIL(reclaim과 무관하게 DROP DATABASE) · spec.databaseReclaimPolicy가 문자열 retain이 아니거나 없음 → FAIL ·
+#         DatabaseRole — spec.databaseRoleReclaimPolicy가 문자열 retain이 아니거나 없음 → FAIL · spec 없음·맵 아님 → FAIL(fail-closed) · 행 모양 이상 → FAIL.
+#   DatabaseRole의 ensure는 보지 않는다(CEL과 인스턴스 매니저가 absent를 거부한다 — platform/cnpg-databases/databaseroles.yaml 머리 주석). 대상 0이면 PASS(대상 없음)
+check_3_cnpg_retain() {
+  header 3.8 "CNPG 데이터 보존: Database ensure ≠ absent · databaseReclaimPolicy: retain 명시 · DatabaseRole databaseRoleReclaimPolicy: retain 명시 (파일 + 렌더링 결과)"
+  need_tool "3.8 CNPG-retain" yq || return 0
+  local fails_before=$N_FAIL i tag kind ns name spk he et ev hd dt dv hr rt rv rest x
+  local ndb=0 ndbf=0 ndbr=0 nrole=0 nrolef=0 nroler=0
+  local why_intent='의도된 삭제는 계약 §validate.yml 3 「CNPG 데이터 보존」 행과 이 검사를 같은 PR에서 고치는 것으로만'
+  local why_explicit='retain을 명시해야 한다(CRD 기본값도 retain이지만 생략을 허용하면 기본값 변경·오타가 조용히 통과한다)'
+  collect_rows "$YQ_CNPG_RETAIN" "3.8 CNPG-retain" all
+  while IFS="$YQ_SEP" read -r i tag kind ns name spk he et ev hd dt dv hr rt rv rest; do
+    [[ -n $i ]] || continue
+    # 행 모양: 첫 필드 C · 14열(rt는 '-' 또는 태그라 비지 않는다 · 15번째 필드가 있으면 값에 구분자가 섞였다) — 아니면 fail-closed
+    if [[ $tag != C || -z $rt || -n $rest ]]; then
+      fail "3.8 CNPG-retain" "${SRC_LABEL[$i]}: 추출 행 모양 이상(fail-closed) — '$tag' $kind/$ns/$name"
+      continue
+    fi
+    x="${SRC_LABEL[$i]} $kind/$ns/$name"
+    if [[ $kind == Database ]]; then
+      ndb=$((ndb + 1)); if [[ ${SRC_KIND[$i]} == rendered ]]; then ndbr=$((ndbr + 1)); else ndbf=$((ndbf + 1)); fi
+    else
+      nrole=$((nrole + 1)); if [[ ${SRC_KIND[$i]} == rendered ]]; then nroler=$((nroler + 1)); else nrolef=$((nrolef + 1)); fi
+    fi
+    if [[ $spk == none ]]; then
+      fail "3.8 CNPG-retain" "$x: spec 없음 — reclaim policy를 판정할 수 없다(fail-closed)"
+      continue
+    elif [[ $spk != map ]]; then
+      fail "3.8 CNPG-retain" "$x: spec이 맵이 아니다(노드 종류 $spk) — reclaim policy를 판정할 수 없다(fail-closed)"
+      continue
+    fi
+    if [[ $kind == Database ]]; then
+      if [[ $he == true && $ev == absent ]]; then
+        fail "3.8 CNPG-retain" "$x: spec.ensure: absent — 인스턴스 매니저가 reclaim과 무관하게 DROP DATABASE IF EXISTS를 조정마다 낸다(Application이 automated + selfHeal이라 머지가 곧 삭제). $why_intent"
+      fi
+      if [[ $hd != true ]]; then
+        fail "3.8 CNPG-retain" "$x: spec.databaseReclaimPolicy 없음 — $why_explicit"
+      elif [[ $dv != retain || $dt != '!!str' ]]; then
+        fail "3.8 CNPG-retain" "$x: spec.databaseReclaimPolicy '$dv'(태그 $dt) ≠ retain — CR 삭제(revert · Application cascade 포함)가 DROP DATABASE가 된다. $why_intent"
+      fi
+    else
+      if [[ $hr != true ]]; then
+        fail "3.8 CNPG-retain" "$x: spec.databaseRoleReclaimPolicy 없음 — $why_explicit"
+      elif [[ $rv != retain || $rt != '!!str' ]]; then
+        fail "3.8 CNPG-retain" "$x: spec.databaseRoleReclaimPolicy '$rv'(태그 $rt) ≠ retain — CR 삭제(revert · Application cascade 포함)가 DROP ROLE이 된다. $why_intent"
+      fi
+    fi
+  done < <(printf '%s' "$ROWS")
+  if [[ $((ndb + nrole)) -eq 0 ]]; then
+    finish_group "3.8 CNPG-retain" "postgresql.cnpg.io Database·DatabaseRole 대상 0개(파일+렌더링) — 대상 없음" "$fails_before"
+  else
+    finish_group "3.8 CNPG-retain" "postgresql.cnpg.io Database ${ndb}개(원본 ${ndbf} · 렌더 ${ndbr}): ensure ≠ absent · databaseReclaimPolicy: retain 명시 · DatabaseRole ${nrole}개(원본 ${nrolef} · 렌더 ${nroler}): databaseRoleReclaimPolicy: retain 명시 — Git 변경만으로 DB·role이 지워지지 않는다" "$fails_before"
+  fi
 }
 
 # -----------------------------------------------------------------------------
@@ -3313,6 +3388,7 @@ check_1b_plain       # 검사 1 뒤 — 같은 KC_ARGS로 검사 1(패스 1.5)�
 check_2_app_ssa
 check_3_externalsecrets
 check_3_workloads
+check_3_cnpg_retain  # 3.8(T054) — 검사 3의 all 관례(파일 + 렌더)로 postgresql.cnpg.io Database·DatabaseRole의 ensure·reclaim 값을 본다
 check_4_images
 check_5_policies
 check_6_author

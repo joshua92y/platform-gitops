@@ -1,0 +1,7 @@
+# 경계 픽스처 3.8 CNPG-retain (pass) — 통과해야 하는 최소 트리: platform/cnpg-databases 하나(원본 2파일 + 렌더 1).
+# 트랜스포머 없음 — 원본과 렌더가 같다(원본 N · 렌더 N으로 세어진다).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - databases.yaml
+  - databaseroles.yaml

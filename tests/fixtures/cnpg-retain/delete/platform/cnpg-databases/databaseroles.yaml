@@ -1,0 +1,22 @@
+# 부정 픽스처 3.8 CNPG-retain (delete) — DatabaseRole reclaim `delete`(CR 삭제 = DROP ROLE) → FAIL. 이웃 pg-main-keep-owner(retain)는 찍히지 않아야 한다(격리).
+apiVersion: postgresql.cnpg.io/v1
+kind: DatabaseRole
+metadata: { name: pg-main-drop-owner, namespace: data }
+spec:
+  cluster: { name: pg-main }
+  name: drop_owner
+  ensure: present
+  login: true
+  passwordSecret: { name: pg-main-drop-owner }
+  databaseRoleReclaimPolicy: delete          # ← FAIL
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: DatabaseRole
+metadata: { name: pg-main-keep-owner, namespace: data }
+spec:
+  cluster: { name: pg-main }
+  name: keep_owner
+  ensure: present
+  login: true
+  passwordSecret: { name: pg-main-keep-owner }
+  databaseRoleReclaimPolicy: retain

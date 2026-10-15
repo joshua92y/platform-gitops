@@ -1,0 +1,24 @@
+# 부정 픽스처 3.8 CNPG-retain (missing) — Database에 databaseReclaimPolicy: retain 명시가 없다:
+#   pg-main-implicit 생략(CRD 기본값 retain에 기대는 모양 — 계약은 명시를 요구한다) · pg-main-nullpolicy `~`(키는 있지만 값이 null) ·
+#   pg-main-nospec spec 자체가 없음(fail-closed — 판정할 수 없다)
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata: { name: pg-main-implicit, namespace: data }
+spec:
+  cluster: { name: pg-main }
+  name: implicit
+  owner: implicit_owner
+  ensure: present                            # reclaim 생략 ← FAIL
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata: { name: pg-main-nullpolicy, namespace: data }
+spec:
+  cluster: { name: pg-main }
+  name: nullpolicy
+  owner: nullpolicy_owner
+  databaseReclaimPolicy: ~                   # ← FAIL(값 없음)
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata: { name: pg-main-nospec, namespace: data }   # spec 없음 ← FAIL(fail-closed)

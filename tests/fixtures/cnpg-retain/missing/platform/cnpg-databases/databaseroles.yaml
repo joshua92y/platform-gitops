@@ -1,0 +1,21 @@
+# 부정 픽스처 3.8 CNPG-retain (missing) — DatabaseRole에 databaseRoleReclaimPolicy: retain 명시가 없다:
+#   pg-main-implicit-owner 생략 · pg-main-wrongfield-owner 는 Database의 필드 이름(databaseReclaimPolicy)을 적었다 — kind마다 필드가 다르므로 없는 것과 같다
+apiVersion: postgresql.cnpg.io/v1
+kind: DatabaseRole
+metadata: { name: pg-main-implicit-owner, namespace: data }
+spec:
+  cluster: { name: pg-main }
+  name: implicit_owner
+  ensure: present
+  login: true
+  passwordSecret: { name: pg-main-implicit-owner }   # reclaim 생략 ← FAIL
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: DatabaseRole
+metadata: { name: pg-main-wrongfield-owner, namespace: data }
+spec:
+  cluster: { name: pg-main }
+  name: wrongfield_owner
+  login: true
+  passwordSecret: { name: pg-main-wrongfield-owner }
+  databaseReclaimPolicy: retain              # Database의 필드 — DatabaseRole에는 databaseRoleReclaimPolicy가 없다 ← FAIL
