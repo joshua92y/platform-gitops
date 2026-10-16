@@ -1,0 +1,81 @@
+# platform/kafka/kafkanodepool-combined.yaml — `KafkaNodePool combined`(kafka.strimzi.io/v1 · ns data · 클러스터 `jt-kafka`) — 리소스 wave 1 (T055)
+#
+# KRaft **controller + broker 겸임** 노드 **1**(파드 `jt-kafka-combined-0` · StrimziPodSet `jt-kafka-combined` — operator가 만든다) · 노드 A(`role=platform`) 고정 ·
+#   jbod 볼륨 1개 = PVC `data-0-jt-kafka-combined-0`(local-path 20Gi 명목 · `deleteClaim: false` · `kraftMetadata: shared` = 메타데이터 로그를 같은 볼륨에).
+#   requests 250m/1536Mi · limits memory 2Gi(CPU limit 없음) · 힙 `-Xms`/`-Xmx` 1g(나머지 ≈ 1Gi는 페이지 캐시·오프힙 — research D4).
+#
+# 값의 출처(README §4 표가 정본):
+#   - 과제 문면(tasks.md T055): roles controller+broker · replicas 1 · jbod local-path 20Gi `deleteClaim false` · jvm -Xms/-Xmx 1g · requests 1536Mi / limits 2Gi ·
+#     affinity role=platform · 어노테이션 `argocd.argoproj.io/sync-options: Delete=false,Prune=false`.
+#   - research STRIMZI-D2(combined 1노드 = 업스트림 1.2.0 `examples/kafka/kafka-single-node.yaml` dual-role) · D3(`kraftMetadata: shared` · local-path는 WaitForFirstConsumer라
+#     첫 스케줄 노드에 PV가 영구 고정 → affinity 명시가 필수 · reclaimPolicy Delete라 `deleteClaim: false`) · D4(requests cpu 250m · 1536Mi / limits 2Gi · 힙 1g).
+#   - 컨트롤러 결정(build-notes 「T055」 D4): **CPU limit 없음**(research D4의 `limits.cpu: 1`은 저장소 관례로 뺀다 — validate 5.5 · cnpg 선례와 같은 취지 · README §4 편차 행) ·
+#     template.pod.securityContext는 EO와 같게(runAsNonRoot · seccompProfile — PSA baseline · CRD 허용 필드) **+ `fsGroup: 0`**(아래 ⚠ — 빌더 추가 · 보고에 이유).
+#
+# ⚠ `template.pod.securityContext`를 적으면 Strimzi의 **기본 `fsGroup: 0`이 사라진다** — 1.2.0 `BaselinePodSecurityProvider.createStatefulPodSecurityContext()`:
+#   사용자가 준 securityContext가 있으면 **그것을 그대로** 돌려주고, 없을 때만 persistent 스토리지에 `fsGroup: 0`을 넣는다(api/src/main/java/io/strimzi/plugin/security/profiles/impl/
+#   BaselinePodSecurityProvider.java :64–78). Kafka 컨테이너는 USER 1001(GID 0)이고 local-path는 호스트 디렉터리를 0777로 만들어 fsGroup 없이도 쓸 수 있지만, 업스트림 기본을
+#   유지하기 위해 `fsGroup: 0`을 함께 적는다(PSA baseline은 fsGroup을 제한하지 않는다 · 하네스 pool-2는 securityContext를 보지 않는다).
+#
+# ⚠ 모노레포 하네스 `tests/platform/kafka.tests.ps1` pool-1 = 라벨 `strimzi.io/cluster=jt-kafka` 노드풀 **정확히 1개** · replicas 1 · roles 집합 = {controller, broker} ·
+#   (Ready 조건 없음 → status.replicas=1 대체) / pool-2 = 노드 파드(라벨 `strimzi.io/pool-name` 또는 component-type kafka) Running·Ready · 노드 라벨 role=platform.
+#   `cluster.tests.ps1` argo-4-strimzi = ns data KafkaNodePool ≥ 1에 sync-options 어노테이션 정확 일치. 글자·순서를 바꾸지 않는다.
+#
+# ⚠ 운영 성격(README §5):
+#   - local-path는 **확장 불가 · 용량 미강제**다 — 20Gi는 명목값이고 실제 한도는 노드 A 부트 볼륨(`/var/lib/rancher/k3s/storage`)이다. PVC reclaimPolicy Delete →
+#     **PVC 삭제 = 데이터 삭제**. `deleteClaim: false`는 노드풀·Kafka CR 삭제 때 PVC를 남길 뿐 PVC 자체의 삭제를 막지는 않는다.
+#   - `replicas`를 늘리거나 `roles`를 나누는 변경(controller/broker 분리)은 노드 2대 예산 밖(research D2 대안). `storage.volumes[0].size`·`class`는 생성 뒤 변경 불가(local-path 확장 없음).
+#   - `-Xmx`·`resources` 변경 = 브로커 롤링 = 다운타임(1대) → 유지보수 창에 머지한다(T097 교정 포함).
+#
+# 적지 않는 것(이유): `template.pod.terminationGracePeriodSeconds`(Strimzi 기본 30s) · `template.kafkaContainer`·`initContainer` securityContext(Strimzi 기본 — restricted provider 아님) ·
+#   `template.persistentVolumeClaim`(어노테이션·라벨 불필요) · `template.podSet` · `storage.volumes[0].selector`·`overrides`(단일 노드) · `jvmOptions.-XX`·`gcLoggingEnabled`(기본 false).
+#
+# 삭제 보호: `argocd.argoproj.io/sync-options: Delete=false,Prune=false` — 계약 §삭제 보호(`KafkaNodePool`). Argo의 삭제·prune만 막고 `kubectl delete`는 막지 않는다(README §5).
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaNodePool
+metadata:
+  name: combined
+  namespace: data
+  labels:
+    strimzi.io/cluster: jt-kafka                                # Kafka CR 이름과 일치해야 operator가 이 풀을 그 클러스터의 노드로 쓴다(하네스 pool-1 선택 라벨)
+  annotations:
+    argocd.argoproj.io/sync-options: Delete=false,Prune=false   # 하네스 argo-4-strimzi — 글자 그대로
+    argocd.argoproj.io/sync-wave: "1"                           # 리소스 수준 wave — Kafka CR과 같은 wave(operator는 둘을 함께 읽는다). Application 표의 숫자가 아니다
+spec:
+  replicas: 1                                                   # 과제 문면 · 하네스 pool-1. HA 없음(README §5)
+  roles:                                                        # 집합 정확 일치 {controller, broker}(하네스 pool-1) — KRaft combined(research D2)
+    - controller
+    - broker
+  storage:
+    type: jbod                                                  # KRaft 노드풀의 표준 모양(업스트림 예제) — 볼륨 1개
+    volumes:
+      - id: 0
+        type: persistent-claim
+        class: local-path                                       # K3s 기본 SC(노드 A /var/lib/rancher/k3s/storage) — WaitForFirstConsumer · 확장 불가 · reclaimPolicy Delete
+        size: 20Gi                                              # 명목값(local-path는 용량을 강제하지 않는다 — 실제 한도 = 노드 A 부트 볼륨 · 디스크 감시는 메트릭 kafka_log_log_size)
+        deleteClaim: false                                      # 노드풀·Kafka CR 삭제 때 PVC를 남긴다(README §5 — PVC 삭제 = 데이터 삭제)
+        kraftMetadata: shared                                   # KRaft 메타데이터 로그를 이 볼륨에(CRD enum: shared만 · 볼륨 1개에만 허용)
+  resources:
+    requests:
+      cpu: 250m                                                 # research D4
+      memory: 1536Mi                                            # 과제 문면 · research D4(힙 1g + 페이지 캐시·오프힙)
+    limits:
+      memory: 2Gi                                               # 과제 문면. CPU limit은 두지 않는다(D4 — research의 `cpu: 1`은 저장소 관례로 뺐다 · README §4 편차 행)
+  jvmOptions:
+    "-Xms": 1g                                                  # 과제 문면 · research D4(미지정 시 Strimzi는 힙을 limit의 50%로 자동 설정 — 명시해 고정). CRD 패턴 ^[0-9]+[mMgG]?$
+    "-Xmx": 1g
+  template:
+    pod:
+      affinity:                                                 # 노드 A 고정 — local-path PV는 첫 스케줄 노드에 영구 고정된다(research D3). 하네스 pool-2가 파드 노드의 role=platform을 본다
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: role
+                    operator: In
+                    values: [platform]
+      securityContext:                                          # EO와 같은 두 항목(PSA baseline · CRD 허용 필드) + fsGroup 0(머리 주석 ⚠ — 사용자 지정 securityContext는 Strimzi 기본을 대체한다)
+        runAsNonRoot: true                                      # Kafka 이미지 USER 1001
+        fsGroup: 0                                              # Strimzi BaselinePodSecurityProvider가 persistent 스토리지에 넣는 기본값(DEFAULT_FS_GROUP_ID = 0)을 그대로 유지
+        seccompProfile:
+          type: RuntimeDefault

@@ -1,6 +1,182 @@
-# platform/kafka/ — Strimzi operator + Kafka/KafkaNodePool
-# sync-wave: 계약 gitops-repo.md §sync-wave 단일 표 참조(wave 번호는 표에만 기재 — 중복 금지).
-# 빈 뼈대(T003) — 실제 매니페스트는 T031+에서 작성한다.
+# platform/kafka/ — Strimzi Cluster Operator 1.2.0(차트 strimzi-kafka-operator 1.2.0 · OCI · CRD 10장) + `Kafka jt-kafka`(Kafka 4.3.1 · KRaft)
+#                   + `KafkaNodePool combined`(controller+broker · replicas 1 · local-path 20Gi) — helmCharts 1항목 + 순수 매니페스트 2장 (T055)
+#
+# 정본 계약(모노레포 specs/003-platform-foundation/contracts/):
+#   - gitops-repo.md §sync-wave 단일 표(wave 번호는 그 표에만 — 여기 다시 적지 않는다. `kafka` 행 = "Strimzi operator + Kafka/KafkaNodePool" → Application
+#     `platform-kafka` **하나**가 이 디렉터리 하나를 적용한다. 표에 없는 디렉터리는 validate 7.2가 거부한다)
+#     · §삭제 보호(`Kafka jt-kafka` · `KafkaNodePool` · **모든 오퍼레이터 CRD**에 `argocd.argoproj.io/sync-options: Delete=false,Prune=false` → CR 2장은 각 파일의
+#       metadata에 직접, CRD 10장은 아래 `patches`가 붙인다 — 차트에 `crds.annotations` 류 키가 없다(crds/ 디렉터리의 정적 YAML). 모노레포 하네스
+#       `cluster.tests.ps1` argo-4-strimzi가 그룹 `strimzi.io`(kafka.strimzi.io 9 + core.strimzi.io 1) CRD 전부 + Kafka + KafkaNodePool에서 **글자 그대로** 대조한다)
+#     · §이미지(태그에 `@sha256` 병기 — 차트 values.yaml에 `image.digest` 키가 없어 태그 문자열에 병기. 템플릿 `_helpers.tpl` `strimzi.image`는 `digest` 값을
+#       읽을 수는 있지만(digest가 있으면 태그를 버리고 `@sha256`만 남긴다) values 계약 밖의 키라 쓰지 않는다 — cnpg·ESO 선례와 같은 모양)
+#     · §워크로드 강화(helm 컴포넌트는 values에 securityContext 명시 — 아래 두 맵) · §validate.yml 4 (T047) 차트 저장소 허용 목록(`strimzi-kafka-operator` ·
+#       `oci://quay.io/strimzi-helm` 행 — 2026-10-16 추가 · 코드 사본은 tests/validate.sh HELM_CHART_TABLE · 12.1이 글자 단위 대조)
+#   - network-policy.md(ns `data` = PSA **baseline** · `allow-same-namespace`(ingress·egress 전 포트 — 계약 §정책 세트가 "Strimzi operator ↔ broker ↔ entity-operator"를
+#     바로 이 규칙의 존재 이유로 적는다 → operator → broker 9090/9091 · operator → broker KafkaAgent 8443(`tcp-kafkaagent` — 브로커 상태·롤링 판정) · EO → broker 9091 ·
+#     broker ↔ controller 9090이 전부 이 한 장으로 통한다) ·
+#     ingress `allow-from-apps` jt-dev/jt-prod → 9093(SCRAM/TLS 리스너) · `allow-scrape-from-monitoring` 9404(메트릭 리포터) · egress `allow-kube-api` 6443(podSelector `{}` —
+#     operator · EO · Kafka 파드(SA `jt-kafka-kafka` · Role `jt-kafka-kafka`로 자기 인증서·자격 Secret을 읽는다)가 API 서버를 읽고 이 한 장이 셋을 다 덮는다 · 브로커 init 컨테이너는
+#     없다(rack·nodeport 미사용)). **이 디렉터리는 정책을 한 줄도 바꾸지 않는다**(아래 `generateNetworkPolicy: false` — README §4))
+#
+# 설치 방식 = kustomize `helmCharts` 인플레이트 **1항목**(cert-manager T042 · vault T044 · ESO T045 · reloader T046 · cnpg T052 선례) + 순수 매니페스트 2장.
+#   전제: argocd-cm `kustomize.buildOptions: --enable-helm`(T042 PR-0, 라이브 — validate 12.4). 로컬 재현: `kustomize build --enable-helm platform/kafka`(helm 필요).
+#   인플레이트는 helm 릴리스가 아니다(`helm list -n data`는 비어 있다).
+#   ⚠ 차트는 **OCI 저장소**다 — `repo:`에 `oci://` 접두가 필수(cert-manager와 같고 ESO·vault·cnpg와 반대). 허용 목록 행과 글자 단위 일치(끝에 `/` 없음).
+#   ⚠ CRD는 차트 `crds/` 디렉터리의 정적 YAML 10장이다(templates/ 아래가 아니다) → **`includeCRDs: true`가 없으면 렌더에 CRD 0장**이고 Kafka·KafkaNodePool CR이
+#     "no matches for kind"로 sync 실패한다(cnpg·cert-manager는 templates/로 렌더해 이 키가 필요 없었다 — 차트마다 다르다).
+#   ⚠ 이 차트에는 `values.schema.json`이 **없다** — 키 오타는 조용히 무시되고 렌더는 성공한다(cnpg와 같은 성질). 유일한 방어는 렌더 결과 대조다(README §2 표).
+#   ⚠ 최상위 `namespace:` 변환기를 두지 않는다 — 두면 클러스터 범위 객체(CRD 10 · ClusterRole 7 · ClusterRoleBinding 3)에 metadata.namespace가 찍힌다
+#     (cert-manager·ESO·cnpg 선례). ns는 `helmCharts[].namespace`와 수기 매니페스트 2장의 metadata로만.
+#   ⚠ 리소스 수준 `argocd.argoproj.io/sync-wave: "1"`(CR 2장)은 **이 Application 안의 적용 순서**다 — 계약 §sync-wave 단일 표(Application 사이의 순서)의 숫자가
+#     **아니다**(T052 카탈로그 · T053 · T054 선례). 차트 리소스(wave 0 — CRD established · Deployment Available)가 Healthy가 된 뒤 CR을 적용해, 같은 wave에서 CRD
+#     직후 CR을 적용할 때 나는 "no matches for kind" 경합을 피한다(README §1).
+#
+# 이 디렉터리가 만들지 "않는" 것:
+#   1) Namespace `data` · PSA 라벨(baseline) · NetworkPolicy → `platform/policies/`(이미 라이브 — 정책 객체는 거기에만, validate 5.0·5.1). operator의 런타임 NetworkPolicy
+#      생성도 끈다(`generateNetworkPolicy: false` — 선언 정본을 두 곳으로 만들지 않는다 · README §4).
+#   2) `KafkaTopic` · `KafkaUser` · 그 비밀번호 ExternalSecret · 클러스터 CA 미러(`jt-kafka-cluster-ca-cert`의 `ca.crt`만 → jt-dev/jt-prod) → `platform/kafka-topics/`(T056).
+#   3) Application `platform-kafka` → `clusters/oci-k3s/apps/platform-kafka.yaml`(T041부터 라이브). 이 PR은 그 파일의 **머리 주석만** 고친다(spec 불변 — 계약 §Application
+#      규약 예외 없음 · 근거는 그 파일 머리 주석 · README §4). 검사 7.1이 `source.path = platform/kafka`를 대조한다.
+#   4) 시크릿 값: 없다. 런타임 Secret(클러스터 CA `jt-kafka-cluster-ca` · `jt-kafka-cluster-ca-cert` · 클라이언트 CA 2장 · operator 인증서 · 노드 인증서 `jt-kafka-combined-0`
+#      (노드별 · 파드 이름 — Strimzi 0.46.0부터 파드마다 한 장) · EO 인증서 2장 = 8장)은 operator가 만든다 — 희망 상태에 Secret 0장(README §0).
+#   5) 검사 Job `kafka-assert`(`platform/policies/tests/`) 배포 → T059. 스크레이프(9404 → Alloy) → T098. kafkaExporter(컨슈머 lag) → SP-2.
+#
+# 되돌리기(순서 고정 — README §5): **revert 머지가 먼저**(revert 전에 `kubectl delete kafka`를 하면 selfHeal이 CR을 즉시 재생성한다 — 새 clusterId ↔ 보존 PVC의 옛 cluster.id)
+#   → 렌더 0(`prune: false` + 객체의 `Prune=false`라 객체가 남는다 · `OutOfSync`가 정상) → 지워야 한다면
+#   ① `Kafka jt-kafka` → ② `KafkaNodePool combined` 순으로 운영자가 수동 삭제 — 정리 주체는 **Kubernetes GC**다(StrimziPodSet·파드·Service·인증서 Secret·EO·PDB가 Kafka CR을
+#   ownerReference로 가리킨다 · 0.49.0부터 `blockOwnerDeletion: true` · operator 생존과 무관 · 수십 초~1분)
+#   → ③ PVC `data-0-jt-kafka-combined-0`만 `deleteClaim: false`라 ownerReference가 없어 남는다(**local-path reclaimPolicy Delete → PVC를 지우면 데이터가 지워진다**)
+#   → ④ operator Deployment(operator를 먼저 지우고 CR을 남겨 두면 아무도 관리하지 않는 파드가 돈다 — 삭제 자체는 GC가 하지만 조정·롤링·인증서 갱신이 멈춘다 · 2 → 4 순서)
+#   → ⑤ **CRD 10장은 남긴다**(지우면 KafkaTopic·KafkaUser(T056)까지 cascade — 비가역). 보존 PVC로 재생성하는 절차(pause(라이브 annotate · 선언 PR 없음) → KafkaTopic·KafkaUser 선행 확인 → clusterId → unpause(라이브 어노테이션 제거) — 순서 고정)는 README §5.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-resources: []
+
+# ⚠ 전역 `namespace:` 변환기 금지(머리 주석) — 클러스터 범위 CRD·ClusterRole·ClusterRoleBinding에 ns가 찍힌다.
+resources:
+  - kafka-jt-kafka.yaml                 # 리소스 wave 1 — Kafka CR(리스너 tls 9093 scram-sha-512 · authorization simple · 메트릭 리포터 · EO)
+  - kafkanodepool-combined.yaml         # 리소스 wave 1 — KafkaNodePool(controller+broker · replicas 1 · jbod local-path 20Gi · 노드 A)
+
+helmCharts:
+  - name: strimzi-kafka-operator
+    repo: oci://quay.io/strimzi-helm     # OCI 저장소 — `oci://` 접두 필수(cert-manager 선례). 계약 차트 허용 목록 행과 글자 단위 일치(validate 12.1)
+    version: 1.2.0                       # appVersion 1.2.0(Kafka 4.2.0 · 4.2.1 · 4.3.0 · 4.3.1 지원). 대조용 실측(값 고정 아님): `helm pull` OCI 차트 digest
+                                         #   sha256:1cd4b16c080360b911b5002eaf9e0cc0964f94ec564f234e2fc754b70a046b59 (2026-10-16)
+                                         # ⚠ 태그는 가변이다 — kustomize helmCharts에 digest 필드가 없다(cert-manager 머리 주석의 캐시 서술 참조). bump 절차는 README §4
+    releaseName: strimzi                 # 차트 객체 이름은 releaseName과 무관하게 고정이다(Deployment·SA·ClusterRole·RoleBinding 전부 `strimzi-cluster-operator*` ·
+                                         #   ConfigMap `strimzi-cluster-operator`). releaseName은 라벨 `release: strimzi`에만 나타난다
+    namespace: data                      # 과제 문면(tasks.md T055 — research STRIMZI-D1의 `kafka` ns가 아니다 · Application destination도 data · PSA baseline)
+    includeCRDs: true                    # **필수** — CRD 10장이 차트 crds/ 정적 YAML이다(머리 주석 ⚠). 빠지면 렌더에 CRD 0장
+    valuesInline:
+      replicas: 1                        # 기본값 명시 — 단일 노드 A 배치 · leaderElection은 그대로 켠다(아래)
+      watchNamespaces: []                # 기본값 명시 — 릴리스 ns(data)만 감시(템플릿이 Release.Namespace를 더한다 → STRIMZI_NAMESPACE는 fieldRef metadata.namespace)
+      watchAnyNamespace: false           # 기본값 명시 — false라 RoleBinding(ns data)이고 ClusterRoleBinding `*-namespaced`·`*-watched`·`*-entity-operator-delegation`은 렌더되지 않는다
+                                         #   (true로 바꾸면 그 셋이 ClusterRoleBinding으로 바뀌어 operator가 모든 ns의 Secret을 다룬다 — 검사 13 기준선 재검토 대상)
+
+      image:
+        # 이 차트의 values.yaml에는 `image.digest` 키가 없다 → 태그 문자열에 병기(cnpg·ESO 선례). digest = 멀티아치 **매니페스트 리스트** digest
+        # (quay.io/v2/strimzi/operator/manifests/1.2.0 — linux/amd64 · arm64 · ppc64le · s390x, 2026-10-16 실측 · 노드 2대는 arm64).
+        # 반드시 **블록 스타일**로 쓴다(한 줄 flow면 validate 4b의 `image:` 스칼라 정규식에 걸려 WARN — cert-manager·cnpg 선례 주석).
+        # 렌더: Deployment `image: quay.io/strimzi/operator:1.2.0@sha256:77f8fa81…`(템플릿 `strimzi.image` — `tag`가 있으면 `defaultImageTag`·tagSuffix를 쓰지 않는다).
+        # ⚠ **같은 이미지**를 쓰는 EO 컨테이너(topicOperator · userOperator)와 브로커 init 컨테이너(kafkaInit)는 차트 기본 `*.image.tag: ""`이면 **태그만**으로
+        #   env(STRIMZI_DEFAULT_TOPIC_OPERATOR_IMAGE · …USER_OPERATOR_IMAGE · …KAFKA_INIT_IMAGE)에 들어간다 → 아래 `topicOperator`·`userOperator`·`kafkaInit` 블록이
+        #   같은 digest를 병기한다(결정 C1). Kafka 브로커 이미지 `quay.io/strimzi/kafka:1.2.0-kafka-4.3.1`은 env 맵 STRIMZI_KAFKA_IMAGES(`<version>=<image>` 4행 ·
+        #   tagPrefix+tagSuffix 조합)에서 operator가 고르므로 **구조상 digest 불가**(README §4). `defaultImageTag`는 바꾸지 않는다(컨트롤러 결정 D1).
+        # ⚠ 차트 `version` bump PR은 이 digest와 아래 3곳을 **함께** 갱신한다 — 자동 검사가 없다(README §4·§6).
+        tag: "1.2.0@sha256:77f8fa8121a67561c3418de985783d197f51b8931e9a47f793dc0437dc6bb21f"
+      # 결정 C1(2026-10-16): operator와 같은 이미지·같은 digest — Kafka 브로커 이미지(`STRIMZI_KAFKA_IMAGES`)는 구조상 digest 불가. 렌더 효과 = Deployment env 3줄만
+      #   `quay.io/strimzi/operator:1.2.0@sha256:77f8fa81…`로 바뀐다(그 밖 변경 0 — diff 실측 · README §4). kafkaInit은 rack·nodeport 미사용이라 이 클러스터에서 뜨지 않지만
+      #   env 값은 선언되므로 같이 고정한다. 키 이름은 받은 차트 values.yaml :140–157(`topicOperator.image.tag` · `userOperator.image.tag` · `kafkaInit.image.tag`).
+      topicOperator:
+        image:
+          tag: "1.2.0@sha256:77f8fa8121a67561c3418de985783d197f51b8931e9a47f793dc0437dc6bb21f"
+      userOperator:
+        image:
+          tag: "1.2.0@sha256:77f8fa8121a67561c3418de985783d197f51b8931e9a47f793dc0437dc6bb21f"
+      kafkaInit:
+        image:
+          tag: "1.2.0@sha256:77f8fa8121a67561c3418de985783d197f51b8931e9a47f793dc0437dc6bb21f"
+
+      logLevel: INFO                     # 차트 기본은 log4j2 lookup 문자열 `${env:STRIMZI_LOG_LEVEL:-INFO}`(실효 INFO) — 리터럴 INFO로 고정(ConfigMap `rootLogger.level = INFO` · 이 Deployment에 그 env는 없다)
+      fullReconciliationIntervalMs: 120000   # 기본값 명시 — 주기 재조정 2분(STRIMZI_FULL_RECONCILIATION_INTERVAL_MS)
+      operationTimeoutMs: 300000         # 기본값 명시 — 파드 Ready 대기 상한 300초(STRIMZI_OPERATION_TIMEOUT_MS). ⚠ 첫 기동이 이미지 pull(arm64 ≈ 377 MiB) 포함 300초를 넘기면
+                                         #   그 조정은 `NotReady`로 끝나고 다음 조정(2분 뒤)에서 이어 간다 — README §1 증상표 · VD-2
+      featureGates: ""                   # 기본값 명시 — 추가 feature gate 없음(STRIMZI_FEATURE_GATES)
+      leaderElection:
+        enable: true                     # 기본값 명시 — replicas 1이라도 Lease `strimzi-cluster-operator`(ns data)를 쓴다(ClusterRole `*-leader-election` + RoleBinding)
+
+      # 계약 §워크로드 강화 — 컨테이너 securityContext는 차트 기본값(restricted 호환) **전체 맵**을 그대로 명시(ns PSA baseline). 깊은 병합에 기대지 않는다.
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true               # 이미지 USER 1001
+        readOnlyRootFilesystem: true     # /tmp는 차트가 emptyDir(Memory · tmpDirSizeLimit 1Mi)로 마운트한다
+        capabilities:
+          drop: [ALL]
+        seccompProfile:
+          type: RuntimeDefault
+      podSecurityContext:                # 차트 기본 `{}` → 파드 수준에도 명시(cnpg 선례와 같은 두 항목)
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+
+      resources:                         # 차트 기본 requests 200m/384Mi · limits 1000m/384Mi — CPU limit만 지운다(저장소 관례 · validate 5.5와 같은 취지 · plan A14 "Cluster Operator 0.4 GiB")
+        requests:
+          cpu: 200m
+          memory: 384Mi
+        limits:
+          # ⚠ `cpu: null`로는 지워지지 않는다(2026-10-16 렌더 실측 — 1000m이 남는다): kustomize는 valuesInline을 helm `-f`로 넘기지 않고 차트 values.yaml에
+          #   **mergo WithOverride로 스스로 병합**하는데(valuesMerge 기본 `override`), mergo는 nil·빈 값으로 덮어쓰지 않아 기본 1000m이 살아남는다 — helm 단독의
+          #   "null = 키 삭제" 규칙이 적용되지 않는다. 그래서 cpu는 아래 `patches`의 JSON6902 `remove`로 뺀다(경로가 없으면 빌드가 깨져 차트 변경을 소리 내어 잡는다).
+          memory: 384Mi
+
+      nodeSelector:
+        role: platform                   # 노드 A(plan A14 — Kafka · EO와 같은 노드. cnpg의 노드 B `role=data`와 다르다). 배치 단언은 T097(operator) · 하네스 pool-2(브로커)
+
+      createGlobalResources: true        # 기본값 명시 — ClusterRole 6 + ClusterRoleBinding 3(`*-global` · `*-kafka-broker-delegation` · `*-kafka-client-delegation`) + ClusterRole `*-leader-election`
+      createAggregateRoles: false        # 기본값이지만 **명시** — 검사 13.6 기준선(aggregate-to-* 라벨 ClusterRole 정확히 5: cert-manager 3 · ESO 2). true면 `strimzi-admin`(aggregate-to-admin/edit) ·
+                                         #   `strimzi-view`(aggregate-to-view)가 렌더되어 내장 `view`가 넓어진다 — agent-view는 `platform/policies/rbac-agent-view.yaml`의 agent-view-extra로
+                                         #   kafka.strimzi.io `*`를 이미 읽는다(이 PR은 RBAC를 더하지 않는다)
+      generateNetworkPolicy: false       # 컨트롤러 결정 D7 — operator가 런타임에 NetworkPolicy(브로커 9090/9091/9093 · EO 8080/8081 등)를 **만들지 않는다**(env STRIMZI_NETWORK_POLICY_GENERATION=false).
+                                         #   정책 객체의 선언 정본은 platform/policies만(validate 5.0) · ns data의 `allow-same-namespace`가 같은 ns 내부 통신 전 포트를 열어 두고
+                                         #   매트릭스가 jt-* → 9093 · monitoring → 9404를 연다(README §4 · VD-5). ⚠ 차트 기본은 true다 — 이 줄이 빠지면 Argo 추적 밖의 NetworkPolicy가 ns data에 생긴다
+      operatorNetworkPolicy:
+        enabled: false                   # 기본값 명시 — operator 자신의 NetworkPolicy(차트 템플릿)도 렌더하지 않는다(같은 이유)
+      dashboards:
+        enabled: false                   # 기본값 명시 — Grafana 대시보드 ConfigMap 9장을 렌더하지 않는다(T098 소유 · 그때 ns monitoring에)
+
+      # 적지 않는 것(차트 기본값 그대로 — 이유): `defaultImageRegistry`·`defaultImageRepository`·`defaultImageTag`(D1 — 바꾸지 않는다) · `kafka.image.*`(브로커 — 구조상 digest 불가 · README §4) ·
+      #   `kafkaBridge`·`kafkaConnect`·`kafkaMirrorMaker2`·`cruiseControl`·`kafkaExporter` 등 쓰지 않는 컴포넌트의 이미지 맵(위 C1의 셋만 병기)
+      #   · `extraEnvs`·`affinity`·`tolerations`·`priorityClassName` · `podDisruptionBudget.enabled`(false — operator 자신의 PDB 없음) · `generatePodDisruptionBudget`(true — operator가
+      #   Kafka 파드용 PDB `jt-kafka-kafka`를 런타임에 만든다 · README §0 런타임 객체) · `labelsExclusionPattern` · `connectBuildTimeoutMs` · `tmpDirSizeLimit`(1Mi) · `kubernetesServiceDnsDomain`(cluster.local)
+      #   · `rbac.create`·`serviceAccountCreate`(yes) · `livenessProbe`/`readinessProbe`(10s/30s) · `logConfiguration`(기본 log4j2 — 바꾸면 ConfigMap 전체가 바뀐다)
+
+patches:
+  # CRD 삭제 보호(계약 §삭제 보호 · cert-manager·cnpg 선례 그대로). 대상 = 차트 crds/의 CRD **10장 전부** —
+  #   kafka.strimzi.io 9: kafkas · kafkanodepools · kafkatopics · kafkausers · kafkaconnects · kafkaconnectors · kafkabridges · kafkamirrormaker2s · kafkarebalances /
+  #   core.strimzi.io 1: strimzipodsets.
+  # 하네스 `argo-4-strimzi`(모노레포 tests/platform/cluster.tests.ps1)가 그룹 `strimzi.io`(= `*.strimzi.io`) CRD 전부에 **정확히** 이 값이 있는지 본다 —
+  #   글자·순서·공백을 바꾸지 않는다. 차트 CRD에는 `helm.sh/resource-policy` 어노테이션이 없다(렌더 실측 — 이 패치가 유일한 어노테이션이다).
+  # SMP를 쓰는 이유: JSON6902 `add`는 `annotations` 맵이 없으면 빌드가 깨진다(T041 교훈). patch 안의 `name`은 자리표시자 — 대상 선택은
+  #   `target`이 하고 kustomize가 적용 뒤 원래 name을 복원한다(렌더로 검증).
+  - target:
+      group: apiextensions.k8s.io
+      version: v1
+      kind: CustomResourceDefinition
+    patch: |-
+      apiVersion: apiextensions.k8s.io/v1
+      kind: CustomResourceDefinition
+      metadata:
+        name: placeholder-target-selector-decides
+        annotations:
+          argocd.argoproj.io/sync-options: Delete=false,Prune=false
+  # operator Deployment의 CPU limit 제거(저장소 관례 — 위 `resources` 주석 ⚠: values의 `cpu: null`은 kustomize의 mergo 병합에서 무시된다).
+  #   JSON6902 `remove`는 경로가 없으면 kustomize build가 **실패**한다 — 차트가 limits.cpu 기본값을 없애거나 컨테이너 순서를 바꾸면 조용히 지나가지 않고 여기서 드러난다
+  #   (그때는 이 패치를 지운다). 대상은 이 Deployment 하나(name · namespace로 한정) · 결과 = limits에 memory만(README §2 표 `limits.cpu` 행).
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: strimzi-cluster-operator
+      namespace: data
+    patch: |-
+      - op: remove
+        path: /spec/template/spec/containers/0/resources/limits/cpu
