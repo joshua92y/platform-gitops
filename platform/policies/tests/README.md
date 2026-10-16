@@ -35,8 +35,20 @@ SUMMARY: pass=<n> fail=<n>
 - 보조 줄은 `EVIDENCE:`(원문 증거)와 `NOTE:`(정리 작업 기록)뿐이다. 파서는 `^RESULT:`·`^SUMMARY:`만 본다.
 - **출력은 짧게 유지한다.** `cluster.tests.ps1`의 `np-2-*`와 모노레포 `data.tests.ps1`의 `job-2`는 `kubectl logs job/<이름> --tail=50`을 읽으므로,
   모든 `RESULT:`와 `SUMMARY:`는 마지막 50줄 안에 들어와야 한다(현재 최대 **16줄** = data-assert: pg `RESULT` 6 + initContainer 줄 ≤ 9
-  (`EVIDENCE:` 머리 1 + ACL LIST ≤ 6(`head -n 6`) + `RESULT` 2) + `SUMMARY` 1 · kafka-assert ≤ 4 · authz-assert ≤ 5 — T054 재계산. 이전 표기 "11줄"은
+  (`EVIDENCE:` 머리 1 + ACL LIST ≤ 6(`head -n 6`) + `RESULT` 2) + `SUMMARY` 1 · kafka-assert ≤ 5 · authz-assert ≤ 5 — T054 재계산 · kafka-assert는 T056 재계산. 이전 표기 "11줄"은
   ACL LIST 6줄 상한을 덜 센 값이었다(T054 전 data-assert 최대 = 14줄)).
+  **kafka-assert ≤ 5 — T056 재계산(리뷰 r1 O5 · r2 K5 · O11)**(컨슈머 선기동 · `latency=` 토큰 · 프로듀서 오류 증거 · 비밀번호 형식 검사): `RESULT` 2 + `SUMMARY` 1 + `EVIDENCE:` ≤ 2. `EVIDENCE:`를 내는 경로는 roundtrip의
+  둘뿐이다 — "마커 미수신"(`EVIDENCE: consumer 수신 <n>줄 · stderr: …` 1줄 + `EVIDENCE: producer 마지막 오류: …` ≤ 1줄)과 "produce 실패"(`EVIDENCE: producer 마지막 오류: …` ≤ 1줄).
+  **비밀번호 형식 검사(리뷰 r2 K5)**: 필수 값 확인 직후 · client.properties를 쓰기 **전**에 `KAFKA_PASSWORD`에 base64url(`A–Z a–z 0–9 _ -`) 밖의 문자가 하나라도 있으면 두 검사를
+  `RESULT: FAIL <id> KAFKA_PASSWORD 형식이 base64url이 아니다(값 미출력 — 시드 블록 밖 kv 쓰기 의심 · JAAS 문자열을 안전하게 만들 수 없다)`로 닫고 `SUMMARY` 뒤 exit 1이다(3줄 · JVM 기동 0 ·
+  값 · 길이 · 조각 출력 0). 따옴표가 든 값은 JAAS 문자열(`password="…"`)을 깨뜨려 Kafka가 파싱 오류 문구에 비밀번호 조각을 싣기 때문이다(Kafka 4.3.1 `JaasConfig.java` :113–116).
+  **진단 줄 규칙 `safe_tail`(리뷰 r2 K5 · O11 — 진단 다섯 곳이 같다 · cross-env PASS 근거 줄도 같은 두 필터(들여쓴 줄 · `password`/`jaas` 줄 제외)를 거친다 — 리뷰 r3 A1)**: 컨슈머 stderr(`consumer_err`) · describe(`groups_note`) · 프로듀서 EVIDENCE · produce rc≠0 `RESULT` 줄 · cross-env 실패 꼬리는
+  그 파일의 오류 · 상태 줄(대소문자 무시 error · exception · caused by · denied · not authorized · timeout · timed out + describe 상태 문구 active members · rebalancing · does not exist)
+  가운데 들여쓴 줄(스택 프레임 `\tat …` · `\t... N more`)과 `password` · `jaas`가 든 줄(대소문자 무시)을 버린 뒤 마지막 줄의 뒤 140자다. 남는 줄이 없으면 프로듀서 EVIDENCE는 내지 않고,
+  나머지 넷은 `(진단 줄 없음 — 오류 · 상태 줄이 없거나 password · jaas가 든 줄뿐)`을 싣는다(Kafka 4.3.1 콘솔 프로듀서는 기본 비동기 send라 인증 · ACL 실패에도 rc 0이다 — 프로듀서
+  EVIDENCE가 없으면 원인이 "마커 미수신"에 가려진다). 레코드 값은 찍지 않는다.
+  미할당 · 컨슈머 조기 종료 · 지연 측정 불가는 사유를 `RESULT: FAIL` 줄 안에 싣는다. 컨슈머 · describe · 프로듀서의 출력은 전부 `/tmp` 파일로 가고 Job stdout에 섞이지 않는다
+  (검증 기록 T056 — 모의 11경로 3–5줄).
 - 값 자체(비밀번호·토큰·URL의 자격 부분)는 절대 출력하지 않는다. `ACL LIST` 증거의 비밀번호 해시(`#<hex>`)는
   `#<redacted>`로 치환한 뒤 찍는다.
 
@@ -62,8 +74,8 @@ kubectl -n jt-dev logs job/data-assert | grep 'NOPERM'          # 읽기 전용 
 | | `app-session-timeouts` | `pg_roles.rolconfig`(DB 무관 role 설정)에 app 2 모두 `statement_timeout=15s` **그리고** `idle_in_transaction_session_timeout=30s` — 적용 주체는 gitops `platform/cnpg-databases`의 PostSync Job(app role 자신의 `ALTER ROLE CURRENT_USER SET`). **role 수준 기본값만 본다** — DB별 덮어쓰기(`ALTER ROLE … IN DATABASE … SET` = `pg_db_role_setting.setdatabase ≠ 0`, app role 자신도 낼 수 있다)는 보지 않는다(실효 값이 달라도 PASS — security r2 K13 · 확장은 후속) | data-model §7 app role 행(2026-10-14) · 같은 build-notes |
 | | `acl-list` | Dragonfly `ACL LIST`에 dev 검사 계정(`sample-pod`) 행이 있고 읽기 전용 패턴 `%R~revoked:*`를 포함 | quickstart §US3 VD-4 · T057 · denylist.md |
 | | `noperm` | 그 계정으로 `DEL revoked:sub:assert-probe` → `NOPERM` | quickstart §US3 · T057 |
-| `kafka-assert` | `roundtrip` | dev 토픽에 produce → 같은 토픽에서 마커 consume 성공(경과 시간 함께 출력) | quickstart §US3 |
-| | `cross-env-denied` | 같은 dev 자격으로 **prod 토픽** write 시도 → 인가 거부(`TopicAuthorizationException`) | quickstart §US3 · T056 ACL |
+| `kafka-assert` | `roundtrip` | dev 토픽에 produce → 같은 토픽에서 마커 consume 성공(경과 시간 함께 출력). **T056**: 컨슈머를 먼저 띄워 파티션 할당(describe의 CONSUMER-ID 행)을 확인한 뒤 produce하고, PASS 근거에 `latency=<n>ms`를 **정확히 1개** 찍는다 — **latency = 마커 수신 시각 − 레코드 CreateTime(ms · 둘 다 이 파드의 시계)** · spec US3 AC3의 **5 s 기준은 이 값**이다(모노레포 `kafka.tests.ps1` job-k-3 ≤ 5000). 같은 줄의 벽시계 `produce→consume <n>s`(produce 시작 ~ 마커 수신 · 프로듀서 JVM 기동 포함)는 Job 자체 상한 `KAFKA_ROUNDTRIP_DEADLINE_S` 판정용이다. 실패 줄에는 토큰이 없다. **리뷰 r1 O5**: 할당 확인은 **자기 멤버**(실행마다 고유 `client.id` = `kafka-assert-<pid>-<epoch>`)의 행만 본다(직전 실행의 옛 멤버 행을 준비로 오인하지 않는다) · 마커 미수신 · produce 실패 경로는 `EVIDENCE: producer 마지막 오류:`를 함께 낸다(§로그 계약). **리뷰 r2 K5 · O11**: `KAFKA_PASSWORD`가 base64url 형식이 아니면 JVM을 띄우기 전에 이 id와 `cross-env-denied`를 함께 FAIL로 닫는다(값 미출력) · 진단 줄은 전부 `safe_tail` 규칙(§로그 계약) — produce rc≠0의 RESULT 줄은 스택 꼬리(`\t... N more`)가 아니라 원인 줄을 싣는다 | quickstart §US3 · T051 인계(모노레포 build-notes 「T050 · T051」 토큰 형식) |
+| | `cross-env-denied` | 같은 dev 자격으로 **prod 토픽** write 시도 → 인가 거부(`TopicAuthorizationException`). 비밀번호 형식이 base64url이 아니면 roundtrip과 같은 사유로 FAIL(리뷰 r2 K5) · 인가 거부가 아닌 실패의 꼬리는 `safe_tail`(리뷰 r2 K5) | quickstart §US3 · T056 ACL |
 | `authz-assert` | `check-allowed` | 튜플이 있는 테넌트에 대한 `check` → `allowed=true` | quickstart §US4 5 |
 | | `cross-tenant-false` | 튜플이 없는 다른 테넌트 object → `allowed=true`가 아님 | quickstart §US3·§US4 |
 
@@ -155,7 +167,9 @@ Job의 `spec`은 immutable이므로 Argo CD가 같은 이름의 Job을 갱신할
 | 값 | 현재 값 | 확인 시점 |
 |---|---|---|
 | Kafka bootstrap Service DNS | `jt-kafka-kafka-bootstrap.data.svc:9093` (Strimzi 관례 `<cluster>-kafka-bootstrap`) | T055 |
-| Kafka 컨슈머 그룹 이름 | `dev-identity-admin-assert` — KafkaUser ACL의 "그룹 접두"가 계약에 없다 | T056 |
+| Kafka 컨슈머 그룹 이름 | `dev-identity-admin-assert` — **해소(T056)**: KafkaUser `dev-identity-admin`의 ACL ⓑ group **prefix** `dev-identity-admin-` · `Read`(data-model §6 ACL 행(2026-10-16 정정 — 모노레포 `9442b14`) — gitops `platform/kafka-topics/kafkausers.yaml`) 안에 든다. ConfigMap 값은 그대로다(prod 그룹 접두 `identity-admin-`과 교차하지 않는다) · ConfigMap 머리 주석의 「T056에서 확인」 문구도 확정 문구로 바꿨다(리뷰 r2 S9 — 주석은 렌더에서 빠진다) | T056 확정 |
+| kafka-assert 동시 JVM 메모리(T056) | roundtrip이 컨슈머(`-Xmx256m`)를 띄운 채 describe(`-Xmx128m` — 이 호출만 낮춘다) · 프로듀서(`-Xmx256m`)를 띄워 **JVM 2개가 동시에** 돈다(힙 상한 합 ≤ 512Mi) — limit 640Mi 안이라고 보지만 실측 전이다(`resources` 주석도 이 내용으로 정정 — 리뷰 r1 S6 · O4a) | T059 첫 실행(OOMKilled 0 · `kubectl top`) |
+| roundtrip 준비 확인 · 지연 실측(T056) | 할당 확인 상한 60 s(2 s 간격 describe · 자기 멤버 = CLIENT-ID가 이 실행의 `client.id`인 행만) · 선기동 컨슈머 유휴 상한 = `(60 + KAFKA_ROUNDTRIP_DEADLINE_S) × 1000 + KAFKA_CONSUME_TIMEOUT_MS` ms(= 110000 — `KAFKA_CONSUME_TIMEOUT_MS`의 뜻이 "소비 대기"에서 "유휴 여유분"으로 바뀌었다 · ConfigMap의 그 키 위에 같은 뜻의 주석을 달았다 — 리뷰 r2 S9) · `latency=<n>ms`는 모의로만 확인(모의 185–440 ms — r1 · r2 실행 · 가짜 컨슈머의 폴링 잡음 · 고정 시계 123 ms — 검증 기록 T056) | T059 첫 실행(할당 소요 · latency 값 · job-k-3) |
 | OpenFGA Service DNS | `openfga.identity.svc:8080` — helm 릴리스 이름에 따라 달라진다 | T082 |
 | `roundtrip` 상한 | `KAFKA_ROUNDTRIP_DEADLINE_S=30`(JVM 기동 포함 벽시계). quickstart의 "≤ 5초"는 메시지 경로 기준이라 값이 다르다 | 첫 실행 시 실측 후 조정 |
 | authz 검사 데이터 | 합성 식별자(`ASSERT_*`)를 Job이 직접 쓰고 지운다 | 아래 §후속 결정 |
@@ -207,3 +221,77 @@ ESO가 `assert-env` Secret을 만드는 경로는 `external-secrets → vault 82
   같은 Job ①. 남는 선행 산출물은 CA 미러 T056(`DATABASE_URL`의 `verify-full` · 접속 자체) · Dragonfly T057(`acl-list` · `noperm`)이다(gitops `platform/cnpg-databases/README.md` §6 T059).
   ⚠ 그 PostSync Job이 FAIL이면(Argo operation Failed — Application은 Synced/Healthy로 남는다) pod DB가 열린 채라 세 id가 FAIL하고 Job이 exit 1이라 `job-1` · `job-2`도 FAIL한다
   → 먼저 gitops README §3 VD-4의 네 판정(operationState.phase · hookPhase · Job succeeded · 로그 SUMMARY)으로 PostSync 결과를 확인한다.
+
+## 검증 기록 (T056 — kafka-assert roundtrip에 `latency=<n>ms` 토큰, 저장소 로컬 · 2026-10-16)
+
+바꾼 것은 `job-kafka-assert.yaml`의 **roundtrip 절**과 `resources` **주석**이다(필수 값 확인 · client.properties · cross-env-denied 절 · `resources` 값 불변 — 주석은 렌더에서 빠진다 ·
+수정 라운드 r2가 필수 값 확인 뒤의 형식 검사와 진단 줄 규칙을 더했다 — 아래).
+순서 = 컨슈머 선기동(수신 줄마다 수신 시각 ms 태깅 · 실행마다 고유 `client.id`) → describe로 **자기 멤버**의 파티션 할당 확인(2 s 간격 · 상한 60 s) → produce(옵션 그대로) →
+마커 줄 폴링(1 s · 상한 `KAFKA_ROUNDTRIP_DEADLINE_S`) → 컨슈머 kill + wait → (마커 미수신 · produce 실패면 `EVIDENCE:` ≤ 2줄) → RESULT 1줄.
+PASS 줄 = `RESULT: PASS roundtrip <토픽> produce→consume <n>s latency=<n>ms (상한 <d>s, JVM 기동 포함)` — 토큰 정확히 1개(앞뒤 공백) · 실패 줄에는 토큰이 없다.
+**수정 라운드 r1(리뷰 r1 O5 · S6/O4a — 2026-10-16)**: ⓐ 프로듀서 오류 `EVIDENCE: producer 마지막 오류: …`(마커 미수신 · produce 실패 경로) ⓑ 컨슈머 `--command-property client.id=…` + awk의
+CLIENT-ID 대조(자기 멤버의 할당 행만 준비로 본다) ⓒ `resources` 주석 정정. 그 밖의 로직 · RESULT 형식 · `latency=` 토큰 규칙은 그대로다.
+**수정 라운드 r2(리뷰 r2 K5 · O11 · S9 — 2026-10-16)**: ⓐ 필수 값 확인 직후 · client.properties를 쓰기 전에 `KAFKA_PASSWORD` 형식 검사(base64url 밖의 문자 → 두 검사 FAIL + `SUMMARY` +
+exit 1 · 값 · 길이 · 조각 출력 0 · JVM 기동 0) ⓑ 진단 줄 헬퍼 `safe_tail`(consumer_err · groups_note · 프로듀서 EVIDENCE · produce rc≠0 RESULT 줄 · cross-env 실패 꼬리가 같은 규칙 —
+§로그 계약) ⓒ ConfigMap 주석 2곳(값 · 키 불변). RESULT 형식 · `latency=` 토큰 규칙 · 그 밖의 로직은 그대로다.
+
+- `kustomize build platform/policies/tests` exit 0 — 객체 5개 그대로(ConfigMap 1 · ExternalSecret 1 · Job 3) · ConfigMap 값 불변(`KAFKA_GROUP` `dev-identity-admin-assert`는 KafkaUser
+  `dev-identity-admin`의 group prefix `dev-identity-admin-` 안 — gitops `platform/kafka-topics/kafkausers.yaml`) · 렌더의 ConfigMap 문서는 r2 전 렌더와 바이트 동일(주석만 바뀌었다).
+  렌더에서 뽑은 kafka-assert 스크립트(**225줄** — 측정
+  `kustomize build platform/policies/tests | yq 'select(.kind=="Job" and .metadata.name=="kafka-assert") | .spec.template.spec.containers[0].args[0]' | wc -l` · yq는 끝에 빈 줄 1개를
+  더하므로 YAML 블록 :64–287의 224줄보다 1 많다 · 수정 라운드 r1 205줄 · 그 전 188줄): `bash -n` 통과 (shellcheck는 이 작업 환경에 없어 돌리지 않았다).
+- **이미지 사실(실행 없이 — Docker Hub registry v2 API + 레이어 tar 목록)**: `apache/kafka:4.3.1@sha256:77e3df90…`(manifest index) → arm64 매니페스트 `sha256:c2b5172a…` → config `sha256:33241f6e…`
+  history 첫 줄 `ADD alpine-minirootfs-3.23.4-aarch64.tar.gz` — **Debian이 아니라 Alpine 3.23.4**(Kafka 4.3.1 `docker/jvm/Dockerfile` `FROM eclipse-temurin:21-jre-alpine`)다.
+  그 위 eclipse-temurin 레이어(`sha256:bf450a43…` — `apk add … coreutils …`)가 `bin/date -> coreutils`를 놓아 첫 레이어(`sha256:d17f077a…`)의 `bin/date -> /bin/busybox`를 가린다 →
+  **`date +%s%3N`은 GNU coreutils**(밀리초 지원)이고 폴백(`date +%s%N | cut -c1-13`)은 필요 없다. 같은 레이어가 `cut` · `tail` · `wc` · `sleep` · `mkfifo`도 coreutils로 덮는다 · `awk` · `grep`은 BusyBox
+  (`usr/bin/awk -> /bin/busybox` — 스크립트의 awk는 머리 행 열 찾기 · 문자열 비교만 쓴다) · bash는 Kafka 레이어의 `apk add bash`. 런타임 실측은 T059 첫 실행.
+- **도구 사실(Apache Kafka 4.3.1 소스 `tools/src/main/java/org/apache/kafka/tools/…`)**: 옛 옵션 `--consumer.config` · `--property`(컨슈머)와 `--producer.config` · `--producer-property`(프로듀서)는
+  4.2부터 폐기 예고이고 안내를 **stdout**에 찍는다(`consumer/ConsoleConsumerOptions.java` :216–223 · :379–382 · `ConsoleProducer.java` :330 · :335) — 그래서 선기동 컨슈머는 새 이름
+  `--command-config` · `--formatter-property` · `--command-property`(:99–102 — `--command-config` 파일 값보다 우선 :109 · :281–282)를 쓴다(수신 기록에 안내 줄이 섞이지 않게). produce 두 곳은 지시대로 옛 옵션 그대로다(출력은 `/tmp/*.log`로만 간다 · cross-env의 판정 grep에 걸리지 않는다).
+  `client.id`를 주지 않으면 실행마다 같은 `console-consumer`다(:285–287) → describe 멤버 행의 CLIENT-ID = 그 멤버의 client.id(`group/ConsumerGroupCommand.java` :841–855) · 할당 없는 커밋 행은
+  CONSUMER-ID · HOST · CLIENT-ID가 `-`(:859–868) — 그래서 고유 `client.id`로 자기 멤버의 행만 고른다. 콘솔 프로듀서는 기본이 비동기 send(`ConsoleProducer.java` :107–111 — 실패는
+  ErrorLoggingCallback 로그뿐)이고 끝에 `Exit.exit(0)`(:79)이라 인증 · ACL · 타임아웃 실패에도 rc 0이다 — 그래서 `/tmp/produce.log`의 오류 줄을 EVIDENCE로 싣는다.
+  `print.timestamp=true` 줄 = `CreateTime:<ms>` + 탭 + 값(`consumer/DefaultMessageFormatter.java` :131–138 · :186–188) · 그룹이 있으면 `auto.offset.reset` 기본 latest(`ConsoleConsumerOptions.java` :328–331) ·
+  유휴 타이머는 첫 `receive()`(그룹 가입 포함)부터 흐른다(`ConsoleConsumer.java` :211–217 — 그래서 선기동 컨슈머의 `--timeout-ms`를 `(60 + 상한) × 1000 + KAFKA_CONSUME_TIMEOUT_MS`로 둔다) ·
+  SIGTERM은 종료 훅이 컨슈머를 닫고 끝낸다(:91–103) · describe 머리 행 9열(`--verbose`면 LEADER-EPOCH가 끼어 10열 — `group/ConsumerGroupCommand.java` :340–342) · 상태 문구는 stderr(:306 · :312).
+- **형식 검사 · `safe_tail` 이식성(r2 — 로컬 실행)**: 형식 검사 패턴은 범위(`A-Z`) 대신 문자를 나열한다. bash는 두 문자가 모두 ASCII일 때만 범위를 코드값으로 비교하고(`globasciiranges` — 이 작업 환경
+  bash 5.2.21과 아래 컨테이너 bash 5.3.9 모두 기본 on) 비ASCII 문자는 로캘 정렬(wcscoll)로 비교한다 — 로컬 msys bash에서 범위 패턴 `*[!A-Za-z0-9_-]*`는 UTF-8 로캘(en_US · ko_KR)일 때 전각 A(U+FF21) ·
+  Kelvin 기호(U+212A)를 통과시켰고, 나열 패턴은 C · en_US.UTF-8 · ko_KR.UTF-8 세 로캘 모두 입력 28종(따옴표 · 역슬래시 · 공백 · 탭 · 끝 개행 · `=` · `+` · `/` · 비ASCII 문자 등) 중 base64url 값 3개만 통과시켰다.
+  musl(로컬에 캐시된 `postgres:17-alpine` = Alpine 3.24.1 · bash 5.3.9 · BusyBox grep — `--network none` 일회용 컨테이너)에서는 두 패턴 모두 전각 A · Kelvin 기호 · `é`를 거부했다(Kafka 이미지의
+  musl에서는 두 패턴의 결과가 같다). `safe_tail`(렌더 스크립트에서 그대로 뗀 정의)은 입력 12종(jaasfrag stderr · pe-jaas · produce-exit · describe 4종 · 대문자 미끼 + 240자 오류 줄 · 미끼뿐 ·
+  오류 없음 · 빈 파일 · 없는 파일)에서 GNU grep(로컬)과 BusyBox grep(컨테이너)의 출력이 바이트 동일했다 — 조각 · 비밀번호 · 미끼 0 · 스택 프레임 0 · 240자 줄은 `…` + 뒤 139자(= 140자).
+- **모의 실행**(가짜 `kafka-console-consumer.sh` · `kafka-console-producer.sh` · `kafka-consumer-groups.sh` + `date` 래퍼 — 렌더에서 뽑은 스크립트의 `/opt/kafka/bin/` · `/tmp/` 경로만 바꿔 bash로 그대로 실행 ·
+  ConfigMap 값 그대로(`KAFKA_CONSUME_TIMEOUT_MS=20000` · `KAFKA_ROUNDTRIP_DEADLINE_S=30`) · stdout+stderr 합침 = `kubectl logs` 모양 · r2는 r1 가짜 도구 사본에 jaasfrag · pe-jaas를 더해 열한 경로를 다시 돌렸다):
+
+  | 경로 | 출력 줄 | roundtrip RESULT(+ EVIDENCE) | `latency=` 토큰 | SUMMARY · exit | 소요 |
+  |---|---|---|---|---|---|
+  | 마커 수신 | 3 | PASS `… produce→consume 1s latency=251ms (상한 30s, JVM 기동 포함)`(값은 가짜 컨슈머의 0.1 s 폴링 잡음) | 1 | pass=2 fail=0 · 0 | 7 s |
+  | 마커 수신(고정 시계 — `date +%s%3N` = T, CreateTime = T − 123) | 3 | PASS `… produce→consume 0s latency=123ms …` — 산술 정확 | 1 | pass=2 fail=0 · 0 | 7 s |
+  | 미할당(describe = 커밋만 있는 `-` 행 + "has no active members") | 3 | FAIL `consumer not assigned within 60s: Consumer group 'dev-identity-admin-assert' has no active members.` | 0 | pass=1 fail=1 · 1 | 61 s(describe 23회) |
+  | 마커 미수신(컨슈머가 레코드를 내지 않음 · 프로듀서 오류 없음) | 4 | `EVIDENCE: consumer 수신 0줄 · stderr: (진단 줄 없음 — 오류 · 상태 줄이 없거나 password · jaas가 든 줄뿐)`(r2 — 오류 · 상태 줄이 없는 stderr의 마지막 줄은 더 싣지 않는다) + FAIL `…에서 마커를 30s 안에 받지 못함(31s 경과)` — 프로듀서 오류 줄이 없어 producer EVIDENCE는 나오지 않는다 | 0 | pass=1 fail=1 · 1 | 36 s |
+  | 컨슈머 조기 종료(SCRAM 인증 실패) | 3 | FAIL `consumer exited before assignment: …invalid credentials with SASL mechanism SCRAM-SHA-512 (…NetworkClient)` — 60 s를 기다리지 않는다 | 0 | pass=1 fail=1 · 1 | 5 s |
+  | **produce 인가 실패 · rc 0**(r1 — 가짜 프로듀서가 `TopicAuthorizationException`을 로그에만 남기고 rc 0 · 그 뒤 마지막 ERROR 2줄은 비밀번호 · `jaas` 문자열이 든 미끼) | 5 | `EVIDENCE: consumer 수신 0줄 · stderr: (진단 줄 없음 …)` + `EVIDENCE: producer 마지막 오류: org.apache.kafka.common.errors.TopicAuthorizationException: Not authorized to access topics: [dev.identity-admin.session.revoked]` + FAIL `…마커를 30s 안에 받지 못함(30s 경과)` — 미끼 줄 0 · 비밀번호 0 | 0 | pass=1 fail=1 · 1 | 35 s |
+  | **produce 실패 rc 1**(r1 — 프로듀서 생성 예외 · 출력이 스택 꼬리로 끝난다) | 4 | `EVIDENCE: producer 마지막 오류: Caused by: org.apache.kafka.common.config.ConfigException: …` + FAIL `produce 실패(rc=1): Caused by: org.apache.kafka.common.config.ConfigException: Invalid value MOCK for configuration ssl.truststore.type`(**r2** — r1의 RESULT 줄은 스택 꼬리 `\t... 5 more`였다) | 0 | pass=1 fail=1 · 1 | 7 s |
+  | **옛 멤버 → 자기 멤버**(r1 stale-member — describe 3회는 CLIENT-ID가 다른 옛 멤버 `kafka-assert-1-1760600000`의 할당 행 + "is rebalancing" · 6 s 뒤 자기 멤버 할당 · 할당 전 레코드는 latest라 받지 않는다) | 3 | PASS `… produce→consume 1s latency=347ms …` — 옛 행 3회를 준비로 보지 않고 자기 행이 보인 뒤 produce(가짜 프로듀서 기록 `assigned=yes`) | 1 | pass=2 fail=0 · 0 | 13 s(describe 4회) |
+  | 옛 멤버만(r1 — 끝까지 옛 행) | 3 | FAIL `consumer not assigned within 60s: Warning: Consumer group 'dev-identity-admin-assert' is rebalancing.` | 0 | pass=1 fail=1 · 1 | 61 s(describe 23회) |
+  | **비밀번호에 따옴표**(**r2 신규 jaasfrag** — 값 = 가운데에 `"`가 든 가짜 비밀번호(보안 리뷰 r2 재현 값) · 가짜 컨슈머 · describe · 프로듀서는 실행되면 JAAS 파싱 오류 문구에 따옴표 뒤 조각을 싣는다 — 보안 리뷰 r2 K5 모양) | 3 | FAIL `KAFKA_PASSWORD 형식이 base64url이 아니다(값 미출력 — 시드 블록 밖 kv 쓰기 의심 · JAAS 문자열을 안전하게 만들 수 없다)` · cross-env-denied도 같은 FAIL — 비밀번호 전체 · 따옴표 앞 · 뒤 조각 0 · JVM 기동 0(컨슈머 · describe · 프로듀서 호출 0) · `/tmp`에는 `logs/`만(client.properties를 만들지 않았다) | 0 | pass=0 fail=2 · 1 | 0 s |
+  | **produce 실패 rc 1 · JAAS 미끼**(**r2 신규 pe-jaas** — 운영 리뷰 r2 O11 모양: Caused-by 줄에 `JAAS`와 비밀번호가 든 미끼 · 마지막 줄 TAB 스택 꼬리) | 4 | `EVIDENCE: producer 마지막 오류: org.apache.kafka.common.KafkaException: Failed to construct kafka producer` + FAIL `produce 실패(rc=1): org.apache.kafka.common.KafkaException: Failed to construct kafka producer` — 미끼 0 · 비밀번호 0 · TAB 0 | 0 | pass=1 fail=1 · 1 | 6 s |
+
+  열한 경로 모두 Job stdout에 계약 밖 줄 0(셸의 "Terminated" 류 없음) · TAB 0 · 비밀번호 문자열 0건 · 미끼 줄 0건 · client.properties 없음 · 남은 컨슈머 프로세스 0. jaasfrag 밖의 열 경로는
+  cross-env-denied PASS(가짜 프로듀서의 `TopicAuthorizationException`) · 할당된 경로의 컨슈머는 SIGTERM으로 끝났다 · 선기동 컨슈머 인자 `--timeout-ms 110000` · `client.id=kafka-assert-<pid>-<epoch>` ·
+  describe 호출 전부 `KAFKA_HEAP_OPTS=-Xms32m -Xmx128m`.
+  **빨강 → 초록 · 음성 대조(r1)**: 같은 stale-member 모의에 수정 라운드 전 스크립트(CLIENT-ID를 보지 않는다)는 첫 describe의 옛 행을 준비로 오인해 할당 전에 produce(`assigned=no`)하고, 할당 뒤 latest라
+  마커를 받지 못해 **거짓 FAIL**(`…마커를 30s 안에 받지 못함(30s 경과)`)이다 — 수정본은 위 표대로 PASS. 변이 2종도 잡힌다: awk의 CLIENT-ID 조건(`$li == c`)을 빼면 stale-member 거짓 FAIL이 재발하고,
+  `grep -viE 'password|jaas'` 필터를 빼면 produce 인가 실패 경로에서 미끼 줄이 EVIDENCE로 나가 비밀번호가 1회 보인다.
+  **빨강 → 초록 · 음성 대조(r2)**: 수정 라운드 r1 스크립트(리뷰 r2 대상)는 jaasfrag에서 `RESULT: FAIL roundtrip consumer exited before assignment: Caused by: java.lang.IllegalArgumentException: Value not
+  specified for key '<따옴표 뒤 조각>' in JAAS config`로 **조각 1회**(보안 리뷰 r2 K5 재현 — cross-env 꼬리는 `\t... 5 more`)이고, pe-jaas · produce-exit의 RESULT 줄은 `produce 실패(rc=1): \t... 5 more`
+  (운영 리뷰 r2 O11 재현)다 — 수정본은 위 표대로. 변이 4종: 형식 검사만 빼면(jaasfrag) JVM이 뜨지만 `safe_tail`이 JAAS 줄을 걸러 조각 0(두 방어가 각각 막는다) · 형식 검사와 필터를 둘 다 빼면
+  조각 2회 · 필터만 빼면 pe-jaas에서 미끼(비밀번호 포함) 2회 · produce 인가 실패에서 비밀번호 1회.
+- 모노레포(`d91de0c` 작업 트리 — `Get-LatencyTokens` :452 정규식은 HEAD와 같다) 하네스 `tests/platform/kafka.tests.ps1`의 **판정 코드 자체**(함수 정의 + `ClusterAssert 'job-k-2'` · `'job-k-3'` 본문을 AST로
+  읽어 실행 — 파일 수정 0 · `Get-ParsedJobLog`만 모의 로그로 바꿔 끼움 · `--tail=50` 적용): 마커 수신 세 경로(마커 수신 · 고정 시계 · 옛 멤버 → 자기 멤버) = job-k-2 PASS · **job-k-3 PASS**
+  (`roundtrip latency 251ms` / `123ms` / `347ms <= 5000ms`) · 실패 여덟 경로(jaasfrag · pe-jaas 포함) = job-k-2 FAIL · job-k-3 FAIL("no PASS evidence to read the latency from"). 줄마다 `Get-LatencyTokens`를 세면
+  roundtrip PASS 줄 = 1 · 그 밖의 줄(EVIDENCE 2종 · FAIL · cross-env · SUMMARY) = 0이다(열한 경로 + r2 대조 7종 전부).
+  T056 **전**(main `3e03021`) 스크립트는 같은 모의(r1 기록)로 job-k-2 PASS · **job-k-3 FAIL**("roundtrip evidence has no latency=<n>ms token … wall-clock 24s") — 빨강 → 초록 확인
+  (옛 흐름의 벽시계 24 s = 프로듀서 기동 + 컨슈머 유휴 대기 20 s — T051 리뷰 F1의 "항상 ≥ 20 s"와 같다).
+- 이 Job은 여전히 **배포되지 않는다**(Application 없음 — T059). 하네스 job-k-1 · job-k-2 · job-k-3은 그때까지 FAIL이 정상이고, T059 첫 실행이 할당 소요 · 실제 latency · 동시 JVM 메모리를 처음 잰다
+  (위 「확인이 필요한 값」 T056 두 행).

@@ -1,6 +1,42 @@
-# platform/kafka-topics/ — KafkaTopic·KafkaUser·CA 미러 ExternalSecret
-# sync-wave: 계약 gitops-repo.md §sync-wave 단일 표 참조(wave 번호는 표에만 기재 — 중복 금지).
-# 빈 뼈대(T003) — 실제 매니페스트는 T031+에서 작성한다.
+# platform/kafka-topics/ — Strimzi `KafkaTopic` 4 · `KafkaUser` 2 + 비밀번호 ExternalSecret 2 + CA 미러 ExternalSecret 5 — 순수 매니페스트 13장 (T056)
+#
+# 정본 계약(모노레포 specs/003-platform-foundation/):
+#   - tasks.md T056 문면(값의 정본) · data-model.md §6(토픽 이름 · 파티션 3 · retention 7d · cleanup delete · 복제 1 · min.insync.replicas 1 · 사용자 `<pod>`/`dev-<pod>` ·
+#     ACL 행(2026-10-16 정정 — 모노레포 `9442b14`: 자기 접두 Read·Write·Describe · 그룹 접두 prod `<pod>-` / dev `dev-<pod>-`)) ·
+#     §8(`kv/{env}/kafka/<pod>` 키 `password` · 같은 비밀을 두 ns가 쓰면 store가 둘 · CA 미러는 kv가 아니다)
+#   - contracts/gitops-repo.md §sync-wave 단일 표(wave 번호는 그 표에만 — 여기 다시 적지 않는다. `kafka-topics` 행 = "KafkaTopic·KafkaUser · CA 미러 ExternalSecret"
+#     → Application `platform-kafka-topics` 하나가 이 디렉터리 하나를 적용한다. `kafka` 행(Strimzi operator + `Kafka jt-kafka`)보다 뒤 — Entity Operator(TO · UO)가
+#     떠 있어야 조정된다) · §Application 규약(syncPolicy 플랫폼 표준 그대로 — 예외 없음: 근거는 `clusters/oci-k3s/apps/platform-kafka-topics.yaml` 머리 주석 · README §1)
+#     · §ExternalSecret 규약(store `vault-data` 열거 접두 — validate 3.3 · CA 미러 store `k8s-data-ca` — validate 3.4 · 공통 규칙 Periodic 5m · Owner ·
+#     CA 미러 문장 2026-10-16 정정본: `pg-main-ca` → identity·jt-dev·jt-prod · `jt-kafka-cluster-ca-cert` → jt-dev·jt-prod · 미러 이름 = 원본 이름)
+#   - network-policy.md :87(jt-dev/jt-prod → data 9093 — 이 디렉터리는 정책을 한 줄도 바꾸지 않는다. 파드도 만들지 않는다)
+#
+# 설치 방식 = 순수 매니페스트(`helmCharts` 없음 — platform/cnpg-databases/ 선례). 로컬 재현: `kustomize build platform/kafka-topics`
+#   (문서 13 = ExternalSecret 7 · KafkaUser 2 · KafkaTopic 4 · ns data 8 · identity 1 · jt-dev 2 · jt-prod 2).
+#   ⚠ 리소스 수준 `argocd.argoproj.io/sync-wave`(비밀번호 ExternalSecret "0" → KafkaUser · KafkaTopic · CA 미러 ExternalSecret "1")는 **이 Application 안의 적용
+#     순서**다 — 계약 §sync-wave 단일 표(Application 사이의 순서)의 숫자가 **아니다**(T053 · T054 · T055 선례 · README §1). 순서의 이유: KafkaUser는 비밀번호 Secret이
+#     있어야 Ready가 된다(UO가 그 Secret을 못 찾으면 NotReady — README §1 증상표). Argo는 wave 0의 ES가 Healthy(Ready=True = SecretSynced)여야 wave 1을 적용한다.
+#     wave 1은 **마지막 wave**다 — 그 안의 KafkaUser · KafkaTopic · CA 미러 ES가 뒤에 Degraded가 되어도 operation은 적용 성공으로 닫힌다(T055 결정 D5와 같은
+#     gitops-engine 경로 · README §1). 그래서 CA 미러 ES를 wave 0에 두지 않는다(그것의 Degraded가 KafkaUser·KafkaTopic 적용을 막지 않게 — 컨트롤러 결정 D7).
+#   ⚠ 전역 `namespace:` 변환기를 두지 않는다 — 이 디렉터리는 ns가 **넷**(data · identity · jt-dev · jt-prod)이라 쓸 수 없다. 네 파일이 `metadata.namespace`를 직접 적는다.
+#
+# 이 디렉터리가 만들지 "않는" 것:
+#   1) `Kafka jt-kafka` · `KafkaNodePool` · Strimzi operator → `platform/kafka/`(T055). Namespace · PSA · NetworkPolicy → `platform/policies/`(변경 0).
+#   2) Vault kv 값(`kv/prod/kafka/identity-admin` · `kv/dev/kafka/identity-admin` 키 `password`) → 운영자 시드(**머지 전** — README §0 P1 · 모노레포 런북 bootstrap.md
+#      §4 T056). 이 저장소에 비밀은 없다(Secret 0장 — ESO와 UO가 런타임에 만든다).
+#   3) 앱 ns의 `<pod>-env`(`KAFKA_PASSWORD` ← 같은 kv 경로 · store `vault-{env}`) → 앱 overlay(T072). 검사 Job `kafka-assert`의 **배포** → T059(tests Application).
+#   4) 토픽·그룹 밖 ACL(cluster · transactionalId) · quotas · superUsers → 두지 않는다(kafkausers.yaml 머리 주석 · README §4 — KIP-679).
+#
+# 되돌리기(README §5): Application `prune: false` + `Delete=confirm`이라 revert 머지는 객체를 지우지 않는다(렌더 0 → `OutOfSync`가 정상).
+#   ⚠ **KafkaTopic CR 삭제 = Kafka 토픽 삭제**(TO finalizer `strimzi.io/topic-operator` — 데이터 손실 · TO가 살아 있어야 삭제가 끝난다) ·
+#   **KafkaUser CR 삭제 = SCRAM 자격·ACL 삭제**(그 사용자로 붙은 소비자·프로듀서가 즉시 인증 실패) · Application cascade 삭제(finalizer)도 같은 결과다 —
+#   KafkaTopic · KafkaUser · ExternalSecret 모두 계약 §삭제 보호 목록 밖이라 객체 어노테이션이 없다. 수동 삭제 전에 README §5를 읽는다.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-resources: []
+
+# ⚠ 전역 `namespace:` 변환기 금지(머리 주석) — 네임스페이스는 각 매니페스트의 metadata로만.
+resources:
+  - externalsecrets-kafka-users.yaml   # 리소스 wave 0 — 비밀번호 Secret 2장(ns data · store vault-data · KafkaUser가 secretKeyRef로 읽는다)
+  - kafkausers.yaml                    # 리소스 wave 1 — KafkaUser 2(scram-sha-512 · ACL topic 접두 Read/Write/Describe + group 접두 Read)
+  - kafkatopics.yaml                   # 리소스 wave 1 — KafkaTopic 4(partitions 3 · replicas 1 · retention 7d · delete · min.insync 1)
+  - externalsecrets-ca-mirror.yaml     # 리소스 wave 1 — CA 미러 5장(store k8s-data-ca · ca.crt만 · 이름 = 원본 이름 → identity · jt-dev · jt-prod)
