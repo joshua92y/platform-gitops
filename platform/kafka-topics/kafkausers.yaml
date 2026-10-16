@@ -1,0 +1,101 @@
+# platform/kafka-topics/kafkausers.yaml — Strimzi `KafkaUser` 2(ns data) — 리소스 wave 1 (T056)
+#
+# 이름 = SCRAM 사용자 이름(data-model §6 사용자 행: prod `<pod>` · dev `dev-<pod>`) — `identity-admin` · `dev-identity-admin`. 하네스(모노레포 tests/platform/kafka.tests.ps1)
+#   user-1 · user-2가 이 두 이름을 정확히 1개씩 찾는다(라벨 `strimzi.io/cluster: jt-kafka`로 거른 뒤 — 라벨이 없으면 UO도 이 CR을 고르지 않는다: CO가 UO에
+#   env `STRIMZI_LABELS` = `strimzi.io/cluster=jt-kafka`를 주고(EntityUserOperator.java :104 · :199) UO가 그것으로 KafkaUser를 고른다(UserController.java :94–95 · :112)).
+# authentication = `scram-sha-512` + `password.valueFrom.secretKeyRef`(CRD 044 — `password` 필수 하위 키 `valueFrom`) → externalsecrets-kafka-users.yaml이 만드는
+#   Secret `kafka-user-<이름>`의 키 `password`. UO는 같은 ns(data)에서 그 Secret을 읽는다(KafkaUserOperator.java :299–305). 이 키가 없으면 UO가 비밀번호를 **생성**하므로
+#   (KafkaUserModel.java :347–377) kv 값과 Kafka 비밀번호가 갈라진다 — secretKeyRef는 빼지 않는다.
+#   UO가 만드는 자격 Secret(이름 = KafkaUser 이름 · 키 `password` + `sasl.jaas.config` · ownerReference = 이 KafkaUser — KafkaUserModel.java :207–211 · :385–397 · :404–413)은
+#   희망 상태에 없다(README §0 런타임 객체). `status.secret`에 그 이름이, `status.username`에 사용자 이름이 적힌다(KafkaUserOperator.java :262–263 · :436–445 — 하네스 user-1).
+# authorization = `simple` + acls 2행(컨트롤러 결정 D3 · data-model §6 ACL 행(2026-10-16 정정 — 모노레포 `9442b14`) · research STRIMZI-D6):
+#   ⓐ topic **prefix** `<env 접두>`에 Read · Write · Describe — prod `identity-admin.` / dev `dev.identity-admin.`. 자기 토픽 쓰기(`…session.revoked`)와 DLQ 쓰기(`…dlq`)를
+#      이 접두 하나가 덮는다. 자기 접두의 Read는 계약이 dev·prod 대칭으로 둔다(data-model §6 ACL 행(2026-10-16 정정 — 모노레포 `9442b14`) — 검사 Job kafka-assert의
+#      자기 dev 토픽 왕복 · DLQ 점검 · 자기가 낸 이벤트라 새 데이터 노출이 아니다). 구독 토픽이 생기면(SP-2) 토픽마다 literal Read·Describe 행을 더한다(README §6).
+#   ⓑ group **prefix** `<pod 그룹 접두>`에 Read — prod `identity-admin-` / dev `dev-identity-admin-`(data-model §6 ACL 행(2026-10-16 정정 — 모노레포 `9442b14`):
+#      그룹 접두 prod `<pod>-` · dev `dev-<pod>-` · 구분자 `-` 주의 = README §6 SP-2). 검사 Job의 그룹
+#      `dev-identity-admin-assert`(platform/policies/tests/configmap-assert-config.yaml `KAFKA_GROUP` — 값 불변)가 dev 접두 안에 든다. Read는 Describe를 함의한다.
+#   Create 없음 — 토픽은 KafkaTopic CR로만 만든다(Kafka `auto.create.topics.enable: "false"` · research D6). cluster · transactionalId ACL 없음 — 기본 idempotent 프로듀서의
+#   `InitProducerId`는 topic Write가 하나라도 있으면 허용된다(KIP-679 · Kafka 4.3.1 core/src/main/scala/kafka/server/KafkaApis.scala :1616–1620 `authorizeByResourceType`
+#   — IdempotentWrite 불필요 · 라이브 증명은 T059 검사 Job · README §3 VD-7). deny 규칙 · quotas · template 없음.
+#   `type`(allow|deny)은 적지 않는다 — 기본 allow(api AclRule.java :37 · CRD 설명 "Default value is `allow`"). `host: "*"`는 기본값(:39)이지만 의도를 남긴다.
+#   목록 필드 `operations`만 쓴다(1.2.0 CRD에 단수 `operation` 없음 · `operations` 필수 — enum Read · Write · Create · Delete · Alter · Describe · ClusterAction ·
+#   AlterConfigs · DescribeConfigs · IdempotentWrite · All). UO는 operation마다 ACL 1행을 만든다(SimpleAclRule.java :144–148).
+#   교차 env 없음(하네스 user-2 판정 — Test-AclWritesPrefix): `identity-admin.`은 `dev.`와, `dev.identity-admin.`은 `identity-admin.`과 서로 접두 관계가 아니다 ·
+#   group ACL은 topic이 아니라 판정 밖. 그룹도 교차하지 않는다(`identity-admin-` ↔ `dev-identity-admin-`).
+#   superUser가 아니다 — Kafka CR `superUsers`는 비어 있고(T055 · 하네스 kafka-2) ACL이 유일한 권한이다.
+# Argo health(v3.5.2 resource_customizations/kafka.strimzi.io/KafkaUser/health.lua): 조건 `NotReady`=True → Degraded · `Ready`=True → Healthy · 그 밖 Progressing.
+#   UO는 조정 실패 때 `NotReady`=True를 쓴다 — reason은 래퍼 `ExecutionException`(시간 초과면 `TimeoutException`) · 원인은 message(UserControllerLoop.java :122–131 ·
+#   StatusUtils.java :104–110 · :172–173 · KafkaUserOperator.java :258–261 — README §1). 이 파일은 **마지막 wave**라
+#   Degraded가 operation을 실패시키지 않는다(Application health만 Degraded — README §1).
+# ⚠ 삭제 = Kafka의 SCRAM 자격 · ACL · UO 자격 Secret 삭제(KafkaUserOperator.java :209–226) → 그 사용자로 붙은 소비자·프로듀서가 즉시 인증 실패. 계약 §삭제 보호 목록 밖이라
+#   객체 어노테이션이 없다(컨트롤러 결정 D3) — Application `prune: false` + `Delete=confirm`이 막는 것은 Argo 경로뿐이다(README §5).
+# 리소스 wave "1" — 비밀번호 ExternalSecret("0")이 Healthy가 된 뒤 적용된다. Application 표의 숫자가 아니다(kustomization 머리 주석).
+
+# --- prod ---------------------------------------------------------------------------------------------------------------
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaUser
+metadata:
+  name: identity-admin
+  namespace: data
+  labels:
+    strimzi.io/cluster: jt-kafka               # UO 선택자 · 하네스 Select-Cluster
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"          # 리소스 수준 wave — 비밀번호 ES("0") 뒤. Application 표의 숫자가 아니다
+spec:
+  authentication:
+    type: scram-sha-512
+    password:
+      valueFrom:
+        secretKeyRef:
+          name: kafka-user-identity-admin      # externalsecrets-kafka-users.yaml target.name
+          key: password
+  authorization:
+    type: simple
+    acls:
+      - resource:
+          type: topic
+          name: identity-admin.                # prod 자기 토픽 + DLQ(identity-admin.dlq)를 덮는 접두
+          patternType: prefix
+        operations: [Read, Write, Describe]
+        host: "*"
+      - resource:
+          type: group
+          name: identity-admin-                # 컨슈머 그룹 접두(data-model §6 prod `<pod>-`)
+          patternType: prefix
+        operations: [Read]
+        host: "*"
+---
+# --- dev ----------------------------------------------------------------------------------------------------------------
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaUser
+metadata:
+  name: dev-identity-admin
+  namespace: data
+  labels:
+    strimzi.io/cluster: jt-kafka
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  authentication:
+    type: scram-sha-512
+    password:
+      valueFrom:
+        secretKeyRef:
+          name: kafka-user-dev-identity-admin
+          key: password
+  authorization:
+    type: simple
+    acls:
+      - resource:
+          type: topic
+          name: dev.identity-admin.            # dev 자기 토픽 + DLQ(dev.identity-admin.dlq)를 덮는 접두
+          patternType: prefix
+        operations: [Read, Write, Describe]
+        host: "*"
+      - resource:
+          type: group
+          name: dev-identity-admin-            # 검사 Job 그룹 dev-identity-admin-assert가 이 접두 안에 든다
+          patternType: prefix
+        operations: [Read]
+        host: "*"

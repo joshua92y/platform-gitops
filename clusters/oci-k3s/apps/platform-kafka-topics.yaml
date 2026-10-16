@@ -3,9 +3,17 @@
 # 역할: root(app-of-apps)가 이 파일을 읽어 child Application `platform-kafka-topics`를 만들고,
 #   그 Application이 `platform/kafka-topics`를 서버 사이드 적용한다.
 #
-# 현재 상태(T041 시점): `platform/kafka-topics/kustomization.yaml`은 `resources: []` 뼈대다 → 렌더 결과 0개.
-#   리소스 0인 Application이 Synced/Healthy가 되는지는 설계 VD-E로 실측한다(아니면 이 Application을 컴포넌트
-#   태스크로 이월). 실제 매니페스트(`KafkaTopic`·`KafkaUser` · CA 미러 ExternalSecret)는 T056이 채운다.
+# 현재 상태(T056이 채웠다 — 2026-10-16): `platform/kafka-topics/`는 순수 매니페스트 **13장** = 비밀번호 ExternalSecret 2(ns data · store `vault-data`
+#   `{prod,dev}/kafka/identity-admin` 키 `password` · 리소스 wave `"0"`) + `KafkaUser` 2(`identity-admin` · `dev-identity-admin` · scram-sha-512 · ACL topic 접두
+#   Read/Write/Describe + group 접두 Read) + `KafkaTopic` 4(partitions 3 · replicas 1 · retention 7d) + CA 미러 ExternalSecret 5(store `k8s-data-ca` · `ca.crt`만 —
+#   `pg-main-ca` → identity·jt-dev·jt-prod · `jt-kafka-cluster-ca-cert` → jt-dev·jt-prod). 뒤 셋은 리소스 수준 `argocd.argoproj.io/sync-wave: "1"`(Application 표의
+#   숫자가 아니다). **syncPolicy는 아래 플랫폼 표준 그대로 — 계약 §Application 규약 예외(`ApplyOutOfSyncOnly`·`retry`) 없음.** 근거: hook이 없고, Argo CD v3.5.2
+#   내장 health.lua(`kafka.strimzi.io/KafkaUser`·`KafkaTopic` — `NotReady`=True → Degraded · `Ready`=True → Healthy · 그 밖 Progressing · `external-secrets.io/ExternalSecret`
+#   — Ready=False → Degraded · 2026-10-16 원문 확인) 기준으로 Degraded가 될 수 있는 wave 1의 셋(KafkaUser · KafkaTopic · CA 미러 ES)은 **마지막 wave**라 operation을
+#   실패시키지 않는다(T055 결정 D5와 같은 gitops-engine 경로 — 적용 직후 Succeeded). 앞 wave를 막는 유일한 경로 = wave 0 비밀번호 ES의 `SecretSyncedError`(kv 미시드) → 머지 **전** 시드(README §0 P1)로
+#   막고, 그래도 실패하면 기본 retry(대기 10·20·40·80·160 s ≈ 5분 — 리뷰 r3 B1 정정) 뒤 같은 리비전으로 다시 시작하지 않는다 → 늦은 시드 절차 + 운영자 전체 수동 Sync(`../../../platform/kafka-topics/README.md`
+#   §1 증상표). 13장 모두 계약 §삭제 보호 목록 밖이라 객체 어노테이션이 없다 — ⚠ 이 Application의 cascade 삭제(아래 finalizer)는 **KafkaTopic 삭제 = Kafka 토픽
+#   삭제** · KafkaUser 삭제 = SCRAM 자격·ACL 삭제를 부른다(README §5). 결정 D1–D7 근거는 모노레포 build-notes 「T056」.
 #
 # 왜 `platform-kafka`와 다른 Application인가: 이 CR들은 `Kafka jt-kafka`가 Ready가 된 뒤에야 entity-operator가
 #   조정할 수 있다. Argo CD는 wave N이 Healthy가 된 뒤 다음 wave로 넘어가므로 그 의존을 wave로 표현한다
