@@ -3,13 +3,21 @@
 # 역할: root(app-of-apps)가 이 파일을 읽어 child Application `platform-kafka`를 만들고,
 #   그 Application이 `platform/kafka`를 서버 사이드 적용한다.
 #
-# 현재 상태(T041 시점): `platform/kafka/kustomization.yaml`은 `resources: []` 뼈대다 → 렌더 결과 0개.
-#   리소스 0인 Application이 Synced/Healthy가 되는지는 설계 VD-E로 실측한다(아니면 이 Application을 컴포넌트
-#   태스크로 이월). 실제 매니페스트(Strimzi operator helm 차트 · `Kafka`·`KafkaNodePool`)는 T055가 채운다.
+# 현재 상태(T055가 채웠다 — 2026-10-16): `platform/kafka/`는 kustomize `helmCharts` 인플레이트 1항목(Strimzi Cluster Operator 1.2.0 ·
+#   OCI `oci://quay.io/strimzi-helm` · CRD 10장 · ns data · 노드 A) + 순수 매니페스트 2장(`Kafka jt-kafka` · `KafkaNodePool combined`) = 렌더 29장.
+#   차트 리소스는 리소스 wave 0, CR 2장은 리소스 수준 `argocd.argoproj.io/sync-wave: "1"`(CRD established · operator Deployment Ready 뒤 적용 —
+#   Application 표의 숫자가 아니다). **syncPolicy는 아래 플랫폼 표준 그대로 — 계약 §Application 규약 예외(`ApplyOutOfSyncOnly`·`retry`) 없음.**
+#   근거 = Argo CD v3.5.2 내장 `resource_customizations/kafka.strimzi.io/Kafka/health.lua`(21줄 · 2026-10-16 원문 확인): 조건 `NotReady`=True **이면서**
+#   reason ≠ `Creating` → Degraded · `Ready`=True → Healthy · 그 밖(status 없음 · `Creating`) → Progressing "Waiting for Kafka Cluster".
+#   첫 배포는 Creating → Progressing → Ready 경로이고, Kafka·KafkaNodePool이 **마지막 wave(1)**라 뒤에 기다릴 단계가 없어 Degraded 전이가 와도
+#   operation은 적용 성공으로 Succeeded다(Application health만 Degraded) — cnpg-cluster(Cluster가 뒤 wave를 막음)·cnpg-databases(ES Degraded + hook)와
+#   다르다. `KafkaNodePool`은 health customization이 없어 항상 Healthy(`core.strimzi.io`·KafkaNodePool 디렉터리 없음). 라이브 확인 = README VD-1·VD-8.
+#   예상 전이·소요·증상표는 `../../../platform/kafka/README.md` §1.
 #
-# 상태를 가진 컴포넌트: `Kafka jt-kafka`와 `KafkaNodePool`은 계약 §삭제 보호 목록에 있어 객체 자신에
-#   `argocd.argoproj.io/sync-options: Delete=false,Prune=false`가 붙는다(T055). 이 Application의 `Prune=confirm`·
-#   `Delete=confirm`은 그 위의 두 번째 겹이다.
+# 상태를 가진 컴포넌트: `Kafka jt-kafka`와 `KafkaNodePool combined`은 계약 §삭제 보호 목록에 있어 객체 자신에
+#   `argocd.argoproj.io/sync-options: Delete=false,Prune=false`가 붙는다(T055 — 하네스 kafka-1 · argo-4-strimzi가 글자 그대로 대조). Strimzi CRD 10장도
+#   같은 어노테이션(kustomize SMP 패치). 이 Application의 `Prune=confirm`·`Delete=confirm`은 그 위의 두 번째 겹이다. ⚠ 데이터는 PVC
+#   `data-0-jt-kafka-combined-0`(local-path · reclaimPolicy Delete)에 있다 — **PVC 삭제 = 데이터 삭제**(되돌리기 순서는 README §5).
 #
 # sync-wave·destination.namespace: 값의 정본은 계약 contracts/gitops-repo.md §sync-wave 단일 표이고,
 #   코드 사본은 tests/validate.sh의 WAVE_TABLE 하나뿐이다. 아래 두 값은 그 표에서 기계적으로 읽어 넣었고

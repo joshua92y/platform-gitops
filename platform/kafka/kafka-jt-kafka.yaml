@@ -1,0 +1,115 @@
+# platform/kafka/kafka-jt-kafka.yaml — `Kafka jt-kafka`(kafka.strimzi.io/v1 · ns data) — 리소스 wave 1 (T055)
+#
+# 플랫폼 공용 Kafka **4.3.1**(KRaft · metadataVersion 4.3-IV0) · 노드는 `KafkaNodePool combined`(같은 디렉터리 · 라벨 `strimzi.io/cluster: jt-kafka`)이 정한다 —
+#   이 CR에는 replicas·storage·resources가 없다(KafkaNodePool 전용 · Strimzi 1.x는 노드풀 필수). 리스너는 **`tls` 9093 하나**(TLS + SCRAM-SHA-512) · 인가 `simple`(ACL ·
+#   superUsers 없음) · 내부 토픽 RF/ISR 1 · 토픽 자동 생성 끔 · 메트릭 = Strimzi Metrics Reporter(9404 · allowList) · Entity Operator(TO · UO — T056의 KafkaTopic·KafkaUser를 조정).
+#   접속: bootstrap Service `jt-kafka-kafka-bootstrap.data.svc:9093`(operator 생성 · 브로커 인증서 SAN에 포함) · CA = Secret `jt-kafka-cluster-ca-cert`(operator 생성 ·
+#   T056이 `ca.crt`만 jt-dev/jt-prod로 미러) · 자격 = KafkaUser(T056 · SCRAM 비밀번호는 Vault kv → ESO → `password.valueFrom.secretKeyRef`).
+#
+# 값의 출처(README §4 표가 정본):
+#   - 과제 문면(tasks.md T055): version 4.3.1 · metadataVersion 4.3-IV0 · listener `tls` 9093 scram-sha-512 · authorization simple · config RF/ISR 1 ·
+#     `auto.create.topics.enable=false` · entityOperator requests 256Mi · metricsConfig strimziMetricsReporter(브로커 under-replicated 지표 — 컨슈머 lag은 SP-2 kafkaExporter) ·
+#     어노테이션 `argocd.argoproj.io/sync-options: Delete=false,Prune=false`.
+#   - research STRIMZI-D2(복제 설정 = 업스트림 1.2.0 `examples/kafka/kafka-single-node.yaml`과 같은 다섯 키) · D4(TO·UO requests 256Mi / limits 384Mi · `-Xmx 256m`) ·
+#     D5(리스너 하나 · plain 9092 없음) · D9(메트릭 리포터 · jmxPrometheusExporter 아님).
+#   - 컨트롤러 결정(build-notes 「T055」 D3): **superUsers 없음**(research D5의 "운영용 KafkaUser 이름"은 두지 않는다 — superUser는 ACL을 통째로 우회해 하네스 kafka-2가 FAIL) ·
+#     EO CPU limit 없음(저장소 관례) · EO template.pod affinity role=platform(노드풀과 같은 노드 A — research D3) + securityContext(PSA baseline 범위 · CRD 허용 필드만) ·
+#     `spec.kafka.template`에는 affinity를 두지 않는다(노드풀 template이 담당 — 중복 금지) · `auto.create.topics.enable: "false"` **문자열 소문자**.
+#
+# ⚠ 모노레포 하네스 `tests/platform/kafka.tests.ps1`가 **선언 표기 그대로** 대조한다(ordinal): kafka-1 = Ready=True · version 4.3.1 · config `auto.create.topics.enable` = "false"(또는 false) ·
+#   어노테이션 정확 일치 / kafka-2 = 이름 `tls` listener 정확히 1개 · port 9093 · tls true · authentication scram-sha-512 · 그 밖 listener 전부 TLS+인증 · authorization simple ·
+#   superUsers에 identity-admin·dev-identity-admin·`*` 없음. `cluster.tests.ps1` argo-4-strimzi = 이 객체의 sync-options 어노테이션. 글자·순서·공백을 바꾸지 않는다.
+#
+# ⚠ 운영 성격(README §5):
+#   - **단일 노드 KRaft**(combined) — HA 없음. 노드 A 재부팅 = Kafka 다운타임(수 분) · 브로커 재시작은 operator가 StrimziPodSet로 롤링(1대라 곧 다운타임).
+#   - `spec.kafka.version`·`metadataVersion`은 **비가역 변경 파일**이다(계약 §validate.yml 8 PR 템플릿 — metadataVersion을 올리면 다운그레이드 불가). Renovate 순서 = 차트 → version → metadataVersion(research D10).
+#   - 리스너 변경(이름·포트·인증)과 `config` 대부분은 브로커 롤링을 부른다. `metricsConfig.values.allowList`는 **롤링 없이 동적 반영**(Strimzi 문서).
+#   - Argo CD v3.5.2 내장 health(`resource_customizations/kafka.strimzi.io/Kafka/health.lua`): `NotReady`=True이면서 reason ≠ `Creating` → **Degraded** · `Ready`=True → Healthy ·
+#     그 밖(status 없음 · `Creating`) → Progressing. 이 CR이 마지막 wave라 Degraded 전이가 뒤 wave를 막지 않는다 — Application 예외 없음(D5 · README §1·§4).
+#
+# 적지 않는 것(이유):
+#   - `spec.zookeeper` · `spec.kafka.replicas`·`storage`·`resources` — **1.2.0 CRD에 없다**(1.0.0에서 ZooKeeper 모드와 함께 제거 · 노드풀 전용 — 렌더 CRD `spec.kafka` 키 목록 실측) ·
+#     `spec.kafka.jvmOptions`·`template`(CRD에 있다 — 모든 노드풀의 공통 기본값)은 노드풀 쪽에만 적는다(중복 금지 — D3) ·
+#     `spec.kafka.image`(operator env 맵 STRIMZI_KAFKA_IMAGES가 version → 이미지를 고른다 — digest 고정 밖 · README §2) · `spec.kafka.rack`(노드 1대).
+#   - `spec.kafkaExporter`(컨슈머 lag — SP-2) · `spec.cruiseControl`(노드 1대 · 리밸런스 무의미) · `spec.clusterCa`/`clientsCa`(기본 자체 CA · 갱신 주기 기본 365d/30d — 회전은 런북 후속) ·
+#     `spec.maintenanceTimeWindows` · `spec.kafka.authorization.superUsers`(D3) · `spec.kafka.logging`(기본 INFO) · `spec.kafka.quotas` · `spec.kafka.tieredStorage`.
+#   - `spec.kafka.config`의 `log.retention.*`(토픽별 `retention.ms`는 T056 KafkaTopic이 정한다 — 브로커 기본값 168h 그대로) · `num.partitions`(auto.create 꺼져 무의미).
+#
+# 삭제 보호: `argocd.argoproj.io/sync-options: Delete=false,Prune=false` — 계약 §삭제 보호(`Kafka jt-kafka`). Argo의 삭제·prune만 막고 `kubectl delete`는 막지 않는다(README §5).
+#   Kafka CR을 지우면 **Kubernetes GC**가 ownerReference를 따라 StrimziPodSet·파드·Service·인증서 Secret(CA 포함)·EO·PDB를 정리한다(operator 생존과 무관 · Strimzi 0.49.0부터
+#   `blockOwnerDeletion: true`) — PVC만 노드풀 `deleteClaim: false`라 ownerReference가 없어 남는다. **revert 머지가 먼저다**: revert 전에 지우면 selfHeal이 CR을 즉시 재생성해
+#   새 clusterId가 보존 PVC의 옛 cluster.id와 어긋난다(README §5 「보존 PVC로 재생성」 — pause-reconciliation(CR이 있으면 즉시 annotate · 선언 PR은 내지 않는다) → KafkaTopic·KafkaUser 선행 → status.clusterId → unpause(라이브 어노테이션 제거)).
+apiVersion: kafka.strimzi.io/v1
+kind: Kafka
+metadata:
+  name: jt-kafka
+  namespace: data
+  annotations:
+    argocd.argoproj.io/sync-options: Delete=false,Prune=false   # 하네스 kafka-1 · argo-4-strimzi — 글자 그대로
+    argocd.argoproj.io/sync-wave: "1"                           # 리소스 수준 wave — 차트 리소스(CRD · operator Deployment = wave 0) Healthy 뒤 적용. Application 표의 숫자가 아니다
+spec:
+  kafka:
+    version: 4.3.1                                              # 과제 문면 · 하네스 kafka-1. operator env 맵(STRIMZI_KAFKA_IMAGES)에 있는 버전만 기동 가능(1.2.0 = 4.2.0 · 4.2.1 · 4.3.0 · 4.3.1)
+    metadataVersion: 4.3-IV0                                    # 과제 문면 · research D2(업스트림 single-node 예제와 같다). ⚠ 올리면 되돌릴 수 없다 — 차트 → version → metadataVersion 순서(research D10)
+    listeners:
+      - name: tls                                               # **하나만**(plain 9092 없음 — research D5 · 하네스 kafka-2는 인증 없는 listener를 FAIL)
+        port: 9093                                              # 계약 network-policy 매트릭스 jt-dev/jt-prod → data 9093 · PORT 각주 "Kafka(SCRAM/TLS)"
+        type: internal                                          # ClusterIP Service만(bootstrap + 브로커별) — 클러스터 밖 노출 없음(FR-046 · nodeport/loadbalancer/ingress 아님)
+        tls: true                                               # 브로커 인증서 = 클러스터 CA 발급(SAN `jt-kafka-kafka-bootstrap.data.svc` · `.svc.cluster.local` · 브로커별 호스트)
+        authentication:
+          type: scram-sha-512                                   # KafkaUser(T056)의 비밀번호 = Vault kv → ESO Secret → `password.valueFrom.secretKeyRef`(research D5·D7)
+    authorization:
+      type: simple                                              # Kafka 내장 StandardAuthorizer(KRaft) · ACL은 KafkaUser.spec.authorization.acls(T056). superUsers 없음(D3 · 하네스 kafka-2)
+    config:                                                     # Kafka broker config(CRD: 자유 객체 — 문자열·숫자 모두 허용). 금지 접두(listeners.* · ssl.* · sasl.* 등)는 operator가 **무시하고
+                                                                #   경고 로그**를 남긴다(`… is forbidden and will be ignored` — CR 거부 아님 · Ready도 막히지 않는다 · README §1 표)
+      offsets.topic.replication.factor: 1                       # 내부 토픽 RF 기본 3 → 브로커 1대에서는 __consumer_offsets 생성 실패(research D2)
+      transaction.state.log.replication.factor: 1
+      transaction.state.log.min.isr: 1
+      default.replication.factor: 1                             # 토픽 생성 기본값(KafkaTopic이 replicas를 명시하므로 보험)
+      min.insync.replicas: 1
+      auto.create.topics.enable: "false"                        # 과제 문면 — 토픽은 KafkaTopic CR로만(T056). **문자열 소문자**(하네스 kafka-1은 "false"·false 둘 다 받지만 표기는 이대로)
+    metricsConfig:
+      type: strimziMetricsReporter                              # research D9 — Kafka 이미지 번들 Strimzi Metrics Reporter 0.4.0. 브로커·컨트롤러 파드에 HTTP 9404 `GET /metrics`
+                                                                #   (jmxPrometheusExporter와 달리 규칙 ConfigMap 없음 · CRD CEL: valueFrom은 jmxPrometheusExporter에만 필수)
+      values:
+        # allowList = 정규식 목록(Strimzi 문서: 기본 `.*` · **롤링 없이 동적 반영** · 최소 1개 필수). 과제 문면 "브로커 under-replicated 지표" + 컨트롤러·로그 요약(README §4 표 · 출처 =
+        # 차트 files/grafana-dashboards/strimzi-kafka.json · strimzi-kraft.json의 지표 이름). 접두 패턴은 전체 일치·부분 일치 어느 매칭에서도 같은 집합을 고른다.
+        allowList:
+          - kafka_server_replicamanager_.*                      # underreplicatedpartitions(과제 문면) · partitioncount · leadercount · isrshrinks/isrexpands
+          - kafka_cluster_partition_.*                          # underminisr · atminisr · replicascount(파티션 수준 ISR 요약)
+          - kafka_controller_kafkacontroller_.*                 # activecontrollercount · offlinepartitionscount · globaltopiccount · globalpartitioncount(KRaft 컨트롤러 요약)
+          - kafka_log_log_size                                  # 파티션 로그 크기(디스크 — local-path 20Gi는 명목 한도라 유일한 용량 신호 · README §5)
+          - kafka_server_kafkaserver_brokerstate                # 브로커 상태(3 = Running)
+  entityOperator:                                               # Entity Operator 파드 1(컨테이너 2: topic-operator · user-operator) — ns data의 KafkaTopic·KafkaUser(T056)만 감시
+    topicOperator:
+      resources:
+        requests:
+          cpu: 50m
+          memory: 256Mi                                         # 과제 문면 "entityOperator requests 256Mi" · research D4(가정값 — T097 실측 교정)
+        limits:
+          memory: 384Mi                                         # research D4. CPU limit은 두지 않는다(저장소 관례 — D3)
+      jvmOptions:
+        "-Xmx": 256m                                            # research D4 — 힙 상한 = limit의 2/3. CRD 패턴 ^[0-9]+[mMgG]?$
+    userOperator:
+      resources:
+        requests:
+          cpu: 50m
+          memory: 256Mi
+        limits:
+          memory: 384Mi
+      jvmOptions:
+        "-Xmx": 256m
+    template:
+      pod:
+        affinity:                                               # 노드 A 고정 — 노드풀과 같은 노드(research D3 · plan A14). EO는 PVC가 없어 고정이 필수는 아니지만 예산 배치를 맞춘다
+          nodeAffinity:
+            requiredDuringSchedulingIgnoredDuringExecution:
+              nodeSelectorTerms:
+                - matchExpressions:
+                    - key: role
+                      operator: In
+                      values: [platform]
+        securityContext:                                        # PSA baseline(ns data)에서 허용되는 범위 · CRD 허용 필드만(runAsNonRoot · seccompProfile). 컨테이너는 이미지 USER 1001
+          runAsNonRoot: true
+          seccompProfile:
+            type: RuntimeDefault

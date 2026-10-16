@@ -222,7 +222,7 @@ spec:
     - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: cnpg-system } }, podSelector: { matchLabels: { app.kubernetes.io/name: cloudnative-pg } } }]
       ports: [{ protocol: TCP, port: 8000 }]
 ---
-# 계약 §내부 매트릭스 — monitoring → data 9187·9404: CNPG instance exporter · Strimzi kafka-exporter
+# 계약 §내부 매트릭스 — monitoring → data 9187·9404: CNPG instance exporter · Strimzi Metrics Reporter(브로커 파드 9404 `tcp-prometheus` — T055; kafka-exporter는 SP-2 · 같은 포트)
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -554,7 +554,7 @@ spec:
 #   도착 ingress는 각 ns의 allow-scrape-from-monitoring이다(같은 절의 "scrape 대상 ns의 ingress는
 #   `namespaceSelector`가 `monitoring`인 것만 허용한다" 항).
 #   묶은 7행: monitoring → argocd 8082·8083·8084 / vault 8200 / external-secrets 8080 /
-#   cert-manager 9402 / cnpg-system 8080 / data 9187·9404 / jt-dev·jt-prod 9100·9464.
+#   cert-manager 9402 / cnpg-system 8080 / data 9187·9404(CNPG exporter · Strimzi Metrics Reporter — T055; kafka-exporter SP-2 · 같은 포트) / jt-dev·jt-prod 9100·9464.
 #   계약 공백(규칙을 추가하지 않는다 — 설계 §5.1, T098 결정 대상): argocd notifications 9001 ·
 #   node-exporter 노드 IP 9100(hostNetwork) · traefik 9100(kube-system) · cloudflared 2000.
 #   kubelet 10250(계약 §허용 매트릭스 — 클러스터 밖 · 노드 IP의 `monitoring` → 노드 A·B private IP
