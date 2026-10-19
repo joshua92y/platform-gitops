@@ -17,9 +17,9 @@
 #     ObjectStore·ScheduledBackup은 내장 health가 없어 즉시 Healthy, Cluster는 내장 health lua가 `status.phase`로 판정한다(initdb 동안 Progressing →
 #     `Cluster in healthy state`에서 Healthy) → ScheduledBackup의 `immediate` 첫 백업은 Cluster가 건강해진 뒤에만 시작된다(README §1).
 #     ⚠ 그 대기 중 Cluster가 health lua의 **Degraded** phase(`Applying configuration` · in-place 재시작 등)를 지나면 그 sync 시도는 Failed로 끝난다. 자동 sync operation은
-#     기본 retry(limit 5 · 5s ×2 · max 3m ≈ 2.6분)를 소진해 최종 Failed가 되면 같은 리비전으로 다시 시작하지 않는다(Argo v3.5.2 appcontroller.go:2377 · :2391 — 변경은 이미 적용 ·
+#     기본 retry(limit 5 · 5s ×2 · max 3m ≈ 5분 — 대기 10·20·40·80·160 s · 2026-10-16 정정: 이전 표기 ≈ 2.6분은 증가 전 지수로 셈한 값 · T056 라이브 실측 일치)를 소진해 최종 Failed가 되면 같은 리비전으로 다시 시작하지 않는다(Argo v3.5.2 appcontroller.go:2377 · :2391 — 변경은 이미 적용 ·
 #     Argo만 Failed — README §1 증상표 · VD-11). 방어: Application에 `ApplyOutOfSyncOnly=true`(한 장 변경 = 단일 step → health 대기 없음 · 재시도에서는 in-sync 객체가 task에서
-#     빠진다) + `retry`(30s ×2 · 5m ≈ 12.5분 — 기본값의 **대체**로 창을 넓힌 것 · 다단계가 남는 경우용) — 계약 §Application 규약 예외(2026-10-13), 근거는
+#     빠진다) + `retry`(30s ×2 · 5m ≈ 17분 — 대기 60·120·240·300·300 s · 2026-10-16 정정: 이전 표기 ≈ 12.5분 — 기본값의 **대체**로 창을 넓힌 것 · 다단계가 남는 경우용) — 계약 §Application 규약 예외(2026-10-13), 근거는
 #     `clusters/oci-k3s/apps/platform-cnpg-cluster.yaml` 머리 주석. 그래도 Failed면 운영자 수동 Sync.
 #   ⚠ 전역 `namespace:` 변환기를 두지 않는다 — 세 매니페스트가 `metadata.namespace: data`를 직접 적는다(cert-manager-issuers·secret-stores·secrets 선례와 통일).
 #     `platform/cloudflared`·`platform/system-upgrade`는 변환기를 쓰므로 거기서 복사할 때 주의한다.
