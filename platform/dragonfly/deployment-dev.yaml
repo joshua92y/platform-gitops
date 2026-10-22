@@ -1,0 +1,158 @@
+# platform/dragonfly/deployment-dev.yaml — Deployment `dragonfly-dev`(ns data · replica 1 · 노드 B) — 리소스 wave 1 (T057)
+#
+# 세션 거부 목록 캐시(dev). 키 스키마 · ACL · 유실 창의 정본은 모노레포 contracts/denylist.md, 값의 정본은 tasks.md T057 문면, 형상은 컨트롤러 결정 D2
+#   (모노레포 design/build-notes.md 「T057」). `deployment-prod.yaml`과 형상이 같고 **참조 이름만** 다르다(Secret `dragonfly-<env>-acl` · PVC `dragonfly-<env>-data` ·
+#   라벨 `app.kubernetes.io/instance`). 하나를 고치면 다른 하나도 같은 PR에서 고친다.
+#
+# 이미지: 태그 + digest 병기(계약 §이미지 · validate 4b). `ghcr.io/dragonflydb/dragonfly:v1.40.1`의 **인덱스** digest — 2026-10-22 ghcr.io registry v2 API(익명 토큰
+#   `https://ghcr.io/token?scope=repository:dragonflydb/dragonfly:pull` → `GET /v2/dragonflydb/dragonfly/manifests/v1.40.1`, Accept OCI index · 응답 헤더
+#   `docker-content-digest` = 받은 본문의 sha256)로 조회: application/vnd.oci.image.index.v1+json · linux/amd64 `sha256:26893a7d…` · linux/arm64 `sha256:58070cae…`
+#   (노드 2대 = Ampere A1 arm64 — 이 인덱스로 해결된다). 태그 목록에 v1.40.2가 있지만 과제 문면(승인된 tasks.md)이 v1.40.1을 못박았다 — 올리는 것은 Renovate PR(README §6).
+#
+# 실행 경로(arm64 이미지 config 판독 — README §4): `User` 없음(root로 시작) · `Entrypoint ["/usr/bin/tini","--","entrypoint.sh"]` · `Cmd ["dragonfly","--logtostderr"]` ·
+#   `WorkingDir /data` · 사용자 `dfly` uid 999 / gid 999(history `groupadd -r -g 999 dfly && useradd -r -g dfly -u 999 dfly`).
+#   - **`command`를 두지 않는다**: ENTRYPOINT(tini → entrypoint.sh)를 그대로 쓴다 — tini가 PID 1로 SIGTERM을 dragonfly에 전달해 **종료 스냅샷**이 돈다
+#     (server_family.cc :1324–1343 `Shutdown` → `DoSave()`). entrypoint.sh(v1.40.1 :11–15)는 첫 인자가 `-`로 시작하면 `dragonfly --logtostderr`를 앞에 붙인다
+#     → 아래 args 첫 토큰이 `--maxmemory=…`이라 실행은 `dragonfly --logtostderr <args>`(로그 = stderr · 파일 로그 없음 → 읽기 전용 루트에서도 돈다).
+#   - **uid 999**(이미지 `dfly`): entrypoint.sh :18–24의 root 분기(`chown` + `setpriv --reuid=dfly`)를 타지 않고 :26–31(`umask 0077` → `exec "$@"`)로 간다.
+#     숫자로 못박는 이유 = 이미지 config `User`가 비어 있어 `runAsNonRoot: true`만 두면 kubelet이 비루트를 판정하지 못한다(검사 Job · cloudflared 선례).
+#     PVC 디렉터리는 local-path가 `mkdir -m 0777`로 만들어 999가 쓴다(pvcs.yaml 머리 주석) · fsGroup 999는 Secret 볼륨(아래 defaultMode 0440)의 그룹 읽기용이다.
+#
+# args(이 순서 · 이 토큰 모양 — 과제 문면 4개 그대로 + 컨트롤러 결정 2개 · 모노레포 하네스 kafka.tests.ps1 df-1은 `--flag=value`와 분리 표기를 둘 다 받는다):
+#   - `--maxmemory=768mb`(문면): Dragonfly는 "proactor 스레드당 최소 256MiB"를 요구하고(main_service.cc :106–112 플래그 설명) 모자라면 기동 즉시 종료한다(dfly_main.cc
+#     :316–322 `There are N threads, so … are required. Exiting...`). CPU limit이 없으면 스레드 수 = 노드 vCPU 수(dfly_main.cc :685–691 cgroup `cpu.max` = `max` → 0 →
+#     풀 기본값) — 노드 B 2 vCPU → 512MiB 필요 · 768mb 충족. 노드 vCPU를 늘리면 다시 계산한다(README §1 · §6).
+#   - `--aclfile /etc/dragonfly/users.acl`(문면): 인증은 ACL 사용자만 — 파일 = Secret `dragonfly-dev-acl` ← ES(externalsecrets-acl.yaml). 형식·실패 모양은 README §0 · §1 · §4.
+#   - `--dir /data` · `--snapshot_cron "*/5 * * * *"`(문면): 5분마다 스냅샷 + 정상 종료 스냅샷 → 재기동 시 자동 적재(server_family.cc :1283–1316).
+#     YAML 따옴표는 필수다(`*`로 시작하는 스칼라는 별칭으로 읽힌다) — 컨테이너에는 따옴표 없이 `*/5 * * * *` 한 토큰으로 간다.
+#   - `--dbfilename=dump`(결정 D4): 기본 `dump-{timestamp}`(server_family.cc :112)에 5분 cron이면 스냅샷 파일이 **무한 누적**한다(보존 플래그 없음 → 2Gi 소진 경로).
+#     고정 이름은 `dump-summary.dfs` + 샤드 파일을 덮어쓰고, 적재는 정확 일치가 없으면 글롭 `dump*` → mtime 최신 `*-summary.dfs`(snapshot_storage.cc :311–354).
+#     대가 = 스냅샷 이력 없음(파생 캐시 — 30 s 재적용이 복구) · 손상 스냅샷 적재 실패 = 프로세스 종료(server_family.cc :1295–1314 → CrashLoop — README §1 증상표).
+#   - `--primary_port_http_enabled=false`(결정 D5): `requirepass`가 비면 주 포트 6379의 HTTP(`/` 콘솔 · `/metrics` · `/healthz`)가 **무인증**이다(main_service.cc
+#     :2956–2968 `should_skip_auth = … || GetPassword().empty()` — `GetPassword()`는 requirepass · DFLY_PASSWORD만 보고 ACL 사용자는 세지 않는다 · server_family.cc :1967) →
+#     netpol이 6379를 연 jt-dev · jt-prod의 어느 pod든 콘솔을 읽는다 → 닫는다(플래그 dragonfly_connection.cc :58 · 판정 :1323–1331 · dragonfly_listener.cc :162–167).
+#     대가 = `/metrics` 없음(T098 인계 — README §6) · 프로브는 tcpSocket(아래).
+#   금지 토큰 0: `--requirepass` · `-requirepass` · `--flagfile` · `--fromenv` · `--tryfromenv`(하네스 df-1 — absl 플래그의 파일·환경변수 경로로 requirepass가 숨을 수 있다).
+#   **`env` 없음 · `envFrom` 없음**: Dragonfly는 `DFLY_<flag>` 환경변수로도 플래그를 읽고 `DFLY_PASSWORD`는 requirepass 별칭이다(user_registry.cc :158–168) —
+#   비밀번호는 aclfile로만(하네스 df-1이 env 이름 `DFLY_requirepass` · `DFLY_PASSWORD`와 envFrom 존재를 FAIL로 본다).
+#
+# 프로브 = 셋 다 tcpSocket `redis`(결정 D2). 근거(2026-10-22 정정 — 이미지에 redis-cli는 **있다**: arm64 레이어 `sha256:334c0848…`의 apt `redis-tools` → `usr/bin/redis-cli`):
+#   default 사용자가 OFF라 비인증 명령은 전부 `-NOAUTH`(main_service.cc :1403–1406)이고, PONG을 확인하려면 컨테이너 안에 자격(env · 파일)이 있어야 한다 — env 0(위) ·
+#   aclfile에는 해시뿐 → 자격 없는 exec 프로브는 응답을 판정하지 못하는 TCP 확인과 같다(업스트림 healthcheck.sh :32–36도 `echo PING | nc -q1` — 응답을 보지 않는다).
+#   HTTP `/healthz`는 D5로 닫았다. 스냅샷 적재는 별도 fiber에서 돌고(server_family.cc :1295–1303) 적재 중 명령은 `-LOADING`(main_service.cc :1385–1386)이라 그 창에서는
+#   TCP가 열려 있어도 명령이 실패한다 — 키 수십 건 규모라 창은 짧고(라이브 확인 대상 — README §3) 소비자는 오류를 fail-closed 503으로 처리한다(계약 §조회 규약 3).
+#   startup 2 s × 60 = 120 s(적재 여유) · readiness 10 s × 3 · liveness 10 s × 6(timeout 5 — 짧은 정지로 재시작이 몰리지 않게 ≈ 60 s).
+#
+# 그 밖: `strategy: Recreate`(RWO PVC를 두 pod가 동시에 잡지 않게 — 문면) · `terminationGracePeriodSeconds: 60`(문면 · 계약 §쓰기 규약 — 기본 30 s에 기대지 않는다:
+#   종료 스냅샷 저장 전 SIGKILL이면 유실 창) · `nodeSelector role=data`(문면 — 노드 B · PV도 그 노드에 생긴다) · `automountServiceAccountToken: false` + securityContext 두 층 +
+#   `readOnlyRootFilesystem` + `/tmp` emptyDir(계약 §워크로드 강화 · validate 3.6) · requests cpu 100m / memory 256Mi · limits memory 900Mi(문면 · CPU limit 없음 — 저장소 관례).
+#   Reloader 어노테이션 없음(결정 D9 — ns data는 감시 밖 · 회전은 README §5). 리소스 wave "1" — ES · Service("0") 뒤 · PVC와 같은 wave(pvcs.yaml 머리 주석).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dragonfly-dev
+  namespace: data
+  labels:
+    app.kubernetes.io/name: dragonfly
+    app.kubernetes.io/instance: dragonfly-dev
+    app.kubernetes.io/part-of: platform-dragonfly
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"            # 리소스 수준 wave — ES · Service("0") 뒤 · PVC와 같은 wave. Application 표의 숫자가 아니다
+spec:
+  replicas: 1                                    # env마다 인스턴스 1(계약 denylist.md 머리) — RWO PVC · Recreate
+  revisionHistoryLimit: 3
+  strategy:
+    type: Recreate                               # 하네스 df-1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: dragonfly
+      app.kubernetes.io/instance: dragonfly-dev
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: dragonfly
+        app.kubernetes.io/instance: dragonfly-dev
+        app.kubernetes.io/part-of: platform-dragonfly
+    spec:
+      # 종료 스냅샷 시간(계약 §쓰기 규약 · 하네스 df-1 = 60) — tini가 SIGTERM을 전달하고 dragonfly가 저장을 마친 뒤 끝난다.
+      terminationGracePeriodSeconds: 60
+      nodeSelector:
+        role: data                               # 노드 B(plan A14 · 하네스 nodes-2)
+      # Dragonfly는 K8s API를 쓰지 않는다(계약 §워크로드 강화 · validate 3.6 · 하네스 df-1 — 없음 = 기본 true → FAIL).
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999                           # 이미지 사용자 dfly(머리 주석 — entrypoint의 root 분기를 타지 않는다)
+        runAsGroup: 999
+        fsGroup: 999                             # Secret 볼륨 파일(0440)의 그룹 = 999 → dfly가 읽는다
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: dragonfly
+          image: ghcr.io/dragonflydb/dragonfly:v1.40.1@sha256:ebf3c6c213e82fb51b4521660cca13f06f3421dc5b1ed14f2f474c50b5e29986
+          # command 없음 — 이미지 ENTRYPOINT(tini → entrypoint.sh)를 쓴다(머리 주석).
+          args:
+            - --maxmemory=768mb
+            - --aclfile
+            - /etc/dragonfly/users.acl
+            - --dir
+            - /data
+            - --snapshot_cron
+            - "*/5 * * * *"
+            - --dbfilename=dump
+            - --primary_port_http_enabled=false
+          # env · envFrom 없음(머리 주석 — 비밀번호는 aclfile로만).
+          ports:
+            - name: redis
+              containerPort: 6379
+              protocol: TCP
+          startupProbe:
+            tcpSocket:
+              port: redis
+            periodSeconds: 2
+            timeoutSeconds: 2
+            failureThreshold: 60                 # 2 s × 60 = 120 s — 스냅샷 적재 여유
+          readinessProbe:
+            tcpSocket:
+              port: redis
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket:
+              port: redis
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6                  # ≈ 60 s — 짧은 정지로 재시작이 몰리지 않게
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 900Mi                      # --maxmemory=768mb 위 여유(연결 · 스냅샷 직렬화 버퍼) — 넘으면 OOMKilled = 비정상 종료(README §1). CPU limit 없음
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: acl
+              mountPath: /etc/dragonfly
+              readOnly: true                     # ACL SAVE는 실패한다(정상 — 정본은 kv · README §4)
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: dragonfly-dev-data
+        - name: acl
+          secret:
+            secretName: dragonfly-dev-acl          # ES externalsecrets-acl.yaml(wave 0)가 만든다
+            items:
+              - key: users.acl
+                path: users.acl
+            defaultMode: 0440                    # 8진수(= 288) — 소유 root · 그룹 fsGroup 999 읽기
+        - name: tmp
+          emptyDir: {}

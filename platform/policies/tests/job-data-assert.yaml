@@ -3,11 +3,14 @@
 # 계약 hostnames-and-access.md §자격이 필요한 검사: `psql`·`redis-cli`가 필요한 검사는 tester가 직접
 # 실행하지 않는다. 이 Job이 클러스터 안에서 실행하고 tester는 `kubectl -n jt-dev logs job/data-assert`만 읽는다.
 #
-# 검사 id(quickstart §US3 ①–④ + VD-4): pg-cross-db-denied · catalog-connect-false · revoke-public ·
-#   ssl-verify-full · role-attrs · app-session-timeouts · acl-list · noperm  — 로그 계약(줄 형식·종료 코드)은 README.md §로그 계약.
+# 검사 id(quickstart §US3 ①–④ + VD-4 · 출력 순서): pg 6 = pg-cross-db-denied · catalog-connect-false · revoke-public ·
+#   ssl-verify-full · role-attrs · app-session-timeouts · Dragonfly 7 = noauth · acl-list · writer-set · reader-get · reader-set-denied ·
+#   reader-cross-denied · noperm(+ NOTE: 정리 1줄)  — 로그 계약(줄 형식·종료 코드)은 README.md §로그 계약.
 #   role-attrs · app-session-timeouts는 T054가 더했다(모노레포 build-notes 「T050 · T051」 T054 몫 · 하네스 tests/platform/data.tests.ps1 job-2).
+#   noauth · writer-set · reader-get · reader-set-denied · reader-cross-denied는 T057이 더했다(같은 build-notes T057 몫 · 하네스 tests/platform/kafka.tests.ps1
+#   job-d-2 · data.tests.ps1 job-2는 추적 밖 id의 FAIL도 문제로 본다 → Dragonfly 7개도 전부 PASS여야 한다).
 #
-# 컨테이너 2단 구성 이유: 하나의 로그 스트림에 8개 판정을 모으기 위해서다. `kubectl logs job/<name>`은
+# 컨테이너 2단 구성 이유: 하나의 로그 스트림에 13개 판정을 모으기 위해서다. `kubectl logs job/<name>`은
 #   컨테이너가 여러 개면 컨테이너를 골라야 하므로(tester 계약은 `logs job/…` 한 줄), Dragonfly 검사는
 #   **initContainer**가 수행해 결과 줄을 emptyDir 파일에 적고, 본 컨테이너(psql)가 자기 판정과 함께 그 줄을
 #   다시 출력한다. initContainer는 실패해도 exit 0으로 끝난다(판정은 FAIL 줄로 남기고 파드를 죽이지 않는다).
@@ -80,32 +83,92 @@ spec:
               out=/work/dragonfly.result
               : > "$out"
               emit() { printf '%s\n' "$*" >>"$out"; }
+              # 가림(T057): 출력에 실리는 redis-cli 응답은 전부 mask를 거친다 — URL(자격 포함) → redis://<redacted> ·
+              #   `#` 뒤 hex 8자 이상 → #<redacted>(ACL LIST는 해시를 15자로 줄여 보여 주므로 옛 규칙 "16자 이상"은 한 번도 매치되지 않았다).
+              mask() { sed -E 's#redis://[^[:space:]]*#redis://<redacted>#g; s/#[0-9a-f]{8,}/#<redacted>/g'; }
+              # 응답 조각 = 가린 첫 줄 100자. 빈 응답은 표시 문구로 바꾼다(GET의 nil은 redis-cli raw 출력에서 빈 문자열이다).
+              show() { s=$(printf '%s\n' "$1" | mask | head -n 1 | cut -c1-100); printf '%s' "${s:-(빈 응답)}"; }
+              # redis-cli 1회 = stdout+stderr 문자열. 판정은 종료 코드가 아니라 이 문자열로 한다(-e 없이는 오류 응답도 종료 코드 0).
+              #   --no-auth-warning: -u URL에 비밀번호가 있으면 stderr 경고 줄이 붙어 정확 일치(OK · probe)를 깨뜨린다(README §검증 기록 T057).
+              rc() { redis-cli --no-auth-warning -t 5 "$@" 2>&1; }
 
-              if [ -z "${DRAGONFLY_URL:-}" ] || [ -z "${DRAGONFLY_SAMPLE_URL:-}" ]; then
-                emit "FAIL acl-list ExternalSecret assert-env에 DRAGONFLY_URL 또는 DRAGONFLY_SAMPLE_URL이 없다"
-                emit "FAIL noperm ExternalSecret assert-env에 DRAGONFLY_SAMPLE_URL이 없다"
+              # fail-closed: 필요한 값이 하나라도 비면 Dragonfly 7검사를 전부 FAIL로 남긴다(id 수 불변 · 비어 있는 변수의 이름만 — 값은 찍지 않는다).
+              miss=''
+              for v in DRAGONFLY_URL DRAGONFLY_SAMPLE_URL DRAGONFLY_HOST DRAGONFLY_PORT REVOKED_PROBE_KEY DRAGONFLY_ACL_USER DRAGONFLY_ACL_PATTERN; do
+                eval "val=\${$v:-}"
+                [ -n "$val" ] || miss="$miss $v"
+              done
+              if [ -n "$miss" ]; then
+                for id in noauth acl-list writer-set reader-get reader-set-denied reader-cross-denied noperm; do
+                  emit "FAIL $id 필수 값 없음(ExternalSecret assert-env · ConfigMap assert-config):$miss"
+                done
                 exit 0
               fi
 
-              # ① acl-list — ACL LIST 응답에서 비밀번호 해시(#<hex>)를 지운 뒤 증거로 남긴다.
+              # ① noauth — 자격 없이 PING → NOAUTH(aclfile의 `USER default OFF -@all`). PONG이면 aclfile이 적재되지 않아 default(nopass)로 기동한 것이다.
+              r=$(rc -h "$DRAGONFLY_HOST" -p "$DRAGONFLY_PORT" PING)
+              case "$r" in
+                *NOAUTH*) emit "PASS noauth 미인증 PING -> NOAUTH(default 사용자 OFF)" ;;
+                *PONG*) emit "FAIL noauth 미인증 PING이 통과(PONG) — aclfile 미적재(default nopass) 의심" ;;
+                *) emit "FAIL noauth 미인증 PING이 NOAUTH로 거부되지 않음 -> $(show "$r")" ;;
+              esac
+
+              # ② acl-list — ACL LIST를 가린 뒤 증거로 남기고, dev 검사 계정 행에 읽기 전용 패턴이 있는지 본다.
               #    (quickstart는 `logs job/data-assert | grep -A5 'ACL LIST'`로 이 블록을 읽는다.)
-              acl=$(redis-cli -u "$DRAGONFLY_URL" -t 5 ACL LIST 2>&1 | sed 's/#[0-9a-f]\{16,\}/#<redacted>/g')
+              acl=$(rc -u "$DRAGONFLY_URL" ACL LIST | mask)
               emit "EVIDENCE: ACL LIST (dev, 비밀번호 해시 제거)"
               printf '%s\n' "$acl" | head -n 6 | while IFS= read -r l; do emit "EVIDENCE:   $l"; done
               user_line=$(printf '%s\n' "$acl" | grep "^user ${DRAGONFLY_ACL_USER} " || true)
               if [ -n "$user_line" ] && printf '%s' "$user_line" | grep -qF "$DRAGONFLY_ACL_PATTERN"; then
                 emit "PASS acl-list user ${DRAGONFLY_ACL_USER} 행에 ${DRAGONFLY_ACL_PATTERN}(읽기 전용 revoked 패턴)이 있다"
               else
-                emit "FAIL acl-list user ${DRAGONFLY_ACL_USER} 행에서 ${DRAGONFLY_ACL_PATTERN}를 찾지 못함 — 응답 첫 줄: $(printf '%s' "$acl" | head -n 1 | cut -c1-100)"
+                emit "FAIL acl-list user ${DRAGONFLY_ACL_USER} 행에서 ${DRAGONFLY_ACL_PATTERN}를 찾지 못함 — 응답 첫 줄: $(show "$acl")"
               fi
 
-              # ② noperm — 읽기 전용 패턴을 가진 dev 검사 계정으로 revoked 키 DEL 시도 → NOPERM 이어야 한다.
-              del=$(redis-cli -u "$DRAGONFLY_SAMPLE_URL" -t 5 DEL "$REVOKED_PROBE_KEY" 2>&1)
-              if printf '%s' "$del" | grep -q 'NOPERM'; then
-                emit "PASS noperm DEL ${REVOKED_PROBE_KEY} -> $(printf '%s' "$del" | head -n 1 | cut -c1-100)"
+              # ③ writer-set — identity-admin(DRAGONFLY_URL)으로 프로브 키 SET(EX 120 — 아래 정리 DEL이 실패해도 2분 뒤 사라진다).
+              r=$(rc -u "$DRAGONFLY_URL" SET "$REVOKED_PROBE_KEY" probe EX 120)
+              if [ "$r" = OK ]; then
+                emit "PASS writer-set identity-admin으로 SET ${REVOKED_PROBE_KEY} probe EX 120 -> OK"
               else
-                emit "FAIL noperm DEL ${REVOKED_PROBE_KEY} 가 NOPERM으로 거부되지 않음 -> $(printf '%s' "$del" | head -n 1 | cut -c1-100)"
+                emit "FAIL writer-set identity-admin으로 SET ${REVOKED_PROBE_KEY} probe EX 120 이 OK가 아님 -> $(show "$r")"
               fi
+
+              # ④ reader-get — 검사 계정(읽기 전용 패턴)으로 같은 키 GET → 정확히 probe.
+              r=$(rc -u "$DRAGONFLY_SAMPLE_URL" GET "$REVOKED_PROBE_KEY")
+              if [ "$r" = probe ]; then
+                emit "PASS reader-get ${DRAGONFLY_ACL_USER}로 GET ${REVOKED_PROBE_KEY} -> probe(읽기 전용 패턴의 읽기 허용)"
+              else
+                emit "FAIL reader-get ${DRAGONFLY_ACL_USER}로 GET ${REVOKED_PROBE_KEY} 가 probe가 아님(nil = 빈 응답) -> $(show "$r")"
+              fi
+
+              # ⑤ reader-set-denied — 검사 계정으로 revoked 키 SET → NOPERM(읽기 전용 패턴은 쓰기를 막는다).
+              r=$(rc -u "$DRAGONFLY_SAMPLE_URL" SET "$REVOKED_PROBE_KEY" x)
+              case "$r" in
+                *NOPERM*) emit "PASS reader-set-denied ${DRAGONFLY_ACL_USER}로 SET ${REVOKED_PROBE_KEY} -> $(show "$r")" ;;
+                OK) emit "FAIL reader-set-denied ${DRAGONFLY_ACL_USER}로 SET ${REVOKED_PROBE_KEY} 가 성공(OK) — %R~ 패턴이 쓰기를 막지 않음" ;;
+                *) emit "FAIL reader-set-denied ${DRAGONFLY_ACL_USER}로 SET ${REVOKED_PROBE_KEY} 가 NOPERM으로 거부되지 않음 -> $(show "$r")" ;;
+              esac
+
+              # ⑥ reader-cross-denied — 검사 계정으로 다른 사용자의 접두(identity-admin:) SET → NOPERM(자기 접두 밖).
+              #    EX 120: ACL이 깨져 SET이 성공하는 FAIL 경로에서도 키가 120 s 뒤 사라진다 — 정상 경로(NOPERM)에서는 키가 생기지 않는다.
+              r=$(rc -u "$DRAGONFLY_SAMPLE_URL" SET identity-admin:assert-probe 1 EX 120)
+              case "$r" in
+                *NOPERM*) emit "PASS reader-cross-denied ${DRAGONFLY_ACL_USER}로 SET identity-admin:assert-probe 1 EX 120 -> $(show "$r")" ;;
+                OK) emit "FAIL reader-cross-denied ${DRAGONFLY_ACL_USER}로 SET identity-admin:assert-probe 1 EX 120 이 성공(OK) — 자기 접두 밖 쓰기가 허용됨" ;;
+                *) emit "FAIL reader-cross-denied ${DRAGONFLY_ACL_USER}로 SET identity-admin:assert-probe 1 EX 120 이 NOPERM으로 거부되지 않음 -> $(show "$r")" ;;
+              esac
+
+              # ⑦ noperm — 같은 계정으로 revoked 키 DEL → NOPERM(키 패턴과 명령 카테고리는 짝지어지지 않으므로 %R~로만 막힌다 — denylist.md).
+              del=$(rc -u "$DRAGONFLY_SAMPLE_URL" DEL "$REVOKED_PROBE_KEY")
+              if printf '%s' "$del" | grep -q 'NOPERM'; then
+                emit "PASS noperm DEL ${REVOKED_PROBE_KEY} -> $(show "$del")"
+              else
+                emit "FAIL noperm DEL ${REVOKED_PROBE_KEY} 가 NOPERM으로 거부되지 않음 -> $(show "$del")"
+              fi
+
+              # 정리(판정 아님) — identity-admin으로 프로브 키 DEL. 실패해도 writer-set의 EX 120이 2차 안전망이다.
+              r=$(rc -u "$DRAGONFLY_URL" DEL "$REVOKED_PROBE_KEY")
+              emit "NOTE: cleanup DEL ${REVOKED_PROBE_KEY} -> $(show "$r")"
               exit 0
           envFrom:
             - secretRef:
@@ -276,7 +339,8 @@ spec:
                 fi
               fi
 
-              # ⑦⑧ initContainer(Dragonfly)의 판정 줄을 같은 로그 스트림으로 옮긴다.
+              # ⑦–⑬ initContainer(Dragonfly)의 판정 줄 7개를 같은 로그 스트림으로 옮긴다.
+              #    결과 파일이 없으면 Dragonfly 7개 id를 전부 FAIL 1줄씩 남긴다(id 수 불변 · 출력 순서 그대로 — initContainer의 fail-closed와 같은 원칙).
               if [ -r /work/dragonfly.result ]; then
                 while IFS= read -r l; do
                   case "$l" in
@@ -286,8 +350,9 @@ spec:
                   esac
                 done < /work/dragonfly.result
               else
-                ng "acl-list initContainer 결과 파일(/work/dragonfly.result)이 없다"
-                ng "noperm initContainer 결과 파일(/work/dragonfly.result)이 없다"
+                for id in noauth acl-list writer-set reader-get reader-set-denied reader-cross-denied noperm; do
+                  ng "$id initContainer 결과 파일(/work/dragonfly.result)이 없다"
+                done
               fi
 
               printf 'SUMMARY: pass=%d fail=%d\n' "$pass" "$fail"

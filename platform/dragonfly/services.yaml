@@ -1,0 +1,57 @@
+# platform/dragonfly/services.yaml — Service `dragonfly-dev` · `dragonfly-prod`(ns data · ClusterIP 6379) — 리소스 wave 0 (T057)
+#
+# 소비자 주소 = `dragonfly-<env>.data.svc:6379`(모노레포 contracts/denylist.md §ACL `DRAGONFLY_URL` 행 — 사용자 = pod 이름 · 이 호스트 · db 0. 자격이 든
+#   그 URL은 kv `kv/{env}/dragonfly/<user>` 키 `url`에 있고 앱은 `<pod>-env`로 받는다 · T072). 검사 Job `data-assert`의 비인증 PING(`noauth`)은 ConfigMap
+#   `DRAGONFLY_HOST`·`DRAGONFLY_PORT`로 dev 주소에 붙는다(platform/policies/tests/configmap-assert-config.yaml).
+# 도달 경로: 계약 network-policy.md :87 `jt-dev`·`jt-prod` → `data` 6379(platform/policies `data/allow-from-apps` — podSelector {} · 정책 변경 0).
+#   ns data 안에서는 `allow-same-namespace`. 그 밖의 ns(identity · monitoring 등)는 6379에 닿지 않는다.
+# 포트는 하나다(`redis` 6379 — RESP). 주 포트 HTTP 콘솔은 `--primary_port_http_enabled=false`로 닫았다(deployment-<env>.yaml · README §4 · 결정 D5) —
+#   `/metrics` 스크레이프 경로는 없다(T098 인계 — README §6).
+# selector = `app.kubernetes.io/name` + `app.kubernetes.io/instance` 두 라벨(결정 D1) — dev/prod Service가 서로의 pod를 고르지 않는다(instance가 다르다).
+# 리소스 wave "0" — ClusterIP Service는 적용 즉시 Healthy라 wave 0의 대기는 ES(SecretSynced)가 정한다. Application 표의 숫자가 아니다(kustomization 머리 주석).
+
+# --- dev ------------------------------------------------------------------------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: dragonfly-dev
+  namespace: data
+  labels:
+    app.kubernetes.io/name: dragonfly
+    app.kubernetes.io/instance: dragonfly-dev
+    app.kubernetes.io/part-of: platform-dragonfly
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"          # 리소스 수준 wave. Application 표의 숫자가 아니다
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: dragonfly
+    app.kubernetes.io/instance: dragonfly-dev
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis                        # 컨테이너 포트 이름(deployment-dev.yaml)
+      protocol: TCP
+---
+# --- prod -----------------------------------------------------------------------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: dragonfly-prod
+  namespace: data
+  labels:
+    app.kubernetes.io/name: dragonfly
+    app.kubernetes.io/instance: dragonfly-prod
+    app.kubernetes.io/part-of: platform-dragonfly
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: dragonfly
+    app.kubernetes.io/instance: dragonfly-prod
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
+      protocol: TCP

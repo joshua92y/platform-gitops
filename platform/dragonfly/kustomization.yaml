@@ -1,6 +1,43 @@
-# platform/dragonfly/ — Dragonfly
-# sync-wave: 계약 gitops-repo.md §sync-wave 단일 표 참조(wave 번호는 표에만 기재 — 중복 금지).
-# 빈 뼈대(T003) — 실제 매니페스트는 T031+에서 작성한다.
+# platform/dragonfly/ — Dragonfly `dragonfly-dev` · `dragonfly-prod`(env마다 인스턴스 1 · 세션 거부 목록 캐시) — 순수 매니페스트 8장 (T057)
+#
+# 정본 계약(모노레포 specs/003-platform-foundation/):
+#   - tasks.md T057 문면(값의 정본 — 이미지 v1.40.1 · 인자 4 · `requirepass` 금지 · 사용자 dev 4종/prod 3종 · `%R~revoked:*` · grace 60 · PVC local-path 2Gi +
+#     `Delete=false,Prune=false` · Recreate · nodeSelector role=data · requests 256Mi/limits 900Mi · automount false + securityContext + `/tmp` emptyDir · Service · VD-4)
+#   - contracts/denylist.md(§쓰기 규약 유실 창 · grace 60 · §ACL 표 · "키 패턴과 명령 카테고리는 짝지어지지 않는다" · §VD-4 · §Vault 경로) · data-model.md §3(유실 창) ·
+#     §8(`kv/{env}/dragonfly/acl` 키 `users.acl` 파일 전문 · `kv/{env}/dragonfly/<user>` 키 `password`·`url` · admin은 ESO 소비자 없음)
+#   - contracts/gitops-repo.md §sync-wave 단일 표(wave 번호는 그 표에만 — 여기 다시 적지 않는다. `dragonfly` 행 → Application `platform-dragonfly` 하나가 이
+#     디렉터리를 적용한다) · §Application 규약(syncPolicy 플랫폼 표준 그대로 — 예외 없음 · 삭제 보호 목록의 Dragonfly PVC · 워크로드 강화 행) ·
+#     §이미지(platform 이미지 태그 + digest 병기 — validate 4b) · §ExternalSecret 규약(store `vault-data` 열거 접두 — validate 3.3 · Periodic 5m · Owner)
+#   - network-policy.md :15(ns data PSA baseline) · :87(jt-dev/jt-prod → data 6379 — 이 디렉터리는 정책을 한 줄도 바꾸지 않는다)
+#   - 컨트롤러 결정 D1–D14: 모노레포 design/build-notes.md 「T057」(이 디렉터리 = D1 · 형상 D2–D9 · 문서 D14)
+#
+# 설치 방식 = 순수 매니페스트(`helmCharts` 없음 — platform/kafka-topics/ · platform/cnpg-databases/ 선례). 로컬 재현: `kustomize build platform/dragonfly`
+#   (문서 8 = ExternalSecret 2 · Service 2 · PersistentVolumeClaim 2 · Deployment 2 — 전부 ns data).
+#   ⚠ 리소스 수준 `argocd.argoproj.io/sync-wave`(ES · Service "0" → PVC · Deployment "1")는 **이 Application 안의 적용 순서**다 — 계약 §sync-wave 단일 표
+#     (Application 사이의 순서)의 숫자가 **아니다**(T053–T056 선례 · README §1). 순서의 이유: Deployment는 ACL Secret이 있어야 뜬다(Secret 볼륨 — 없으면
+#     ContainerCreating). Argo는 wave 0의 ES가 Healthy(Ready=True = SecretSynced)여야 wave 1을 적용한다. PVC가 Deployment와 같은 wave인 이유 = local-path
+#     `WaitForFirstConsumer`(pvcs.yaml 머리 주석). wave 1은 마지막 wave라 적용 직후 operation이 닫힌다 → Application syncPolicy 예외(`ApplyOutOfSyncOnly` · `retry`) 없음.
+#   ⚠ 전역 `namespace:` 변환기 · `commonLabels`를 두지 않는다 — 매니페스트마다 `metadata.namespace: data`와 라벨을 직접 적는다(selector가 변환기에 흔들리지 않게 —
+#     라벨 공통 셋 `app.kubernetes.io/name: dragonfly` · `app.kubernetes.io/instance: dragonfly-<env>` · `app.kubernetes.io/part-of: platform-dragonfly`, selector = 앞의 둘).
+#
+# 선행 조건 P1(README §0): Vault kv **7경로**를 운영자가 **머지 전** 시드한다(모노레포 런북 docs/runbooks/bootstrap.md §4 T057). 시드 전에 머지하면 wave 0 ES가
+#   `SecretSyncedError`로 그 sync가 Failed가 되고 기본 retry(≈ 5분) 뒤 같은 리비전으로 다시 시작하지 않는다(README §1 증상표 첫 행).
+#
+# 이 디렉터리가 만들지 "않는" 것:
+#   1) Vault kv 값(aclfile 전문 · 사용자 비밀번호 · URL) → 운영자 시드(P1). 이 저장소에 비밀은 없다(Secret 0장 — ESO가 런타임에 만든다).
+#   2) 앱 ns의 `<pod>-env`(`DRAGONFLY_URL` ← `kv/{env}/dragonfly/<pod>` 키 `url` · store `vault-{env}`) → 앱 overlay(T072). 검사 Job `data-assert`의 **배포** → T059
+#      (Job 스크립트의 Dragonfly 검사 7개는 이 PR이 `platform/policies/tests/job-data-assert.yaml`에 더했다).
+#   3) Namespace · PSA · NetworkPolicy → `platform/policies/`(변경 0). Reloader 어노테이션 → 두지 않는다(결정 D9 · README §5).
+#
+# 되돌리기(README §5): Application `prune: false` + `Delete=confirm`이라 revert 머지는 객체를 지우지 않는다(렌더 0 → `OutOfSync`가 정상). PVC 2장은 객체에
+#   `Delete=false,Prune=false` — Argo의 prune과 Application cascade 삭제에서 빠진다 · `kubectl delete`는 막지 못한다(PVC 삭제 = 스냅샷 삭제 — 캐시라 정본은 DB).
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-resources: []
+
+# ⚠ 전역 `namespace:` 변환기 · `commonLabels` 금지(머리 주석) — 네임스페이스와 라벨은 각 매니페스트의 metadata로만.
+resources:
+  - externalsecrets-acl.yaml   # 리소스 wave 0 — ACL Secret 2장(ns data · store vault-data · `{dev,prod}/dragonfly/acl` 키 users.acl)
+  - services.yaml              # 리소스 wave 0 — Service 2(ClusterIP 6379 · selector name + instance)
+  - pvcs.yaml                  # 리소스 wave 1 — PVC 2(local-path 2Gi · Delete=false,Prune=false · WaitForFirstConsumer라 Deployment와 같은 wave)
+  - deployment-dev.yaml        # 리소스 wave 1 — Deployment dragonfly-dev(v1.40.1 · aclfile · 스냅샷 /data · Recreate · grace 60 · 노드 B)
+  - deployment-prod.yaml       # 리소스 wave 1 — Deployment dragonfly-prod(같은 형상 · prod Secret/PVC)
