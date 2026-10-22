@@ -3,13 +3,20 @@
 # 역할: root(app-of-apps)가 이 파일을 읽어 child Application `platform-dragonfly`를 만들고,
 #   그 Application이 `platform/dragonfly`를 서버 사이드 적용한다.
 #
-# 현재 상태(T041 시점): `platform/dragonfly/kustomization.yaml`은 `resources: []` 뼈대다 → 렌더 결과 0개.
-#   리소스 0인 Application이 Synced/Healthy가 되는지는 설계 VD-E로 실측한다(아니면 이 Application을 컴포넌트
-#   태스크로 이월). 실제 매니페스트(Deployment `dragonfly-dev`·`dragonfly-prod` · ACL ExternalSecret)는 T057이 채운다.
+# 현재 상태(T057이 채웠다 — 2026-10-22): `platform/dragonfly/`는 순수 매니페스트 **8장**(전부 ns data) = ACL ExternalSecret 2(`dragonfly-<env>-acl` · store `vault-data`
+#   `{dev,prod}/dragonfly/acl` 키 `users.acl` · 리소스 wave `"0"`) + Service 2(`dragonfly-<env>` · ClusterIP 6379 · wave `"0"`) + PVC 2(`dragonfly-<env>-data` · local-path 2Gi ·
+#   wave `"1"`) + Deployment 2(`dragonfly-dev` · `dragonfly-prod` — v1.40.1 태그 + digest · aclfile 인증(`requirepass` · env 없음) · 5분 스냅샷 + 종료 스냅샷 · Recreate · grace 60 ·
+#   노드 B · wave `"1"`). wave 값은 리소스 수준 `argocd.argoproj.io/sync-wave`(Application 표의 숫자가 아니다). **syncPolicy는 아래 플랫폼 표준 그대로 — 계약 §Application 규약
+#   예외(`ApplyOutOfSyncOnly`·`retry`) 없음.** 근거: hook이 없고, Progressing·Degraded가 오래 남을 수 있는 PVC(local-path WaitForFirstConsumer — pod가 붙기 전 Pending =
+#   Progressing)와 Deployment는 **마지막 wave**라 operation을 실패시키지 않는다(적용 직후 Succeeded — T055 결정 D5와 같은 gitops-engine 경로). 앞 wave를 막는 유일한 경로 =
+#   wave 0 ACL ES의 `SecretSyncedError`(kv 미시드) → 머지 **전** 시드(`../../../platform/dragonfly/README.md` §0 P1 — kv 7경로)로 막고, 그래도 실패하면 기본 retry(대기
+#   10·20·40·80·160 s ≈ 5분) 뒤 같은 리비전으로 다시 시작하지 않는다 → 늦은 시드 절차 + 운영자 전체 수동 Sync(README §1 증상표 첫 행). 결정 D1–D14 근거는 모노레포 build-notes 「T057」.
 #
-# 상태를 가진 컴포넌트: 스냅숏 PVC는 계약 §삭제 보호 목록에 있어 객체 자신에
-#   `argocd.argoproj.io/sync-options: Delete=false,Prune=false`가 붙는다(T057). 이 Application의 `Prune=confirm`·
-#   `Delete=confirm`은 그 위의 두 번째 겹이다. 워크로드 강화(계약 §Application 규약)도 T057의 매니페스트 쪽 몫이다.
+# 상태를 가진 컴포넌트: 스냅샷 PVC 2장은 계약 §삭제 보호 목록에 있어 객체 자신에
+#   `argocd.argoproj.io/sync-options: Delete=false,Prune=false`가 붙어 있다(T057 — `platform/dragonfly/pvcs.yaml` · 하네스 argo-4-dragonfly). Argo가 직접 관리하는 PVC라
+#   prune과 이 Application의 cascade 삭제에서 빠진다(Argo CD v3.5.2 `controller/appcontroller.go` :1251–1260) — `kubectl delete`는 막지 못한다. 이 Application의 `Prune=confirm`·
+#   `Delete=confirm`은 그 위의 두 번째 겹(나머지 6장의 삭제 승인)이다. 워크로드 강화(계약 §Application 규약)는 Deployment 2장이 갖췄다(automount false · securityContext 두 층 ·
+#   읽기 전용 루트 + `/tmp` emptyDir — validate 3.6). ⚠ cascade 삭제는 ES · Service · Deployment를 지워 두 env의 거부 목록 조회가 fail-closed 503이 된다(README §5).
 #
 # sync-wave·destination.namespace: 값의 정본은 계약 contracts/gitops-repo.md §sync-wave 단일 표이고,
 #   코드 사본은 tests/validate.sh의 WAVE_TABLE 하나뿐이다. 아래 두 값은 그 표에서 기계적으로 읽어 넣었고

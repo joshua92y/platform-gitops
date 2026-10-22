@@ -1,0 +1,122 @@
+# platform/dragonfly/deployment-prod.yaml — Deployment `dragonfly-prod`(ns data · replica 1 · 노드 B) — 리소스 wave 1 (T057)
+#
+# 세션 거부 목록 캐시(prod). `deployment-dev.yaml`과 형상이 같고 **참조 이름만** 다르다(Secret `dragonfly-prod-acl` · PVC `dragonfly-prod-data` ·
+#   라벨 `app.kubernetes.io/instance: dragonfly-prod`). 근거의 파일:줄 전문은 deployment-dev.yaml 머리 주석과 README §4 — 여기에는 요점만 적는다. 하나를 고치면 다른
+#   하나도 같은 PR에서 고친다(컨트롤러 결정 D2 · 모노레포 design/build-notes.md 「T057」).
+#
+# - 이미지: `ghcr.io/dragonflydb/dragonfly:v1.40.1`의 인덱스 digest(2026-10-22 ghcr.io registry v2 API 조회 — linux/amd64 `sha256:26893a7d…` · linux/arm64
+#   `sha256:58070cae…`) · 태그 + digest 병기(validate 4b).
+# - 실행 경로: `command` 없음 → ENTRYPOINT tini → entrypoint.sh(첫 인자가 `-`면 `dragonfly --logtostderr`를 앞에 붙인다) — tini가 SIGTERM을 전달해 종료 스냅샷이 돈다.
+#   uid 999(이미지 `dfly`) → entrypoint의 root 분기(chown · setpriv)를 타지 않는다.
+# - args: 과제 문면 4개(`--maxmemory=768mb` — 스레드당 ≥ 256MiB · 노드 B 2 vCPU · `--aclfile /etc/dragonfly/users.acl` · `--dir /data` · `--snapshot_cron "*/5 * * * *"`) +
+#   결정 D4 `--dbfilename=dump`(스냅샷 파일 무한 누적 방지 — 덮어쓰기) + 결정 D5 `--primary_port_http_enabled=false`(requirepass가 비면 주 포트 HTTP가 무인증).
+# - 금지 토큰 0(`--requirepass` · `-requirepass` · `--flagfile` · `--fromenv` · `--tryfromenv`) · **env 0 · envFrom 0**(`DFLY_PASSWORD` · `DFLY_requirepass` 경로 차단 —
+#   비밀번호는 aclfile로만 · 하네스 df-1).
+# - 프로브 tcpSocket `redis` 셋: default OFF라 비인증 명령은 `-NOAUTH` → 자격 없는 exec 프로브는 TCP 확인과 같다(이미지에 redis-cli는 있다 — 2026-10-22 레이어 확인) ·
+#   HTTP `/healthz`는 D5로 닫았다 · 적재 중 `-LOADING` 창은 짧고 소비자는 fail-closed 503.
+# - prod aclfile에는 `sample-pod`가 **없다**(dev 전용 검사 계정 — 계약 §ACL 표 · README §0). 검사 Job은 dev만 본다(ns jt-dev · dev scope 자격).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dragonfly-prod
+  namespace: data
+  labels:
+    app.kubernetes.io/name: dragonfly
+    app.kubernetes.io/instance: dragonfly-prod
+    app.kubernetes.io/part-of: platform-dragonfly
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"            # 리소스 수준 wave — ES · Service("0") 뒤 · PVC와 같은 wave. Application 표의 숫자가 아니다
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: dragonfly
+      app.kubernetes.io/instance: dragonfly-prod
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: dragonfly
+        app.kubernetes.io/instance: dragonfly-prod
+        app.kubernetes.io/part-of: platform-dragonfly
+    spec:
+      terminationGracePeriodSeconds: 60          # 종료 스냅샷 시간(계약 §쓰기 규약 · 하네스 df-1)
+      nodeSelector:
+        role: data
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: dragonfly
+          image: ghcr.io/dragonflydb/dragonfly:v1.40.1@sha256:ebf3c6c213e82fb51b4521660cca13f06f3421dc5b1ed14f2f474c50b5e29986
+          args:
+            - --maxmemory=768mb
+            - --aclfile
+            - /etc/dragonfly/users.acl
+            - --dir
+            - /data
+            - --snapshot_cron
+            - "*/5 * * * *"
+            - --dbfilename=dump
+            - --primary_port_http_enabled=false
+          ports:
+            - name: redis
+              containerPort: 6379
+              protocol: TCP
+          startupProbe:
+            tcpSocket:
+              port: redis
+            periodSeconds: 2
+            timeoutSeconds: 2
+            failureThreshold: 60
+          readinessProbe:
+            tcpSocket:
+              port: redis
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket:
+              port: redis
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 900Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: acl
+              mountPath: /etc/dragonfly
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: dragonfly-prod-data
+        - name: acl
+          secret:
+            secretName: dragonfly-prod-acl
+            items:
+              - key: users.acl
+                path: users.acl
+            defaultMode: 0440
+        - name: tmp
+          emptyDir: {}

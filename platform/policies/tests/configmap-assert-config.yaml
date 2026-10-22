@@ -9,6 +9,7 @@
 #   - DB·role 이름              data-model.md §7(prod `identity_admin`·`identity_admin_app`·`identity_admin_owner`, dev `dev_` 접두, 공유 DB `authentik`·`openfga`)
 #                               — 선언 정본은 gitops `platform/cnpg-databases/databaseroles.yaml`(T054)
 #   - Dragonfly ACL 사용자·패턴 tasks.md T057 · contracts/denylist.md(dev 전용 검사 계정 `sample-pod`, 읽기 전용 패턴 `%R~revoked:*`)
+#   - Dragonfly 주소(비인증 PING) contracts/denylist.md §ACL `DRAGONFLY_URL`의 호스트·포트(`dragonfly-<env>.data.svc:6379`) — Service는 gitops platform/dragonfly/(T057)
 #   - Kafka 토픽·사용자         tasks.md T056(`dev.identity-admin.session.revoked` · KafkaUser `dev-identity-admin`)
 #   - Kafka bootstrap 호스트    Strimzi 관례 `<cluster>-kafka-bootstrap`(T055 클러스터 이름 `jt-kafka`, listener `tls` 9093) — **계약 미기재, T055에서 확인**
 #   - Kafka 컨슈머 그룹 — T056 확정: KafkaUser `dev-identity-admin` ACL group prefix `dev-identity-admin-` Read(data-model §6 2026-10-16 정정 · platform/kafka-topics/kafkausers.yaml)
@@ -49,7 +50,12 @@ data:
   DRAGONFLY_ACL_USER: "sample-pod"
   DRAGONFLY_ACL_PATTERN: "%R~revoked:*"
   # NOPERM 프로브가 지우려고 시도하는 키(거부되므로 실제로 지워지지 않는다).
+  # T057부터 writer-set(identity-admin · SET … EX 120) · reader-get · reader-set-denied도 이 키를 쓰고, 끝에 identity-admin DEL로 정리한다(NOTE 줄).
   REVOKED_PROBE_KEY: "revoked:sub:assert-probe"
+  # 비인증 PING(`noauth` — T057)의 목적지. 자격이 든 DRAGONFLY_URL을 파싱하지 않으려고 호스트·포트를 따로 둔다(비밀 아님).
+  # 값 = Service `dragonfly-dev`(gitops platform/dragonfly/services.yaml · ns data · ClusterIP 6379) — 매트릭스 `jt-dev → data 6379` 안.
+  DRAGONFLY_HOST: "dragonfly-dev.data.svc"
+  DRAGONFLY_PORT: "6379"
 
   # --- Kafka(jt-kafka, ns data) -----------------------------------------------
   KAFKA_BOOTSTRAP: "jt-kafka-kafka-bootstrap.data.svc:9093"

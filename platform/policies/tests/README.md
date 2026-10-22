@@ -14,7 +14,7 @@ Job은 **dev scope 자격만** 받는다. prod 자격은 없다 — dev 자격�
 | `kustomization.yaml` | **독립 kustomization**(`namespace: jt-dev`, resources 5). 상위 `platform/policies/kustomization.yaml`은 이 디렉터리를 참조하지 않는다 |
 | `externalsecret-assert-env.yaml` | dev scope 자격 하나 — ExternalSecret `assert-env`(store `vault-dev`, `dev/` 키만) |
 | `configmap-assert-config.yaml` | 비밀이 아닌 값(엔드포인트·DB/토픽/role 이름·합성 식별자) |
-| `job-data-assert.yaml` | pg-main 6검사(T054가 `role-attrs` · `app-session-timeouts`를 더했다) + initContainer가 Dragonfly 2검사 |
+| `job-data-assert.yaml` | pg-main 6검사(T054가 `role-attrs` · `app-session-timeouts`를 더했다) + initContainer가 Dragonfly 7검사(T057이 `noauth` · `writer-set` · `reader-get` · `reader-set-denied` · `reader-cross-denied`를 더했다) |
 | `job-kafka-assert.yaml` | Kafka 2검사 |
 | `job-authz-assert.yaml` | OpenFGA 2검사 |
 
@@ -34,9 +34,9 @@ SUMMARY: pass=<n> fail=<n>
 - **종료 코드**: `fail=0`이면 0, 하나라도 실패하면 1. 즉 `status.succeeded ≥ 1`은 "모든 검사 PASS"와 같다.
 - 보조 줄은 `EVIDENCE:`(원문 증거)와 `NOTE:`(정리 작업 기록)뿐이다. 파서는 `^RESULT:`·`^SUMMARY:`만 본다.
 - **출력은 짧게 유지한다.** `cluster.tests.ps1`의 `np-2-*`와 모노레포 `data.tests.ps1`의 `job-2`는 `kubectl logs job/<이름> --tail=50`을 읽으므로,
-  모든 `RESULT:`와 `SUMMARY:`는 마지막 50줄 안에 들어와야 한다(현재 최대 **16줄** = data-assert: pg `RESULT` 6 + initContainer 줄 ≤ 9
-  (`EVIDENCE:` 머리 1 + ACL LIST ≤ 6(`head -n 6`) + `RESULT` 2) + `SUMMARY` 1 · kafka-assert ≤ 5 · authz-assert ≤ 5 — T054 재계산 · kafka-assert는 T056 재계산. 이전 표기 "11줄"은
-  ACL LIST 6줄 상한을 덜 센 값이었다(T054 전 data-assert 최대 = 14줄)).
+  모든 `RESULT:`와 `SUMMARY:`는 마지막 50줄 안에 들어와야 한다(현재 최대 **22줄** = data-assert: pg `RESULT` 6 + initContainer 줄 ≤ 15
+  (`RESULT` 7 + `EVIDENCE:` 머리 1 + ACL LIST ≤ 6(`head -n 6`) + `NOTE:` 정리 1) + `SUMMARY` 1 · kafka-assert ≤ 5 · authz-assert ≤ 5 — **T057 재계산**(dev aclfile 4사용자면 ACL LIST 4행 → 20줄) ·
+  kafka-assert는 T056 재계산. 이전 표기: T054 "16줄"(initContainer ≤ 9 = `RESULT` 2) · 그 전 "11줄"은 ACL LIST 6줄 상한을 덜 센 값이었다(T054 전 data-assert 최대 = 14줄)).
   **kafka-assert ≤ 5 — T056 재계산(리뷰 r1 O5 · r2 K5 · O11)**(컨슈머 선기동 · `latency=` 토큰 · 프로듀서 오류 증거 · 비밀번호 형식 검사): `RESULT` 2 + `SUMMARY` 1 + `EVIDENCE:` ≤ 2. `EVIDENCE:`를 내는 경로는 roundtrip의
   둘뿐이다 — "마커 미수신"(`EVIDENCE: consumer 수신 <n>줄 · stderr: …` 1줄 + `EVIDENCE: producer 마지막 오류: …` ≤ 1줄)과 "produce 실패"(`EVIDENCE: producer 마지막 오류: …` ≤ 1줄).
   **비밀번호 형식 검사(리뷰 r2 K5)**: 필수 값 확인 직후 · client.properties를 쓰기 **전**에 `KAFKA_PASSWORD`에 base64url(`A–Z a–z 0–9 _ -`) 밖의 문자가 하나라도 있으면 두 검사를
@@ -49,8 +49,11 @@ SUMMARY: pass=<n> fail=<n>
   EVIDENCE가 없으면 원인이 "마커 미수신"에 가려진다). 레코드 값은 찍지 않는다.
   미할당 · 컨슈머 조기 종료 · 지연 측정 불가는 사유를 `RESULT: FAIL` 줄 안에 싣는다. 컨슈머 · describe · 프로듀서의 출력은 전부 `/tmp` 파일로 가고 Job stdout에 섞이지 않는다
   (검증 기록 T056 — 모의 11경로 3–5줄).
-- 값 자체(비밀번호·토큰·URL의 자격 부분)는 절대 출력하지 않는다. `ACL LIST` 증거의 비밀번호 해시(`#<hex>`)는
-  `#<redacted>`로 치환한 뒤 찍는다.
+- **data-assert 결과 파일 부재 fallback(T057 수정 라운드 r1)** = Dragonfly 7 id 전부 FAIL(`RESULT: FAIL <id> initContainer 결과 파일(/work/dragonfly.result)이 없다` · id 수 불변 · 출력 순서 그대로 · 줄 수 pg 6 + 7 + `SUMMARY` 1 = **14** · exit 1 — 이전에는 `acl-list` · `noperm` 2줄뿐이었다).
+- 값 자체(비밀번호·토큰·URL의 자격 부분)는 절대 출력하지 않는다. **data-assert initContainer(T057)**: 출력에 실리는 redis-cli 응답은 전부 같은 가림을 거친다 —
+  `redis://…`(공백 전까지) → `redis://<redacted>` · `#` 뒤 hex **8자 이상** → `#<redacted>`(`sed -E` 한 번) — 응답 조각은 그 첫 줄 100자다. 옛 규칙 "`#` 뒤 hex 16자 이상"은
+  Dragonfly `ACL LIST`가 해시를 **15자로 줄여** 보여 주므로(gitops `platform/dragonfly/README.md` §4) 한 번도 매치되지 않아 해시 앞 15자가 로그에 남았다(T057 정정 · 검증 기록 T057의 변이 m2).
+  redis-cli는 `--no-auth-warning`으로 부른다 — 없으면 `-u` URL에 비밀번호가 있을 때 stderr 경고 줄이 응답 앞에 붙는다(정확 일치 판정 `OK` · `probe`가 깨지고 증거 첫 줄이 경고가 된다).
 
 읽는 법(quickstart §US3 그대로):
 
@@ -72,8 +75,13 @@ kubectl -n jt-dev logs job/data-assert | grep 'NOPERM'          # 읽기 전용 
 | | `ssl-verify-full` | `sslmode=verify-full` URL로 붙은 세션의 `pg_stat_ssl`(자기 backend)이 `ssl=t` | quickstart §US3 ④ · pod-template §DB 연결 |
 | | `role-attrs` | 로그인 없이 카탈로그(`pg_roles`)로 app 2(`identity_admin_app`·`dev_identity_admin_app`) `rolbypassrls=f`·`rolsuper=f`, pod owner 2(`identity_admin_owner`·`dev_identity_admin_owner`) `rolbypassrls=t`·`rolsuper=f` — 넷 다 `rolcreatedb=f`·`rolcreaterole=f`·`rolcanlogin=t`(DatabaseRole 선언이 PG에 실제로 적용됐는지). role 이름은 ConfigMap `PROD_APP_ROLE`·`DEV_APP_ROLE`·`PROD_OWNER_ROLE`·`DEV_OWNER_ROLE` | tasks.md T054 문면 · data-model §7 · 모노레포 build-notes 「T050 · T051」(T054 몫) |
 | | `app-session-timeouts` | `pg_roles.rolconfig`(DB 무관 role 설정)에 app 2 모두 `statement_timeout=15s` **그리고** `idle_in_transaction_session_timeout=30s` — 적용 주체는 gitops `platform/cnpg-databases`의 PostSync Job(app role 자신의 `ALTER ROLE CURRENT_USER SET`). **role 수준 기본값만 본다** — DB별 덮어쓰기(`ALTER ROLE … IN DATABASE … SET` = `pg_db_role_setting.setdatabase ≠ 0`, app role 자신도 낼 수 있다)는 보지 않는다(실효 값이 달라도 PASS — security r2 K13 · 확장은 후속) | data-model §7 app role 행(2026-10-14) · 같은 build-notes |
-| | `acl-list` | Dragonfly `ACL LIST`에 dev 검사 계정(`sample-pod`) 행이 있고 읽기 전용 패턴 `%R~revoked:*`를 포함 | quickstart §US3 VD-4 · T057 · denylist.md |
-| | `noperm` | 그 계정으로 `DEL revoked:sub:assert-probe` → `NOPERM` | quickstart §US3 · T057 |
+| | `noauth` | 자격 없이 `PING`(ConfigMap `DRAGONFLY_HOST`·`DRAGONFLY_PORT` = Service `dragonfly-dev`) → `NOAUTH`(aclfile `USER default OFF -@all`). `PONG`이면 FAIL "aclfile 미적재(default nopass) 의심" — 파싱 오류 1건이면 Dragonfly가 무인증으로 기동한다(gitops `platform/dragonfly/README.md` §1) | T057 · denylist.md · 모노레포 build-notes 「T050 · T051」 T057 몫 |
+| | `acl-list` | Dragonfly `ACL LIST`(identity-admin — `DRAGONFLY_URL`)에 dev 검사 계정(`sample-pod`) 행이 있고 읽기 전용 패턴 `%R~revoked:*`를 포함. 앞에 `EVIDENCE:` 머리 1줄 + 가린 행 ≤ 6줄 | quickstart §US3 VD-4 · T057 · denylist.md |
+| | `writer-set` | identity-admin으로 `SET revoked:sub:assert-probe probe EX 120` → 정확히 `OK`(쓰는 쪽 `~revoked:*`) | T057 · denylist.md §ACL 표 · §검증 T051 |
+| | `reader-get` | `sample-pod`로 같은 키 `GET` → 정확히 `probe`(`%R~` 읽기 허용 · nil = 빈 응답이면 FAIL) | T057 · denylist.md |
+| | `reader-set-denied` | `sample-pod`로 같은 키 `SET … x` → `NOPERM`(`OK`면 FAIL "%R~ 패턴이 쓰기를 막지 않음") | T057 · denylist.md |
+| | `reader-cross-denied` | `sample-pod`로 `SET identity-admin:assert-probe 1 EX 120` → `NOPERM`(자기 접두 `sample-pod:*` 밖). `EX 120`: ACL이 깨져 SET이 성공하는 FAIL 경로에서도 키가 120 s 뒤 사라진다 — 정상 경로(NOPERM)에서는 키가 생기지 않는다(정리 DEL 대상 아님 · 수정 라운드 r1) | T057 · denylist.md |
+| | `noperm` | 그 계정으로 `DEL revoked:sub:assert-probe` → `NOPERM`(키 패턴과 명령 카테고리는 짝지어지지 않는다 — `%R~`로만 막힌다). 뒤에 판정이 아닌 `NOTE: cleanup DEL revoked:sub:assert-probe -> <n>` 1줄(identity-admin DEL — 실패해도 `EX 120`) | quickstart §US3 · T057 |
 | `kafka-assert` | `roundtrip` | dev 토픽에 produce → 같은 토픽에서 마커 consume 성공(경과 시간 함께 출력). **T056**: 컨슈머를 먼저 띄워 파티션 할당(describe의 CONSUMER-ID 행)을 확인한 뒤 produce하고, PASS 근거에 `latency=<n>ms`를 **정확히 1개** 찍는다 — **latency = 마커 수신 시각 − 레코드 CreateTime(ms · 둘 다 이 파드의 시계)** · spec US3 AC3의 **5 s 기준은 이 값**이다(모노레포 `kafka.tests.ps1` job-k-3 ≤ 5000). 같은 줄의 벽시계 `produce→consume <n>s`(produce 시작 ~ 마커 수신 · 프로듀서 JVM 기동 포함)는 Job 자체 상한 `KAFKA_ROUNDTRIP_DEADLINE_S` 판정용이다. 실패 줄에는 토큰이 없다. **리뷰 r1 O5**: 할당 확인은 **자기 멤버**(실행마다 고유 `client.id` = `kafka-assert-<pid>-<epoch>`)의 행만 본다(직전 실행의 옛 멤버 행을 준비로 오인하지 않는다) · 마커 미수신 · produce 실패 경로는 `EVIDENCE: producer 마지막 오류:`를 함께 낸다(§로그 계약). **리뷰 r2 K5 · O11**: `KAFKA_PASSWORD`가 base64url 형식이 아니면 JVM을 띄우기 전에 이 id와 `cross-env-denied`를 함께 FAIL로 닫는다(값 미출력) · 진단 줄은 전부 `safe_tail` 규칙(§로그 계약) — produce rc≠0의 RESULT 줄은 스택 꼬리(`\t... N more`)가 아니라 원인 줄을 싣는다 | quickstart §US3 · T051 인계(모노레포 build-notes 「T050 · T051」 토큰 형식) |
 | | `cross-env-denied` | 같은 dev 자격으로 **prod 토픽** write 시도 → 인가 거부(`TopicAuthorizationException`). 비밀번호 형식이 base64url이 아니면 roundtrip과 같은 사유로 FAIL(리뷰 r2 K5) · 인가 거부가 아닌 실패의 꼬리는 `safe_tail`(리뷰 r2 K5) | quickstart §US3 · T056 ACL |
 | `authz-assert` | `check-allowed` | 튜플이 있는 테넌트에 대한 `check` → `allowed=true` | quickstart §US4 5 |
@@ -90,15 +98,18 @@ kubectl -n jt-dev logs job/data-assert | grep 'NOPERM'          # 읽기 전용 
 | `dev/db/dev_identity_admin/app` | `username` | `PGUSER` | data-assert |
 | `dev/db/dev_identity_admin/app` | `password` | `PGPASSWORD` | data-assert |
 | `dev/kafka/identity-admin` | `password` | `KAFKA_PASSWORD` | kafka-assert |
-| `dev/dragonfly/identity-admin` | `url` | `DRAGONFLY_URL` | data-assert(ACL 조회) |
-| `dev/dragonfly/sample-pod` | `url` | `DRAGONFLY_SAMPLE_URL` | data-assert(NOPERM 프로브) |
+| `dev/dragonfly/identity-admin` | `url` | `DRAGONFLY_URL` | data-assert(`acl-list` · `writer-set` · 정리 DEL) |
+| `dev/dragonfly/sample-pod` | `url` | `DRAGONFLY_SAMPLE_URL` | data-assert(`reader-get` · `reader-set-denied` · `reader-cross-denied` · `noperm`) |
 | `dev/openfga/store_id` | `store_id` | `OPENFGA_STORE_ID` | authz-assert |
 | `dev/openfga/preshared` | `key` | `OPENFGA_TOKEN` | authz-assert |
 
 - 전부 `dev/` 접두다(`platform/`·`prod/` 경로 0개). `dataFrom`·항목별 `sourceRef`는 쓰지 않는다.
 - 세 Job이 **같은 Secret 하나**를 `envFrom`한다(설계 §6.3). Job마다 ES를 쪼개면 Job 사이 자격 격리가 한 겹
   늘어난다(예: kafka-assert가 DB 비밀번호를 갖지 않음) — 채택 여부는 아래 §후속 결정.
-- 비밀이 아닌 값(호스트·DB/토픽 이름·합성 식별자)은 ConfigMap `assert-config`에 있다.
+- 비밀이 아닌 값(호스트·DB/토픽 이름·합성 식별자)은 ConfigMap `assert-config`에 있다. **T057**: 비인증 `PING`(`noauth`)은 자격 없이 붙어야 하므로 ConfigMap `DRAGONFLY_HOST`
+  (`dragonfly-dev.data.svc` — gitops `platform/dragonfly/services.yaml`) · `DRAGONFLY_PORT`(`6379`)를 쓴다(자격이 든 `DRAGONFLY_URL`을 셸에서 파싱하지 않는다). Dragonfly 7검사는 이 둘과
+  `DRAGONFLY_URL` · `DRAGONFLY_SAMPLE_URL` · `REVOKED_PROBE_KEY` · `DRAGONFLY_ACL_USER` · `DRAGONFLY_ACL_PATTERN` 중 하나라도 비면(또는 없으면) **7개 id 전부** `RESULT: FAIL <id> 필수 값 없음(…): <변수 이름>`
+  (값 미출력 · id 수 불변 · redis-cli 호출 0)이다.
 
 ## 이미지
 
@@ -295,3 +306,58 @@ exit 1 · 값 · 길이 · 조각 출력 0 · JVM 기동 0) ⓑ 진단 줄 헬�
   (옛 흐름의 벽시계 24 s = 프로듀서 기동 + 컨슈머 유휴 대기 20 s — T051 리뷰 F1의 "항상 ≥ 20 s"와 같다).
 - 이 Job은 여전히 **배포되지 않는다**(Application 없음 — T059). 하네스 job-k-1 · job-k-2 · job-k-3은 그때까지 FAIL이 정상이고, T059 첫 실행이 할당 소요 · 실제 latency · 동시 JVM 메모리를 처음 잰다
   (위 「확인이 필요한 값」 T056 두 행).
+
+## 검증 기록 (T057 — data-assert Dragonfly 절에 `noauth` · `writer-set` · `reader-get` · `reader-set-denied` · `reader-cross-denied`, 저장소 로컬 · 2026-10-22)
+
+바꾼 것은 `job-data-assert.yaml`의 **dragonfly-assert initContainer 스크립트**와 머리 주석(검사 id 목록 · "8개 판정" → "13개 판정"), `configmap-assert-config.yaml`의 **키 2개**(`DRAGONFLY_HOST` ·
+`DRAGONFLY_PORT` + 주석)다. pg-assert 컨테이너 · 병합 절 · Job spec · 두 이미지는 1라운드에서 그대로였다(렌더에서 뽑은 pg-assert 스크립트가 main `3fa4440`과 바이트 동일 — `cmp`) —
+**수정 라운드 r1**이 ⑥ `reader-cross-denied` 명령(`EX 120`)과 병합 절(결과 파일 부재 fallback · 주석)을 바꿨다(아래 「수정 라운드 r1」 — pg 검사 절 ①–⑥ · Job spec · 이미지는 여전히 그대로).
+순서 = 필수 값 7개 확인(하나라도 비거나 없으면 7개 id 전부 FAIL · `exit 0`) → `noauth`(`-h`/`-p` · 자격 없음) → `acl-list`(`EVIDENCE:` 머리 1 + 가린 행 ≤ 6) → `writer-set` → `reader-get` →
+`reader-set-denied` → `reader-cross-denied` → `noperm` → `NOTE: cleanup DEL …` 1줄. redis-cli 호출은 전부 `redis-cli --no-auth-warning -t 5 … 2>&1`이고 판정은 **응답 문자열**로 한다(종료 코드 아님).
+출력되는 응답 조각은 전부 가림(§로그 계약) 뒤 첫 줄 100자다. initContainer는 늘 `exit 0`(판정은 FAIL 줄로 남는다 — 기존과 같다).
+
+- `kustomize build platform/policies/tests` exit 0 — 객체 5개 그대로(ConfigMap 1 · ExternalSecret 1 · Job 3) · ConfigMap 키 +2(비밀 아님 — Service 이름 · 포트).
+  렌더에서 뽑은 initContainer 스크립트 **92줄**(측정 `kustomize build platform/policies/tests | yq 'select(.kind=="Job" and .metadata.name=="data-assert") | .spec.template.spec.initContainers[0].args[0]' | wc -l` —
+  yq가 끝에 빈 줄 1개를 더하므로 YAML 블록 :82–172의 91줄보다 1 많다 · 수정 라운드 r1 전 91줄 · 이전 32줄): `sh -n` · `dash -n` · `bash --posix -n` 통과(shellcheck는 이 작업 환경에 없어 돌리지 않았다).
+- **도구 사실**(redis 태그 `8.8.2` `src/redis-cli.c` 판독 — 검사 Job 이미지의 redis-cli): stdout이 터미널이 아니면 raw 출력(:10982–10983) · raw 오류 응답 = 오류 문자열 + 줄바꿈을 **stdout**에(:2032–2035) ·
+  nil = 출력 없음(:2029–2031 — `$(…)`에서 빈 문자열) · `-e` 없이는 오류 응답에도 종료 코드 0(:2355–2361) · 연결 실패는 stderr `Could not connect to Redis at <호스트>:<포트>: …` + 종료 1
+  (:1724–1735 · :3320–3326 · :3691) · `-u` URL에 비밀번호가 있으면 `--no-auth-warning`이 없을 때
+  stderr에 `Warning: Using a password with '-a' or '-u' option on the command line interface may not be safe.`(:2731–2732 · :3085–3088) · URI 파싱 오류 문구는 URI를 찍지 않는다(`cli_common.c` — `Invalid URI scheme`).
+- **모의 실행**(가짜 `redis-cli` — PATH 앞 디렉터리의 sh 스크립트가 인자 모양(`-u` 사용자 · `-h` · 명령)으로 응답을 고르고 `--no-auth-warning`이 없으면 실제처럼 stderr 경고를 낸다 · 렌더에서 뽑은 스크립트의 `/work/`만
+  바꿔 dash로 그대로 실행 · ConfigMap 값은 렌더에서 읽음 · URL은 가짜 비밀번호를 넣은 dev 모양):
+
+  | 경로 | 결과 파일 줄 | RESULT · 보조 줄 | 누출(`redis://` 비가림 · 가짜 비밀번호 · `#` + hex 8자 이상) |
+  |---|---|---|---|
+  | ⓐ 전부 정상 | **13** | PASS 7(noauth → acl-list → writer-set → reader-get → reader-set-denied → reader-cross-denied → noperm) · `EVIDENCE:` 머리 1 + ACL 행 4(해시 `#<redacted>`) · `NOTE: cleanup DEL revoked:sub:assert-probe -> 1` | 0 · 0 · 0 |
+  | ⓑ `noauth`가 `PONG` | 13 | `FAIL noauth 미인증 PING이 통과(PONG) — aclfile 미적재(default nopass) 의심` + PASS 6 | 0 · 0 · 0 |
+  | ⓒ `reader-set-denied`가 `OK` | 13 | `FAIL reader-set-denied sample-pod로 SET revoked:sub:assert-probe 가 성공(OK) — %R~ 패턴이 쓰기를 막지 않음` + PASS 6 | 0 · 0 · 0 |
+  | ⓓ `DRAGONFLY_HOST=''` | **7** | FAIL 7(`… 필수 값 없음(ExternalSecret assert-env · ConfigMap assert-config): DRAGONFLY_HOST`) · redis-cli 호출 0 | 0 · 0 · 0 |
+  | ⓔ `DRAGONFLY_ACL_USER` · `DRAGONFLY_ACL_PATTERN` **unset**(`set -u` 아래) | 7 | FAIL 7(두 이름) · 호출 0 · 셸 중단 없음 | 0 · 0 · 0 |
+  | ⓕ Dragonfly 연결 거부 | 10 | FAIL 7(근거 `Could not connect to Redis at dragonfly-dev.data.svc:6379: Connection refused`) · `EVIDENCE:` 머리 1 + 오류 1행 · NOTE 1 | 0 · 0 · 0 |
+  | ⓖ 응답에 자격 URL과 64자 해시가 섞임(가림 시험) | 13 | `FAIL noauth … -> ERR mock echo redis://<redacted> #<redacted>` + PASS 6 | 0 · 0 · 0 |
+
+- **실제 셸**: 같은 스크립트 · 같은 가짜 redis-cli를 로컬에 캐시된 `redis:8-alpine`(BusyBox v1.37.0 ash · Alpine 3.23.5 — 검사 Job 이미지 `redis:8.8.2-alpine`과 같은 계열) 일회용 컨테이너(`--network none` ·
+  읽기 전용 루트 · uid 65534)에서 ⓐ로 돌려 결과 파일이 dash 결과와 **바이트 동일**(13줄)했다.
+- **실제 redis-cli ↔ 실제 RESP 서버**(같은 일회용 컨테이너 안 `redis-server` 8.10.1 — **Redis ACL이지 Dragonfly가 아니다** · 사용자 3(default off · identity-admin · sample-pod)을 `ACL SETUSER`로 만든 뒤 가짜 redis-cli 없이 실행):
+  7개 전부 PASS · 12줄(ACL 행 3) · Redis `ACL LIST`의 64자 해시도 `#<redacted>` · 정리 뒤 프로브 키 `EXISTS` 0 · `identity-admin:assert-probe` 0. 같은 서버로 확인: `--no-auth-warning` 없이 `-u` → 첫 줄이 경고 ·
+  붙이면 `PONG`만 · 오류 응답(`NOAUTH`) 종료 코드 0 · nil 출력 1바이트(줄바꿈). Dragonfly 쪽 동작(aclfile 적재 · `%R~` · NOPERM 문구 · 15자 축약)은 소스 판독뿐이다 — 라이브 판정은 VD-4(gitops `platform/dragonfly/README.md` §3).
+- **변이**(같은 모의 ⓐ): m1 = `rc()`에서 `--no-auth-warning`을 빼면 `writer-set` · `reader-get`이 **거짓 FAIL**(응답 첫 줄이 경고)이고 NOPERM 근거 · ACL 첫 행이 경고 줄이 된다(14줄) ·
+  m2 = 가림을 옛 `{16,}`로 되돌리면 ACL 행 3개에 해시 앞 15자가 그대로 남는다(누출 hash 3).
+- **빨강 → 초록**: main `3fa4440`의 스크립트를 같은 모의(가짜 psql로 pg 6 PASS)로 돌린 Job 로그(15줄)는 `EVIDENCE:` 첫 행이 경고 줄 · ACL 행 3개에 해시 15자 노출 · `noperm` 근거가 경고 줄이고,
+  모노레포(`c20674b` — `6049fb5`와 하네스 파일 동일) 하네스 `tests/platform/kafka.tests.ps1`의 **판정 코드 자체**(최상위 함수 + 상수를 AST로 읽어 실행 · `ClusterAssert 'job-d-2'` 본문 · 파일 수정 0 · `Get-ParsedJobLog`만 모의 로그로 바꿔 끼움 ·
+  `--tail=50`)로 job-d-2 **FAIL** "no RESULT line for noauth, writer-set, reader-get, reader-set-denied, reader-cross-denied (the Job does not emit these check ids yet; T057 adds them)"였다.
+  이 PR의 Job 로그(**20줄** = pg `RESULT` 6 + Dragonfly 13 + `SUMMARY: pass=13 fail=0` · pg-assert exit 0) = job-d-2 **PASS**("… PASS; pattern %R~revoked:* present on the sample-pod row (VD-4); SUMMARY pass=13 fail=0 matches 13 RESULT line(s)") ·
+  ⓑ · ⓒ 로그(`SUMMARY: pass=12 fail=1` · exit 1) = job-d-2 FAIL(해당 id). `tests/platform/data.tests.ps1`의 `Test-JobLog`(같은 방식): 이 PR ⓐ = ok · ⓑ · ⓒ = not ok("RESULT FAIL for <id> (outside the tracked set)" + `SUMMARY fail=1`) ·
+  main = ok(그 판정은 Dragonfly id를 요구하지 않는다 — 추적 밖 id의 FAIL만 문제로 본다).
+- **수정 라운드 r1(리뷰 r1 S3 · K3 · O1 → ⑥ · S4 · O4 → 병합 절 — 2026-10-22)**: ⓐ ⑥ `reader-cross-denied`를 `SET identity-admin:assert-probe 1 EX 120`으로(호출 수 · 줄 수 · 판정 문자열 `NOPERM`/`OK` 불변 —
+  PASS/FAIL 문구에 `1 EX 120`) ⓑ 병합 절 fallback(결과 파일 부재)을 `acl-list` · `noperm` 2줄에서 **7 id 루프**로(출력 순서 그대로 · 주석 `⑦⑧` → `⑦–⑬`). 렌더 객체 5 그대로 · data-assert 밖 4객체와
+  data-assert의 두 스크립트 밖은 JSON 동일 · 두 스크립트(initContainer 92줄 · pg-assert 158줄 — 같은 측정 · 이전 91 · 156) `sh -n` · `dash -n` · `bash --posix -n` 통과.
+  모의(1라운드 가짜 redis-cli의 사본이 **새 명령 모양만** 받는다 — 옛 모양 `SET identity-admin:assert-probe 1`은 `ERR mock: unexpected call`): ⓐ 13줄 PASS 7 · 호출 8회 중 6번째 =
+  `sample-pod|SET identity-admin:assert-probe 1 EX 120`(`--no-auth-warning` 붙음) · ⓒ FAIL 1 · 교차 SET 성공(`OK`) 경로 = `FAIL reader-cross-denied sample-pod로 SET identity-admin:assert-probe 1 EX 120 이 성공(OK) — 자기 접두 밖 쓰기가 허용됨` ·
+  옛 스크립트 = reader-cross-denied FAIL(`… -> ERR mock: unexpected call user=sample-pod cmd=SET identity-admin:assert-probe 1`) — 빨강 → 초록.
+  **fallback**(가짜 psql로 pg 6 PASS · 렌더에서 뽑은 pg-assert 스크립트를 바이트 그대로 · `/work`가 없는 환경): **14줄** = pg `RESULT: PASS` 6 + `RESULT: FAIL <id> initContainer 결과 파일(/work/dragonfly.result)이 없다` 7
+  (noauth → acl-list → writer-set → reader-get → reader-set-denied → reader-cross-denied → noperm) + `SUMMARY: pass=6 fail=7` · exit 1 — 옛 병합 절은 9줄(FAIL 2 · `SUMMARY: pass=6 fail=2`).
+  하네스 판정 코드(AST — 위와 같은 방식 · 파일 수정 0): job-d-2 = 새 fallback FAIL(8 problem — `acl-list: RESULT FAIL` · 나머지 6 id `RESULT FAIL -- initContainer 결과 파일(/work/dragonfly.result)이 없다` ·
+  VD-4 패턴 없음 — 7 id 전부 이름) · 옛 fallback FAIL "no RESULT line for noauth, writer-set, reader-get, reader-set-denied, reader-cross-denied (the Job does not emit these check ids yet; T057 adds them)"(사유가 오도된다) ·
+  ⓐ 전체 로그 20줄 = PASS(불변) / `data.tests.ps1` `Test-JobLog` = 새 fallback not ok(추적 밖 FAIL 7 + `SUMMARY fail=7`) · ⓐ ok.
+- 이 Job은 여전히 **배포되지 않는다**(Application 없음 — T059). T057 머지 뒤 VD-4 동안만 운영자가 임시로 적용한다(gitops `platform/dragonfly/README.md` §3 — 기대 로그 줄).
