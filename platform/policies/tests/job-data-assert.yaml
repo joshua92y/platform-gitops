@@ -105,12 +105,25 @@ spec:
                 exit 0
               fi
 
-              # ① noauth — 자격 없이 PING → NOAUTH(aclfile의 `USER default OFF -@all`). PONG이면 aclfile이 적재되지 않아 default(nopass)로 기동한 것이다.
+              # 기동 유예 wait_ready(T057 수정 라운드 r2 · F13): 새 pod의 첫 1–2초에는 NetworkPolicy(kube-router) 규칙이 아직 반영되지 않아
+              #   Dragonfly 연결이 REJECT(= `Connection refused`)될 수 있다 — VD-4 1차 실측(2026-10-22 06:39:50Z)에서 첫 세 호출만 거부됐고
+              #   Dragonfly 재시작 0 · 엔드포인트 ready였다(서버 쪽 아님). 비인증 PING(-t 2) 응답에 `Could not connect`가 없으면(NOAUTH도 연결
+              #   성공이다) 바로 끝내고, 있으면 1초 쉬고 다시 — 최대 15회. 15회 뒤에도 거부면 그대로 진행해 아래 noauth가 FAIL로 드러낸다
+              #   (조용한 통과 0). n = 거부된 시도 수 = sleep 초 → noauth RESULT 근거 끝 ` wait=<n>s`(PASS · FAIL 모두 · 줄 수 불변).
+              n=0
+              while [ "$n" -lt 15 ]; do
+                case "$(redis-cli -h "$DRAGONFLY_HOST" -p "$DRAGONFLY_PORT" -t 2 PING 2>&1)" in
+                  *'Could not connect'*) n=$((n + 1)); sleep 1 ;;
+                  *) break ;;
+                esac
+              done
+
+              # ① noauth — 자격 없이 PING → NOAUTH(aclfile의 `USER default OFF +auth +hello`). PONG이면 aclfile이 적재되지 않아 default(nopass)로 기동한 것이다.
               r=$(rc -h "$DRAGONFLY_HOST" -p "$DRAGONFLY_PORT" PING)
               case "$r" in
-                *NOAUTH*) emit "PASS noauth 미인증 PING -> NOAUTH(default 사용자 OFF)" ;;
-                *PONG*) emit "FAIL noauth 미인증 PING이 통과(PONG) — aclfile 미적재(default nopass) 의심" ;;
-                *) emit "FAIL noauth 미인증 PING이 NOAUTH로 거부되지 않음 -> $(show "$r")" ;;
+                *NOAUTH*) emit "PASS noauth 미인증 PING -> NOAUTH(default 사용자 OFF) wait=${n}s" ;;
+                *PONG*) emit "FAIL noauth 미인증 PING이 통과(PONG) — aclfile 미적재(default nopass) 의심 wait=${n}s" ;;
+                *) emit "FAIL noauth 미인증 PING이 NOAUTH로 거부되지 않음 -> $(show "$r") wait=${n}s" ;;
               esac
 
               # ② acl-list — ACL LIST를 가린 뒤 증거로 남기고, dev 검사 계정 행에 읽기 전용 패턴이 있는지 본다.
@@ -141,10 +154,12 @@ spec:
                 emit "FAIL reader-get ${DRAGONFLY_ACL_USER}로 GET ${REVOKED_PROBE_KEY} 가 probe가 아님(nil = 빈 응답) -> $(show "$r")"
               fi
 
+              # ⑤–⑦ NOPERM 판정(G9): PASS = 응답에 정확히 `NOPERM <검사 계정> ` 접두(Dragonfly 문구는 `-NOPERM <user> has no ACL permissions` 하나 — main_service.cc :1340) · 그 앞 `AUTH failed`는 FAIL — VD-4 1차 실측(2026-10-22) 거짓 양성 3건(`AUTH failed: NOPERM default …`가 옛 `*NOPERM*`을 통과).
               # ⑤ reader-set-denied — 검사 계정으로 revoked 키 SET → NOPERM(읽기 전용 패턴은 쓰기를 막는다).
               r=$(rc -u "$DRAGONFLY_SAMPLE_URL" SET "$REVOKED_PROBE_KEY" x)
               case "$r" in
-                *NOPERM*) emit "PASS reader-set-denied ${DRAGONFLY_ACL_USER}로 SET ${REVOKED_PROBE_KEY} -> $(show "$r")" ;;
+                *'AUTH failed'*) emit "FAIL reader-set-denied ${DRAGONFLY_ACL_USER}로 SET ${REVOKED_PROBE_KEY} 인증 실패(AUTH failed) — NOPERM 판정 불가 · aclfile default 줄 또는 비밀번호 확인 -> $(show "$r")" ;;
+                *"NOPERM ${DRAGONFLY_ACL_USER} "*) emit "PASS reader-set-denied ${DRAGONFLY_ACL_USER}로 SET ${REVOKED_PROBE_KEY} -> $(show "$r")" ;;
                 OK) emit "FAIL reader-set-denied ${DRAGONFLY_ACL_USER}로 SET ${REVOKED_PROBE_KEY} 가 성공(OK) — %R~ 패턴이 쓰기를 막지 않음" ;;
                 *) emit "FAIL reader-set-denied ${DRAGONFLY_ACL_USER}로 SET ${REVOKED_PROBE_KEY} 가 NOPERM으로 거부되지 않음 -> $(show "$r")" ;;
               esac
@@ -153,14 +168,17 @@ spec:
               #    EX 120: ACL이 깨져 SET이 성공하는 FAIL 경로에서도 키가 120 s 뒤 사라진다 — 정상 경로(NOPERM)에서는 키가 생기지 않는다.
               r=$(rc -u "$DRAGONFLY_SAMPLE_URL" SET identity-admin:assert-probe 1 EX 120)
               case "$r" in
-                *NOPERM*) emit "PASS reader-cross-denied ${DRAGONFLY_ACL_USER}로 SET identity-admin:assert-probe 1 EX 120 -> $(show "$r")" ;;
+                *'AUTH failed'*) emit "FAIL reader-cross-denied ${DRAGONFLY_ACL_USER}로 SET identity-admin:assert-probe 1 EX 120 인증 실패(AUTH failed) — NOPERM 판정 불가 · aclfile default 줄 또는 비밀번호 확인 -> $(show "$r")" ;;
+                *"NOPERM ${DRAGONFLY_ACL_USER} "*) emit "PASS reader-cross-denied ${DRAGONFLY_ACL_USER}로 SET identity-admin:assert-probe 1 EX 120 -> $(show "$r")" ;;
                 OK) emit "FAIL reader-cross-denied ${DRAGONFLY_ACL_USER}로 SET identity-admin:assert-probe 1 EX 120 이 성공(OK) — 자기 접두 밖 쓰기가 허용됨" ;;
                 *) emit "FAIL reader-cross-denied ${DRAGONFLY_ACL_USER}로 SET identity-admin:assert-probe 1 EX 120 이 NOPERM으로 거부되지 않음 -> $(show "$r")" ;;
               esac
 
               # ⑦ noperm — 같은 계정으로 revoked 키 DEL → NOPERM(키 패턴과 명령 카테고리는 짝지어지지 않으므로 %R~로만 막힌다 — denylist.md).
               del=$(rc -u "$DRAGONFLY_SAMPLE_URL" DEL "$REVOKED_PROBE_KEY")
-              if printf '%s' "$del" | grep -q 'NOPERM'; then
+              if printf '%s' "$del" | grep -qF 'AUTH failed'; then
+                emit "FAIL noperm DEL ${REVOKED_PROBE_KEY} 인증 실패(AUTH failed) — NOPERM 판정 불가 · aclfile default 줄 또는 비밀번호 확인 -> $(show "$del")"
+              elif printf '%s' "$del" | grep -qF "NOPERM ${DRAGONFLY_ACL_USER} "; then
                 emit "PASS noperm DEL ${REVOKED_PROBE_KEY} -> $(show "$del")"
               else
                 emit "FAIL noperm DEL ${REVOKED_PROBE_KEY} 가 NOPERM으로 거부되지 않음 -> $(show "$del")"
