@@ -34,7 +34,7 @@
 #   v3.5.2 resource_customizations/postgresql.cnpg.io에는 `Cluster`뿐 → 적용 즉시 Healthy · gitops-engine pkg/sync/sync_context.go:559).
 #   다단계 sync는 다음 wave로 가기 전 running task의 health를 기다리고 Degraded를 보면 task Failed → operation Failed로 닫는다(sync_context.go:563–567 · :636–639).
 #   hook Job이 실패해도(Job health Degraded — gitops-engine pkg/health/health_job.go) operation Failed다(sync_context.go:349–361). 자동 sync operation은
-#   **기본 retry**(limit 5 · 5s ×2 · max 3m ≈ 2.6분 — controller/appcontroller.go:2377 `RetryStrategy{Limit: 5}` · pkg/apis/application/v1alpha1/application_defaults.go:6–8)를
+#   **기본 retry**(limit 5 · 5s ×2 · max 3m ≈ 5분 — 대기 10·20·40·80·160 s · 2026-10-16 정정: 이전 표기 ≈ 2.6분은 증가 전 지수로 셈한 값 · T056 라이브 실측 일치 — controller/appcontroller.go:2377 `RetryStrategy{Limit: 5}` · pkg/apis/application/v1alpha1/application_defaults.go:6–8)를
 #   이미 가지며, 그것을 소진해 최종 Failed가 되면 **같은 리비전으로 다시 시작하지 않는다**(appcontroller.go:2391 "Skipping auto-sync: failed previous sync attempt
 #   … will not retry"). 이 Application에서 그 경로는 kv 시드 지연(ES SecretSyncedError)과 PostSync Job의 접속 대기(인스턴스 매니저의 비동기 role·database 생성)다
 #   — 소스 판독 · 라이브 미실측(README VD-6).
@@ -44,7 +44,7 @@
 #     30초 재시도)하고 PostSync Job은 "Secret 파일 없음"으로 바로 FAIL해 다음 재시도로 넘어간다(README §1). 첫 배포는 Sync 단계 16장이 모두 OutOfSync라 첫 시도의
 #     wave 순서는 그대로다. hook은 이 필터에서 빠지지 않는다(:763–765 — PostSync Job은 **전체 sync**마다 돈다. 단 selfHeal 자동 sync(OutOfSync 리소스만 넣는 부분 sync ·
 #     controller/appcontroller.go:2412–2420) · 리소스를 고른 수동 Sync · Apply only는 hook을 건너뛴다 — controller/sync.go:311 skipHooks → sync_context.go:980).
-#   - `retry`(limit 5 · backoff 30s ×2 · maxDuration 5m ≈ 12.5분): 새 안전망이 아니라 **기본 retry의 대체**(appcontroller.go:2379–2381 `op.Retry = *app.Spec.SyncPolicy.Retry`)로
+#   - `retry`(limit 5 · backoff 30s ×2 · maxDuration 5m ≈ 17분 — 대기 60·120·240·300·300 s · 2026-10-16 정정: 이전 표기 ≈ 12.5분): 새 안전망이 아니라 **기본 retry의 대체**(appcontroller.go:2379–2381 `op.Retry = *app.Spec.SyncPolicy.Retry`)로
 #     창을 넓힌 것 — 시드가 머지 직후에 끝나는 경우 · PostSync Job의 대기 예산(480초)이 첫 시도에서 모자란 경우를 덮는다. 재시도마다 PostSync Job이 다시 뜬다
 #     (hook-delete-policy BeforeHookCreation — 앞 Job을 지우고 새로 만든다). 모양은 `platform-cnpg-cluster.yaml`·bootstrap/root-app.yaml의 retry와 같다.
 #   그래도 Failed가 남으면 원인(kv · Secret · role)을 고친 뒤 운영자 **전체** 수동 Sync(리소스 선택 없음 · Apply only 끔 — README §1; 늦은 시드면 ES force-sync →

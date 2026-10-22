@@ -28,13 +28,13 @@
 #   `Primary instance is being restarted in-place` · `… without a switchover` · `Switchover in progress` · `Failing over` · `Waiting for user action` ·
 #   major 업그레이드 · 온라인 업그레이드 phase를 **Degraded**로 매핑한다. 다단계 sync는 다음 wave로 가기 전 running task의 health를 기다리고,
 #   Degraded를 보면 task Failed → operation Failed로 닫는다(gitops-engine pkg/sync/sync_context.go). 자동 sync operation은 **기본 retry**(limit 5 · 5s ×2 ·
-#   max 3m ≈ 2.6분 — controller/appcontroller.go:2377 `RetryStrategy{Limit: 5}` · pkg/apis/application/v1alpha1/application_defaults.go `DefaultSyncRetry*`)를
+#   max 3m ≈ 5분 — 대기 10·20·40·80·160 s · 2026-10-16 정정: 이전 표기 ≈ 2.6분은 증가 전 지수로 셈한 값 · T056 라이브 실측 일치 — controller/appcontroller.go:2377 `RetryStrategy{Limit: 5}` · pkg/apis/application/v1alpha1/application_defaults.go `DefaultSyncRetry*`)를
 #   이미 가지며, 그것을 소진해 최종 Failed가 되면 **같은 리비전으로 다시 시작하지 않는다**(appcontroller.go:2391 "Skipping auto-sync: failed previous sync
 #   attempt … will not retry"). 즉 파라미터 한 줄 변경이 reload/재시작 phase를 그 창보다 오래 지나면 sync가 Failed로 남는다 — 소스 판독,
 #   라이브 미실측(README VD-11로 기록).
 #   - `ApplyOutOfSyncOnly=true`: in-sync 리소스를 task에서 빼므로 Cluster 한 장 변경은 **단일 step**이 되어 health 대기 자체가 없다(바로 Succeeded).
 #     첫 배포는 3장이 모두 OutOfSync라 wave 순서가 그대로 유지된다.
-#   - `retry`(limit 5 · backoff 30s ×2 · maxDuration 5m ≈ 12.5분): 새 안전망이 아니라 **기본 retry의 대체**(appcontroller.go:2379 `op.Retry = *app.Spec.SyncPolicy.Retry`)로
+#   - `retry`(limit 5 · backoff 30s ×2 · maxDuration 5m ≈ 17분 — 대기 60·120·240·300·300 s · 2026-10-16 정정: 이전 표기 ≈ 12.5분): 새 안전망이 아니라 **기본 retry의 대체**(appcontroller.go:2379 `op.Retry = *app.Spec.SyncPolicy.Retry`)로
 #     창을 넓힌 것 — 두 장 이상이 함께 바뀌어 다단계가 남는 경우용. 재시도에서는 이미 적용돼 in-sync인 리소스가 task에서 빠지므로(sync_context.go
 #     `filterOutOfSyncTasks`) 남은 장만 health 대기 없이 적용된다(첫 배포 예: Cluster가 빠지고 ScheduledBackup만 — 그 Backup은 CNPG가 pending으로 들고 있다).
 #     모양은 bootstrap/root-app.yaml의 retry와 같고 값만 CNPG 재시작 창에 맞춰 길다.
