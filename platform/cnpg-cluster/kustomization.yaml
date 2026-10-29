@@ -33,7 +33,9 @@
 #   5) Application `platform-cnpg-cluster` → `clusters/oci-k3s/apps/platform-cnpg-cluster.yaml`(T041부터 라이브). 이 PR은 그 파일에 계약 §Application 규약 **예외**
 #      (`ApplyOutOfSyncOnly=true` + `retry` — 근거는 그 파일 머리 주석 · README §5 · VD-11)만 더한다. 검사 7.1이 `source.path = platform/cnpg-cluster`를 대조한다.
 #   6) 시크릿 값: 없다. 런타임 Secret(`pg-main-ca` · `pg-main-server` · `pg-main-replication` · `pg-main-app`)은 operator가 만든다 — 희망 상태에 Secret 0장(README §0).
-#   7) 복구 런북 · 복구 클러스터(`pg-main-restored` 류) → T058. 검사 Job → `platform/policies/tests/`(T059).
+#   7) 복구 런북 → 모노레포 `docs/runbooks/restore-drill.md`(T058 · 2026-10-29). 복구 객체(side Cluster `pg-main-restore-<날짜>` · backup-list Job · 수동 Backup)는 운영자가 수동 적용하는
+#      임시 객체라 여기 두지 않는다. 전체 PITR(재해 복구)은 **이 디렉터리의 Cluster를 recovery spec(+ `plugins[].serverName` 세대 `pg-main-r<N>`)으로 바꾸는 PR**을 먼저 머지한 뒤
+#      운영자가 Cluster를 지워 selfHeal이 복구로 재생성하게 한다(런북 §3-1 — 역순은 아래 되돌리기의 "빈 DB" 경로). 검사 Job → `platform/policies/tests/`(T059).
 #
 # 되돌리기(순서 고정 — README §5): **Cluster 삭제 = 데이터 삭제**(local-path PVC는 reclaimPolicy Delete). revert 머지 → 렌더 0 → `OutOfSync`가 정상
 #   (`prune: false` + 객체의 `Prune=false`) → 지워야 한다면 운영자가 **마지막 Backup completed와 버킷 오브젝트를 확인한 뒤** ScheduledBackup → Cluster →
