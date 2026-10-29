@@ -1,6 +1,6 @@
 # apps/ — Application 1개/컴포넌트, app-of-apps (계약 gitops-repo.md §디렉터리·§Application 규약)
 
-이름 규약 `platform-<component>` · `<pod>-<env>`. sync-wave는 계약 §sync-wave 단일 표가 정본(T041에서 어노테이션으로 작성). 표에 없는 디렉터리를 만들면 validate가 실패한다.
+이름 규약 `platform-<component>` · `<pod>-<env>`(예외 1 = `platform-tests`). sync-wave는 계약 §sync-wave 단일 표가 정본(T041에서 어노테이션으로 작성). 표에 없는 디렉터리를 만들면 validate가 실패한다.
 
 project: 플랫폼 컴포넌트 → `platform`, 앱 → `dev`·`prod`, `platform/policies/tests/` 검사 Job → `tests`(정의는 `../projects/`). root Application 자신도 T041 PR-A에서 `default` → `platform`으로 옮겼다 — `default`는 봉인되어 어떤 Application도 쓸 수 없다.
 
@@ -47,6 +47,13 @@ cascade로 지워지는 객체가 0건**이다 — 소유 객체인 ExternalSecr
 | 파일 | Application | source.path | 비고 |
 |---|---|---|---|
 | `platform-secrets.yaml` | `platform-secrets` | `platform/secrets` | **T045 G3**(Application) **· G4**(인수형 2장) **· T053 선행**(3장). `secrets/<ns>/`의 ExternalSecret을 적용하는 **배달자** Application — 지금 **3장**이다: `cert-manager/cloudflare-dns-token`(G3) · `cloudflared/cloudflared-tunnel`(G4, ⚠ SSH·K8s API의 유일한 경로인 터널 커넥터의 자격이라 **잠금 위험 단계**로 따로 머지한다 — 사용자 입회·break-glass 확인 아래) · `data/oci-s3-backup`(T053 선행 · **신규** Secret = `creationPolicy: Owner`, 인수형이 아니다 · S3 백업 자격 — Secret 키 `ACCESS_KEY_ID`·`ACCESS_SECRET_KEY`·`REGION` · 소비자 `ObjectStore oci-backups`는 계약 §sync-wave 표의 `cnpg-cluster` 행이라 이 배달자보다 뒤 · ⚠ Owner라 ES 삭제 = Secret GC = 백업 중단 — 아래 "인수 해제" 절차의 대상이 아니다). 소비자 컴포넌트(`platform-cert-manager-issuers`·`platform-cloudflared`)의 소스에 ES를 넣지 않은 이유는 ESO webhook이 `failurePolicy: Fail`이기 때문이다 — 그렇게 하면 webhook 장애 중에 **터널 Deployment 수정도 Argo로 밀 수 없다**. 효과는 장애 제거가 아니라 **소비자 배포와 ExternalSecret 적용의 분리**다. ⚠ Vault·ESO 불가 시 이 Application과 root **health**는 Degraded가 되지만 root **sync**는 이 wave에서 기다리지 않는다(위 `platform-secret-stores` 행과 같은 성질). destination.namespace가 `kube-system`인 것은 표 3열이 `-`이기 때문이다(`platform-policies`와 같은 처리). ⚠ **이 Application을 지워도 ExternalSecret은 남는다** — ES에 `Delete=false`가 붙어 있어 cascade에서 빠지고(Argo v3.5.2 `shouldBeDeleted`가 리소스 어노테이션을 앱 수준 옵션보다 먼저 읽는다 · 소스 판독 · 라이브 미실측), 삭제 대상이 0건이라 승인 어노테이션도 요구되지 않는다. 남은 ES는 추적 없이 5분마다 조정을 계속하므로, 인수 해제는 `../../../platform/secrets/README.md` §5의 `kubectl delete externalsecret`으로만 된다. 상세는 파일 머리 주석과 `../../../platform/secrets/README.md` |
+
+아래 1개는 T059가 추가했다(합계 22). finalizer·syncPolicy는 위와 같은 플랫폼 표준이고(예외 없음) project만 `tests`다. 이름 ↔ source.path 대응의 예외
+(계약 §Application 규약 이름 행 · 검사 7.1의 `tests` 분기)라 아래 「Application 추가 절차」 2단계의 `platform-<component>.yaml` 모양을 따르지 않는다.
+
+| 파일 | Application | source.path | 비고 |
+|---|---|---|---|
+| `platform-tests.yaml` | `platform-tests` | `platform/policies/tests` | **T059.** project `tests`(dev scope · `jt-dev`만) · 검사 Job `data-assert` · `kafka-assert`(`authz-assert`는 T085) · 이름 ↔ 경로 예외(계약 §Application 규약) · 재실행 모델 B. 렌더 5장(ConfigMap 1 · Job별 ExternalSecret 2 · Job 2 — 리소스 수준 sync-wave `"0"` → `"1"` · Application 표의 숫자가 아니다) · 상태 없음(PVC 0) · cascade 삭제 = 검사 산출물뿐. 상세는 파일 머리 주석과 `../../../platform/policies/tests/README.md` §Application `platform-tests` · §재실행 모델 |
 
 앱 Application(`<pod>-<env>`)은 후속 PR에서 이 디렉터리에 추가된다.
 

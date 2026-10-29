@@ -79,8 +79,8 @@ Argo CD Application **`platform-dragonfly` 하나**가 이 디렉터리 하나�
 |---|---|---|
 | `kv/dev/dragonfly/acl` · `kv/prod/dragonfly/acl` | `users.acl`(aclfile 전문) | 이 디렉터리의 ES 2(`vault-data`) |
 | `kv/dev/dragonfly/admin` · `kv/prod/dragonfly/admin` | `password` | ESO 소비자 없음 — 운영자 런북 전용(`ACL LOAD` · 진단) |
-| `kv/dev/dragonfly/identity-admin` · `kv/prod/dragonfly/identity-admin` | `password` · `url` | identity-admin `<pod>-env`(`vault-{env}` · T072) · dev는 검사 Job `assert-env`(`DRAGONFLY_URL`)도 |
-| `kv/dev/dragonfly/sample-pod` | `password` · `url` | 검사 Job `assert-env`(`DRAGONFLY_SAMPLE_URL` · dev 전용 검사 계정 — **prod에는 없다**) |
+| `kv/dev/dragonfly/identity-admin` · `kv/prod/dragonfly/identity-admin` | `password` · `url` | identity-admin `<pod>-env`(`vault-{env}` · T072) · dev는 검사 Job `data-assert`의 ES `assert-data-env`(`DRAGONFLY_URL`)도 |
+| `kv/dev/dragonfly/sample-pod` | `password` · `url` | 검사 Job `data-assert`의 ES `assert-data-env`(`DRAGONFLY_SAMPLE_URL` · dev 전용 검사 계정 — **prod에는 없다**) |
 
 `url` 값의 모양은 계약 §ACL `DRAGONFLY_URL` 행 그대로다(사용자 = pod 이름 · 호스트 `dragonfly-<env>.data.svc:6379` · db 0 — 비밀번호는 같은 경로의 `password`와 같다).
 

@@ -319,7 +319,7 @@ Application `platform-secret-stores`는 `prune: false` + `Prune=confirm` + `Dele
   status(`Ready`/`reason`/`message`)를 실측하고 즉시 삭제한다(운영자, webhook Ready 필요). 지금 §1의 서술은 ESO 2.10.0
   소스 판독이며 라이브로는 확인되지 않았다.
 - **낡은 포인터 3곳(이번 PR에서 함께 고쳤다)** — `platform/vault/kustomization.yaml` · `platform/vault/README.md` §8의
-  "ClusterSecretStore 5개 → `platform/external-secrets/`", `platform/policies/tests/externalsecret-assert-env.yaml`의
+  "ClusterSecretStore 5개 → `platform/external-secrets/`", `platform/policies/tests/externalsecret-assert-{data,kafka,authz}-env.yaml`(data-assert · kafka-assert · authz-assert(T085까지 렌더 밖) — T059가 옛 단일 파일을 Job별로 나눴고 이 주석은 `-data-env`에 남았다)의
   "store 정의는 T045 `secrets/`". 셋 다 이 디렉터리(Application `platform-secret-stores`)를 가리키도록 바꿨다(주석·문서만).
 - **노드 간 webhook 경로는 여전히 미실측이다** — 근거와 한계는 `platform/external-secrets/README.md` §4(D6-④).
   이 디렉터리는 정책을 만들지 않는다(§0).

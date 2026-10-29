@@ -1,4 +1,6 @@
-# 긍정 픽스처 — 플랫폼 Application 21개(계약 §sync-wave 단일 표 그대로). 실제 트리는 컴포넌트당 파일 1개.
+# 긍정 픽스처 — 플랫폼 Application 22개(계약 §sync-wave 단일 표 그대로). 실제 트리는 컴포넌트당 파일 1개.
+# 마지막 platform-tests는 이름 ↔ 경로 대응의 예외 1(source.path platform/policies/tests · project tests — 계약 §Application 규약 이름 행 · T059).
+#   이 부분 트리에는 그 경로가 없다 — 검사 11.3은 "트리에 없음"으로 세고 건너뛴다(7.1은 경로 문자열만 본다).
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -289,6 +291,20 @@ spec:
   project: platform
   source: { repoURL: https://github.com/joshua92y/platform-gitops.git, targetRevision: main, path: platform/traefik }
   destination: { server: https://kubernetes.default.svc, namespace: kube-system }
+  syncPolicy:
+    automated: { prune: false, selfHeal: true }
+    syncOptions: [ServerSideApply=true, CreateNamespace=true, Prune=confirm, Delete=confirm, SkipDryRunOnMissingResource=true]
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-tests
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "70" }
+spec:
+  project: tests
+  source: { repoURL: https://github.com/joshua92y/platform-gitops.git, targetRevision: main, path: platform/policies/tests }
+  destination: { server: https://kubernetes.default.svc, namespace: jt-dev }
   syncPolicy:
     automated: { prune: false, selfHeal: true }
     syncOptions: [ServerSideApply=true, CreateNamespace=true, Prune=confirm, Delete=confirm, SkipDryRunOnMissingResource=true]
