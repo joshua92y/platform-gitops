@@ -178,12 +178,13 @@ positive_asserts=('+[PASS] 2 APP-SSA' '+[PASS] 3 ES' '+[PASS] 3.5 ES-⑤⑥' '+[
   '+[PASS] 5.1 POL-ns' '+[PASS] 5.2 POL-set' '+[PASS] 5.3 POL-egress' '+[PASS] 5.4 POL-port' '+[PASS] 5.5 POL-limitrange'
   '+[PASS] 5.6 POL-webhook-src'
   '+[PASS] 6 AUTHOR' '+[PASS] 7.1 WAVE' '+[PASS] 7.2 WAVE-dir' '+[PASS] 7.3 WAVE-secrets-base'
-  '+[PASS] 7.4 APP-source — Application 24개(파일+렌더링) spec.source 키 = {path, repoURL, targetRevision}'
+  '+[PASS] 7.4 APP-source — Application 25개(파일+렌더링) spec.source 키 = {path, repoURL, targetRevision}'
   '+[PASS] 9.1 CSS-set' '+[PASS] 9.2 CSS-auth' '+[PASS] 9.3 CSS-k8s' '+[PASS] 9.4 CSS-conditions'
-  # 검사 11 · 12(T047): directory source 경로는 root가 읽는 clusters/oci-k3s/apps 하나(Application 23 = 앱 2 + 플랫폼 21) · helmCharts 없음
+  # 검사 11 · 12(T047): directory source 경로는 root가 읽는 clusters/oci-k3s/apps 하나(Application 24 = 앱 2 + 플랫폼 22) · helmCharts 없음
+  #   (T059) 플랫폼 22번째 platform-tests의 source.path platform/policies/tests는 이 부분 트리에 없다 → 11.3 "트리에 없음 1"
   '+[PASS] 11.1 FMT-list' '+[PASS] 11.2 FMT-appset'
-  '+[PASS] 11.3 FMT-dirsource — directory source 경로 1개(clusters/oci-k3s/apps) — .json·.jsonnet·.libsonnet 파일·하위 디렉터리 없음 · Application source.path 24개 = directory source 1 · kustomization 23 · 트리에 없음 0'
-  '+[PASS] 11.4 FMT-dirsource-kind — directory source 경로 1개의 YAML 파일 2개 · 문서 23개 모두 Application(argoproj.io/…) · 빈 문서 0개 건너뜀'
+  '+[PASS] 11.3 FMT-dirsource — directory source 경로 1개(clusters/oci-k3s/apps) — .json·.jsonnet·.libsonnet 파일·하위 디렉터리 없음 · Application source.path 25개 = directory source 1 · kustomization 23 · 트리에 없음 1'
+  '+[PASS] 11.4 FMT-dirsource-kind — directory source 경로 1개의 YAML 파일 2개 · 문서 24개 모두 Application(argoproj.io/…) · 빈 문서 0개 건너뜀'
   # 11.5: 링크 0 — 항목 수는 단언하지 않는다(인덱스 항목 수는 픽스처가 커밋됐는지에 따라 로컬과 CI가 다르다)
   '+[PASS] 11.5 FMT-symlink — 심볼릭 링크 0개 — 작업 트리 항목 '
   '+[PASS] 12.1 HELM-repo' '+[PASS] 12.2 HELM-version' '+[PASS] 12.3 HELM-legacy'
@@ -526,9 +527,11 @@ run_case wave-and-app "$FIX/wave-and-app" 1 \
   "+[FAIL] 7.1 WAVE-mismatch — clusters/oci-k3s/apps/apps.yaml Application/identity-admin-dev: sync-wave 50 ≠ 표 100" \
   "+[FAIL] 7.1 WAVE-missing — clusters/oci-k3s/apps/apps.yaml Application/platform-cnpg: argocd.argoproj.io/sync-wave 어노테이션 없음(기대 20)" \
   "+[FAIL] 7.1 WAVE-path — clusters/oci-k3s/apps/apps.yaml Application/platform-kafka: source.path 'platform/kafka-topics' ≠ platform/kafka" \
+  "+[FAIL] 7.1 WAVE-path — clusters/oci-k3s/apps/apps.yaml Application/platform-tests: source.path 'platform/tests' ≠ platform/policies/tests" \
   "+[FAIL] 7.1 WAVE-name — clusters/oci-k3s/apps/apps.yaml Application/weird-name: 이름 규약 위반" \
   "+[FAIL] 7.1 WAVE-name — clusters/oci-k3s/apps/apps.yaml Application/root: 'root'는 bootstrap/root-app.yaml에서 source.path clusters/oci-k3s/apps 로만 허용(현재 위치 clusters/oci-k3s/apps/apps.yaml, path 'platform/vault', wave 999)" \
-  "+[FAIL] 7.2 WAVE-dir — platform/unknown-thing/: §sync-wave 단일 표에 없는 디렉터리"
+  "+[FAIL] 7.2 WAVE-dir — platform/unknown-thing/: §sync-wave 단일 표에 없는 디렉터리" \
+  "+[FAIL] 7.2 WAVE-dir — platform/tests/: 표의 tests 행은 platform/policies/tests(검증 Job Application platform-tests)를 뜻한다 — 이 디렉터리는 금지"
 
 # --- 7.3: secrets/<ns>의 단일 소유(설계 D3 조건 2) --------------------------------
 # 두 갈래를 한 트리로 덮는다: 소비자 컴포넌트가 같은 base를 포함(단일 소유 위반) · 어디에도 포함되지 않은 secrets/<ns>(죽은 선언).
