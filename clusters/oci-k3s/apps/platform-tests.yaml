@@ -41,7 +41,7 @@
 # syncPolicy: 계약 §Application 규약의 플랫폼 표준 그대로 — 예외(`ApplyOutOfSyncOnly` · `retry`) 없음 · `ignoreDifferences` 없음. 근거: hook이 없고,
 #   Job은 마지막 리소스 wave라 Job의 Progressing · Degraded(Failed)가 operation을 실패시키지 않는다(dragonfly · kafka-topics와 같은 gitops-engine 경로).
 #   앞 wave를 막는 유일한 경로 = wave "0" ES의 `SecretSyncedError`(kv 미시드) — 두 ES가 읽는 kv 4경로는 머지 전에 시드돼 있어야 한다(머지 선행 조건 —
-#   모노레포 build-notes 「T059」 D10). 완료된 Job이 Synced로 남는지(live-only 필드)는 머지 직후 관찰한다(VD-1 — 아니면 `ignoreDifferences` 후속 PR).
+#   모노레포 build-notes 「T059」 D10). 완료된 Job이 Synced로 남는지(live-only 필드)는 머지 직후 관찰한다(VD-1 — 아니면 `ignoreDifferences` 후속 PR · 2026-11-02 실측: Synced 유지 — `ignoreDifferences` 불필요).
 #   `CreateNamespace=true`는 platform/policies가 jt-dev의 선언 정본이라 실질 no-op이다. jt-dev가 없다면 이 project는 `clusterResourceWhitelist: []`라
 #   Namespace 생성이 `resource :Namespace is not permitted in project tests`로 거부돼 operation Failed(fail closed · argo-5가 잡는다 · 소스 판독 · 라이브 미실측).
 #   ns 소유는 `platform-policies`에 둔다 — tests whitelist에 Namespace를 넣지 않는다.
