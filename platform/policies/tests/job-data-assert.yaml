@@ -22,8 +22,8 @@
 #   이름 형식이라, `runAsNonRoot: true`만 두면 kubelet이 비루트 여부를 판정하지 못해 파드가 뜨지 않는다.
 #   psql·redis-cli 바이너리는 모두 world-readable/executable이라 임의 비루트 UID로 실행된다.
 #
-# 실행 시점: 이 매니페스트는 T041에서 만들지만 **Argo Application은 아직 없다**(설계 D3-A). 검사 대상
-#   (pg-main·Dragonfly·CA 미러 Secret)이 US3 산출물이라 지금 배포하면 즉시 실패하기 때문이다 — README §왜 지금 Application이 없나.
+# 실행 시점: Application `platform-tests`(T059 · `clusters/oci-k3s/apps/platform-tests.yaml` — sync-wave는 계약 §sync-wave 표 `policies/tests` 행)가
+#   적용한다 — 리소스 wave "1"(ConfigMap · ES `assert-data-env`의 wave "0"이 Healthy가 된 뒤) · 재실행 모델 B(README §재실행 모델).
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -35,13 +35,15 @@ metadata:
     # 되돌리기 라벨 선택자(`app.kubernetes.io/part-of=platform-policies`)와 겹치지 않게 별도 값을 쓴다 —
     # 비상 시 정책 일괄 삭제가 검사 Job까지 지우거나 그 반대가 되지 않도록.
     app.kubernetes.io/part-of: policies-tests
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
 spec:
   # 재시도하지 않는다: 실패는 대상 시스템의 상태 증거이므로 조용히 재시도해 가리지 않는다.
   backoffLimit: 0
   activeDeadlineSeconds: 300
   # 로그 보존과 무한 적재 사이의 절충: 7일. tester(T049·T102)는 적용 직후에 읽고, 그 뒤에는 GC가 정리한다.
   # 설계 §6.3은 "미지정(로그 보존)"이었고 T041 슬라이스 문면은 "ttlSecondsAfterFinished 명시"였다 —
-  # 둘을 함께 만족시키는 값이며, 재실행 모델을 확정하는 태스크(T102 계열)에서 다시 정한다.
+  # 둘을 함께 만족시키는 값이며, T059 결정 D6으로 7일 확정(주간 재검사 · README §재실행 모델).
   ttlSecondsAfterFinished: 604800
   template:
     metadata:
@@ -190,7 +192,7 @@ spec:
               exit 0
           envFrom:
             - secretRef:
-                name: assert-env
+                name: assert-data-env
             - configMapRef:
                 name: assert-config
           volumeMounts:
@@ -377,7 +379,7 @@ spec:
               [ "$fail" -eq 0 ] || exit 1
           envFrom:
             - secretRef:
-                name: assert-env
+                name: assert-data-env
             - configMapRef:
                 name: assert-config
           volumeMounts:

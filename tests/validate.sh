@@ -73,8 +73,8 @@
 #                           한계: PR이 열리기 **전에** 봇이 그 브랜치에 넣은 커밋은 발신자 판정으로 보이지 않는다(브랜치 쓰기 제한
 #                           ruleset — .github/ruleset-branches.json — 이 막는다). 봇이 push한 뒤 사람이 그 위에 다시 push하면 새 이벤트의
 #                           발신자는 사람이다(사람이 봇의 커밋을 받아서 올린 것으로 본다)
-#   7.1  WAVE               Application sync-wave = §sync-wave 단일 표(이름·경로 규약 포함)
-#   7.2  WAVE-dir           표에 없는 platform/<component>/ 디렉터리 금지
+#   7.1  WAVE               Application sync-wave = §sync-wave 단일 표(이름·경로 규약 포함) · 예외 platform-tests ↔ platform/policies/tests(T059)
+#   7.2  WAVE-dir           표에 없는 platform/<component>/ 디렉터리 금지 · platform/tests/ 금지(표의 tests 행 = platform/policies/tests · T059 r1)
 #   7.3  WAVE-secrets-base  secrets/<ns>의 단일 소유·배달: (a) `secrets/` 아래와 배달자 자신(platform/secrets)을 base로
 #                           가질 수 있는 kustomization은 platform/secrets/kustomization.yaml 하나뿐(절대·저장소 밖 경로는
 #                           위치 판정 불가로 FAIL · 별칭으로 적은 항목은 풀어서 본다 · base 목록을 yq로 풀어 읽지 못하면 FAIL)
@@ -284,6 +284,7 @@ esac
 
 # gitops-repo.md §sync-wave 단일 표: <platform/ 디렉터리> <wave> <컴포넌트가 사는 네임스페이스>
 # (apps/<pod>/overlays/<env> 의 Application `<pod>-<env>` 는 wave 100 — 코드에서 처리)
+# tests = platform/policies/tests(검증 Job Application platform-tests — 경로 예외는 검사 7.1 분기 · 계약 §Application 규약 이름 행 2026-10-29 T059)
 WAVE_TABLE='
 argocd -20 argocd
 policies -10 -
@@ -306,6 +307,7 @@ monitoring 60 monitoring
 cloudflared 60 cloudflared
 reloader 60 reloader
 traefik 60 kube-system
+tests 70 jt-dev
 '
 APP_WAVE=100
 
@@ -2088,6 +2090,10 @@ check_7_sync_wave() {
         want_path="platform/$comp"
         if [[ $comp == argocd ]]; then
           [[ $path == platform/argocd || $path == bootstrap/argocd ]] || fail "7.1 WAVE-path" "$x: source.path '$path' ≠ platform/argocd|bootstrap/argocd"
+        elif [[ $comp == tests ]]; then
+          # 예외 1(계약 §Application 규약 이름 행 · 2026-10-29 T059): 검증 Job Application platform-tests ↔ platform/policies/tests
+          want_path=platform/policies/tests
+          [[ $path == "$want_path" ]] || fail "7.1 WAVE-path" "$x: source.path '$path' ≠ $want_path"
         else
           [[ $path == "$want_path" ]] || fail "7.1 WAVE-path" "$x: source.path '$path' ≠ $want_path"
         fi
@@ -2112,6 +2118,8 @@ check_7_sync_wave() {
     for d in "$ROOT"/platform/*/; do
       [[ -d $d ]] || continue
       dn=$(basename "$d"); cnt=$((cnt + 1))
+      # 표의 tests 행은 중첩 디렉터리 platform/policies/tests(7.1 예외)를 가리킨다 — 그 키가 platform/tests/를 통과시키는 사각을 막는다(T059 리뷰 r1 A3 · C6)
+      if [[ $dn == tests ]]; then fail "7.2 WAVE-dir" "platform/tests/: 표의 tests 행은 platform/policies/tests(검증 Job Application platform-tests)를 뜻한다 — 이 디렉터리는 금지"; continue; fi
       [[ -n ${WAVE_OF[$dn]:-} ]] || fail "7.2 WAVE-dir" "platform/$dn/: §sync-wave 단일 표에 없는 디렉터리(표를 먼저 고친다)"
     done
   fi

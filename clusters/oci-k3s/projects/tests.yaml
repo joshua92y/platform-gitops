@@ -9,10 +9,9 @@
 #
 # 문면에 없는 제약은 두지 않는다 — `namespaceResourceBlacklist` 없음. 세 항목(sourceRepos·destination·cluster 리소스 금지)이 전부다.
 #
-# 이 프로젝트를 쓰는 Application 은 T041 에서 만들지 않는다(설계 D3): 이름·wave 를 표현할 행이 계약 §Application 규약과
-#   §sync-wave 단일 표에 아직 없고(tests/validate.sh 검사 7.1 은 `root`·`platform-<component>`·`<pod>-<env>` 만 인정),
-#   검사 대상(pg-main·Kafka·OpenFGA·ClusterSecretStore `vault-dev`)이 US3/US4 산출물이라 지금 배포하면 즉시 실패한다.
-#   계약에 행을 추가하는 것은 converge 인계 9번, Application 생성은 그 뒤 태스크(T102 계열)다.
+# 이 프로젝트를 쓰는 Application = `platform-tests`(T059 2026-10-29 · `../apps/platform-tests.yaml`) — T041 당시 보류 이유(계약 행 부재 ·
+#   검사 대상 부재)는 T059가 계약 §Application 규약 이름 행 · §sync-wave 표 `policies/tests` 행과 US3 산출물(pg-main · Kafka · Dragonfly)로
+#   해소했다(authz-assert는 T085). 이름 ↔ 경로 예외(`platform-tests` ↔ `platform/policies/tests`)는 tests/validate.sh 검사 7.1의 `tests` 분기가 받는다.
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:

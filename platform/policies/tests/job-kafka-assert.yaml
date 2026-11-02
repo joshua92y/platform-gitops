@@ -11,10 +11,13 @@
 #   이미지 버전은 브로커(T055 Kafka 4.3.1)와 같은 4.3.1이다.
 #
 # 자격: SASL_SSL / SCRAM-SHA-512(사용자 `dev-identity-admin`) + Strimzi 클러스터 CA(`jt-kafka-cluster-ca-cert`
-#   미러)를 PEM truststore로 쓴다. 비밀번호는 ExternalSecret `assert-env`에서만 오고, 런타임에 만드는
+#   미러)를 PEM truststore로 쓴다. 비밀번호는 ExternalSecret `assert-kafka-env`에서만 오고, 런타임에 만드는
 #   client.properties는 emptyDir(`/tmp`)에만 쓰며 로그에 찍지 않는다(Kafka 클라이언트는 설정 덤프에서
 #   비밀번호를 [hidden]으로 마스킹한다). 비밀번호가 base64url 형식이 아니면 client.properties를 쓰기 전에 두 검사를
 #   FAIL로 닫고, 로그에 싣는 진단 줄(safe_tail 다섯 곳 + cross-env PASS 근거)은 전부 `password` · `jaas`가 든 줄을 거른다(리뷰 r2 K5 · O11 · r3 A1).
+#
+# 실행 시점: Application `platform-tests`(T059 · `clusters/oci-k3s/apps/platform-tests.yaml` — sync-wave는 계약 §sync-wave 표 `policies/tests` 행)가
+#   적용한다 — 리소스 wave "1"(ConfigMap · ES `assert-kafka-env`의 wave "0"이 Healthy가 된 뒤) · 재실행 모델 B(README §재실행 모델).
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -24,6 +27,8 @@ metadata:
     app.kubernetes.io/name: kafka-assert
     app.kubernetes.io/component: assert-job
     app.kubernetes.io/part-of: policies-tests
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
 spec:
   backoffLimit: 0
   activeDeadlineSeconds: 300
@@ -287,7 +292,7 @@ spec:
               [ "$fail" -eq 0 ] || exit 1
           envFrom:
             - secretRef:
-                name: assert-env
+                name: assert-kafka-env
             - configMapRef:
                 name: assert-config
           volumeMounts:

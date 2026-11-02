@@ -1,0 +1,79 @@
+# clusters/oci-k3s/apps/platform-tests.yaml — 검사 Job Application `platform-tests` (T059 · 2026-10-29)
+#
+# 역할: root(app-of-apps)가 이 파일을 읽어 child Application `platform-tests`를 만들고, 그 Application이 `platform/policies/tests`
+#   (독립 kustomization · `namespace: jt-dev`)를 서버 사이드 적용한다. 자격이 필요한 검사(psql · redis-cli · Kafka 콘솔 도구)를 클러스터
+#   안에서 돌리는 검사 Job이고, tester는 `kubectl -n jt-dev logs job/<이름>`만 읽는다(모노레포 계약 hostnames-and-access.md §자격이 필요한 검사).
+#
+# 현재 상태(T059가 채웠다 — 2026-10-29): 렌더 **5장**(전부 ns jt-dev) = ConfigMap `assert-config` + ExternalSecret 2(`assert-data-env` ·
+#   `assert-kafka-env` — store `vault-dev` · `dev/` 키만) + Job 2(`data-assert` · `kafka-assert`). 리소스 수준 sync-wave = ConfigMap · ES `"0"` →
+#   Job `"1"`(Application 표의 숫자가 아니다 — 이 Application 안의 적용 순서).
+#   - authz 보류(결정 D4): `job-authz-assert.yaml` · `externalsecret-assert-authz-env.yaml`은 파일로만 있고 kustomization 밖이다 — kv `dev/openfga/*`
+#     미시드 · OpenFGA 뼈대(T082)라 지금 넣으면 ES `SecretSyncedError` · Job 즉시 FAIL → Degraded. T085(US4 E2E)가 resources 두 줄로 다시 넣는다.
+#   - ES 분할(결정 D5): 옛 공유 ES `assert-env`(8키 · kv 6경로) → Job별 ES — 자격 격리 + 부분 실패 격리(한 ES의 경로 하나가 없어도 다른 Job은 돈다).
+#   - 재실행 모델 B(결정 D6): hook이 아닌 일반 리소스. `ttlSecondsAfterFinished` 7일 뒤 Job이 사라지면 selfHeal이 다시 만든다(= 주간 재검사) ·
+#     수동 재실행 = 운영자(admin kubeconfig) `kubectl -n jt-dev delete job <이름>` → selfHeal. Job `spec.template`은 immutable이라 Job 스펙을 바꾸는 PR은
+#     완료된 Job이 남아 있으면 sync가 실패한다 → 운영자(admin kubeconfig) Job 삭제(절차 · 재시도 창은 `../../../platform/policies/tests/README.md` §재실행 모델).
+#
+# sync-wave · destination.namespace: 값의 정본은 계약 contracts/gitops-repo.md §sync-wave 단일 표의 `policies/tests` 행이고, 코드 사본은
+#   tests/validate.sh의 WAVE_TABLE(`tests` 행) 하나뿐이다. 아래 두 값은 그 표에서 기계적으로 읽어 넣었고 저장소의 어떤 README·주석·PR 본문에도
+#   숫자를 다시 적지 않는다(대조는 검사 7.1). 이 행이 표의 마지막 **플랫폼** 행인 이유: 모든 플랫폼 컴포넌트 뒤라, 검사 실패(Job Failed → 이 Application
+#   Degraded)가 root 재구축에서 앞 wave(터널 · Traefik · 모니터링을 포함한 플랫폼 컴포넌트 전부)를 막지 않는다.
+#   표의 마지막 **플랫폼** 행이지 전체의 마지막은 아니다 — `<pod>-<env>`(앱 · 뒤 행)가 생기면 root 콜드 재구축의 첫 operation은 이 Application의 health가
+#   Healthy로 읽힐 때까지 기다린 뒤 앱 행으로 간다. 단, Argo CD v3.5.2는 live가 없는 리소스를 Application health 집계에서 뺀다(`controller/health.go`
+#   "Missing resources should not affect parent app health")라, ES 2가 SecretSynced가 되고 Job이 아직 만들어지기 전의 짧은 창에서 이 Application은 Healthy로
+#   읽힌다 — root가 그 창을 읽으면 Job 실행(2–3분)을 기다리지 않고 앱 행으로 간다. 즉 뒤 행(앱) 게이트는 검사 Job의 결과를 보장하지 않는다(경합 · 실측 VD-6 ·
+#   리뷰 r2 A-r2-1). 창을 지나 Job이 Progressing이면 기다리고, Degraded면 그 시도는 Failed이되 retry(root `ApplyOutOfSyncOnly=true` · limit 5)가 이미 만들어진
+#   CR을 건너뛰어 앱 행을 적용하므로 최종 phase는 Succeeded다(흔적은 `operationState.retryCount ≥ 1`뿐 — 하네스 argo-5는 retry 5회 소진 때만 잡고 Degraded 자체는
+#   argo-1이 잡는다 · 계약 §sync-wave 표의 `secret-stores` 행과 같은 성질 · 소스 판독). 검사 결과로 앱 행을 막아야 한다면 별도 설계가 필요하다(후속 — 이 과제 밖).
+#   역방향: 이 Application은 앞 행(플랫폼 컴포넌트) child 전부가 Healthy가 된 뒤 적용된다.
+#
+# 이름 ↔ 경로 예외: `platform-tests` ↔ `platform/policies/tests`는 `platform-<component>` ↔ `platform/<component>` 대응을 따르지 않는다 — 계약
+#   §Application 규약 이름 행의 예외 1(2026-10-29 T059)이고, validate 검사 7.1의 `tests` 분기가 이 경로만 받는다(그 밖의 경로는 `7.1 WAVE-path` FAIL).
+#   `platform/tests/` 디렉터리는 없다(만들면 검사 7.2가 FAIL한다 — 리뷰 r1 A3 · C6). (`platform-argocd`가 `bootstrap/argocd`를 소스로 쓰는 것은 계약 §디렉터리의 자기 관리 배치 — 7.1의 별도 분기다.)
+#
+# project `tests`(`../projects/tests.yaml`): sourceRepos = 이 저장소만 · destinations = `jt-dev`만 · cluster 리소스 금지. 그래서 이 Application은
+#   dev scope 자격(ClusterSecretStore `vault-dev` — `conditions.namespaces` = `jt-dev` 하나)만 받고 prod 자격은 없다.
+#
+# 상태가 없는 컴포넌트: PVC 0 · 계약 §삭제 보호 목록 밖. `Prune=confirm` · `Delete=confirm`은 플랫폼 표준 그대로 둔다(삭제 승인 한 겹).
+#   finalizer 있음(`resources-finalizer.argocd.argoproj.io`): 이 Application을 지우면 Job · ES(→ Secret GC) · ConfigMap이 함께 지워진다 — 검사
+#   산출물뿐이라 무해하다(Job 로그도 함께 사라진다). finalizer를 빼는 것은 `platform-argocd` · `platform-policies` 둘뿐이다.
+#
+# syncPolicy: 계약 §Application 규약의 플랫폼 표준 그대로 — 예외(`ApplyOutOfSyncOnly` · `retry`) 없음 · `ignoreDifferences` 없음. 근거: hook이 없고,
+#   Job은 마지막 리소스 wave라 Job의 Progressing · Degraded(Failed)가 operation을 실패시키지 않는다(dragonfly · kafka-topics와 같은 gitops-engine 경로).
+#   앞 wave를 막는 유일한 경로 = wave "0" ES의 `SecretSyncedError`(kv 미시드) — 두 ES가 읽는 kv 4경로는 머지 전에 시드돼 있어야 한다(머지 선행 조건 —
+#   모노레포 build-notes 「T059」 D10). 완료된 Job이 Synced로 남는지(live-only 필드)는 머지 직후 관찰한다(VD-1 — 아니면 `ignoreDifferences` 후속 PR).
+#   `CreateNamespace=true`는 platform/policies가 jt-dev의 선언 정본이라 실질 no-op이다. jt-dev가 없다면 이 project는 `clusterResourceWhitelist: []`라
+#   Namespace 생성이 `resource :Namespace is not permitted in project tests`로 거부돼 operation Failed(fail closed · argo-5가 잡는다 · 소스 판독 · 라이브 미실측).
+#   ns 소유는 `platform-policies`에 둔다 — tests whitelist에 Namespace를 넣지 않는다.
+#
+# 관찰 지점: `kubectl -n jt-dev logs job/data-assert` · `logs job/kafka-assert`(RESULT · SUMMARY — README §로그 계약) · 모노레포 하네스 cluster
+#   `np-2-data-assert` · `np-2-kafka-assert`(Job `status.succeeded ≥ 1`) · `argo-1`(Synced/Healthy) · `argo-5`(operationState Failed · Error — T059 D9) ·
+#   data `job-1` · `job-2` · kafka `job-k-1`–`job-k-3` · `job-d-1` · `job-d-2`. 결정 D1–D14 근거는 모노레포 build-notes 「T059」.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-tests
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "70"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: tests
+  source:
+    repoURL: https://github.com/joshua92y/platform-gitops.git
+    targetRevision: main
+    path: platform/policies/tests
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: jt-dev
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+      - CreateNamespace=true
+      - Prune=confirm
+      - Delete=confirm
+      - SkipDryRunOnMissingResource=true

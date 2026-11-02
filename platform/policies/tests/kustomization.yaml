@@ -1,7 +1,8 @@
 # platform/policies/tests/ — 자격이 필요한 검사를 클러스터 안에서 도는 Job 3종
 #
 # **독립 kustomization이다.** 상위 `platform/policies/kustomization.yaml`은 이 디렉터리를 참조하지 않고,
-# 이 디렉터리를 읽는 Argo CD Application도 아직 없다(설계 D3-A). 이유와 선행 조건은 README.md에 있다.
+# `clusters/oci-k3s/apps/platform-tests.yaml`(T059 · project tests · sync-wave는 계약 §sync-wave 표 `policies/tests` 행)이 읽는다.
+# 이름 ↔ 경로 예외 · 재실행 모델은 README.md §Application `platform-tests` · §재실행 모델에 있다.
 #
 # 그래서 이 kustomization의 렌더 결과는 `platform-policies`(정책 123객체)에 섞이지 않는다 —
 # 정책 렌더 검산과 이 디렉터리의 검산은 서로 독립이다.
@@ -14,7 +15,8 @@ kind: Kustomization
 namespace: jt-dev
 resources:
   - configmap-assert-config.yaml
-  - externalsecret-assert-env.yaml
+  - externalsecret-assert-data-env.yaml
+  - externalsecret-assert-kafka-env.yaml
   - job-data-assert.yaml
   - job-kafka-assert.yaml
-  - job-authz-assert.yaml
+  # T085(US4 E2E)에서 포함: externalsecret-assert-authz-env.yaml · job-authz-assert.yaml — OpenFGA(T082)와 kv dev/openfga/* 시드 뒤(T059 결정 D4)

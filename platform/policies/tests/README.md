@@ -11,12 +11,17 @@ Job은 **dev scope 자격만** 받는다. prod 자격은 없다 — dev 자격�
 
 | 파일 | 내용 |
 |---|---|
-| `kustomization.yaml` | **독립 kustomization**(`namespace: jt-dev`, resources 5). 상위 `platform/policies/kustomization.yaml`은 이 디렉터리를 참조하지 않는다 |
-| `externalsecret-assert-env.yaml` | dev scope 자격 하나 — ExternalSecret `assert-env`(store `vault-dev`, `dev/` 키만) |
-| `configmap-assert-config.yaml` | 비밀이 아닌 값(엔드포인트·DB/토픽/role 이름·합성 식별자) |
-| `job-data-assert.yaml` | pg-main 6검사(T054가 `role-attrs` · `app-session-timeouts`를 더했다) + initContainer가 Dragonfly 7검사(T057이 `noauth` · `writer-set` · `reader-get` · `reader-set-denied` · `reader-cross-denied`를 더했다) |
-| `job-kafka-assert.yaml` | Kafka 2검사 |
-| `job-authz-assert.yaml` | OpenFGA 2검사 |
+| `kustomization.yaml` | **독립 kustomization**(`namespace: jt-dev`, resources 5 = ConfigMap 1 · ES 2 · Job 2). 상위 `platform/policies/kustomization.yaml`은 이 디렉터리를 참조하지 않는다 — **Application `platform-tests`가 읽는다**(`clusters/oci-k3s/apps/platform-tests.yaml` · T059 · 아래 §Application `platform-tests`). authz 두 파일은 resources 밖이다(주석 줄 — T085에서 포함 · 결정 D4) |
+| `externalsecret-assert-data-env.yaml` | ExternalSecret `assert-data-env`(store `vault-dev`, `dev/` 키만) — data-assert의 5키(pg-main 자격 3 · Dragonfly URL 2) · 리소스 wave `"0"` |
+| `externalsecret-assert-kafka-env.yaml` | ExternalSecret `assert-kafka-env`(같은 store · 접두) — kafka-assert의 1키(SCRAM 비밀번호) · 리소스 wave `"0"` |
+| `externalsecret-assert-authz-env.yaml` | ExternalSecret `assert-authz-env`(같은 store · 접두) — authz-assert의 2키(OpenFGA) · **kustomization 밖**(T085까지 — 결정 D4) |
+| `configmap-assert-config.yaml` | 비밀이 아닌 값(엔드포인트·DB/토픽/role 이름·합성 식별자) · 리소스 wave `"0"` |
+| `job-data-assert.yaml` | pg-main 6검사(T054가 `role-attrs` · `app-session-timeouts`를 더했다) + initContainer가 Dragonfly 7검사(T057이 `noauth` · `writer-set` · `reader-get` · `reader-set-denied` · `reader-cross-denied`를 더했다) · 리소스 wave `"1"` |
+| `job-kafka-assert.yaml` | Kafka 2검사 · 리소스 wave `"1"` |
+| `job-authz-assert.yaml` | OpenFGA 2검사 · **kustomization 밖**(T085까지 — 결정 D4) |
+
+리소스 wave(`argocd.argoproj.io/sync-wave` `"0"` · `"1"`)는 Application `platform-tests` **안의** 적용 순서다(ConfigMap · ES가 Healthy가 된 뒤 Job) — Application 표의 숫자가 아니다.
+ES를 Job별로 나눈 이유는 §자격 매핑.
 
 ## 로그 계약 (tester·T031 파서 고정)
 
@@ -92,22 +97,26 @@ kubectl -n jt-dev logs job/data-assert | grep 'NOPERM'          # 읽기 전용 
 **판정은 fail-closed다.** 필요한 환경변수·CA 파일이 없거나 호출이 실패하면 해당 검사는 조용히 넘어가지 않고
 `RESULT: FAIL`이 되고 종료 코드가 1이 된다.
 
-## 자격 매핑 (ExternalSecret `assert-env`, store `vault-dev`)
+## 자격 매핑 (Job별 ExternalSecret 3장, store `vault-dev`)
 
-| Vault 경로(`remoteRef.key`) | property | env 이름 | 쓰는 Job |
-|---|---|---|---|
-| `dev/db/dev_identity_admin/app` | `url` | `DATABASE_URL` | data-assert |
-| `dev/db/dev_identity_admin/app` | `username` | `PGUSER` | data-assert |
-| `dev/db/dev_identity_admin/app` | `password` | `PGPASSWORD` | data-assert |
-| `dev/kafka/identity-admin` | `password` | `KAFKA_PASSWORD` | kafka-assert |
-| `dev/dragonfly/identity-admin` | `url` | `DRAGONFLY_URL` | data-assert(`acl-list` · `writer-set` · 정리 DEL) |
-| `dev/dragonfly/sample-pod` | `url` | `DRAGONFLY_SAMPLE_URL` | data-assert(`reader-get` · `reader-set-denied` · `reader-cross-denied` · `noperm`) |
-| `dev/openfga/store_id` | `store_id` | `OPENFGA_STORE_ID` | authz-assert |
-| `dev/openfga/preshared` | `key` | `OPENFGA_TOKEN` | authz-assert |
+| ES 이름 | Vault 경로(`remoteRef.key`) | property | env 이름 | 쓰는 Job |
+|---|---|---|---|---|
+| `assert-data-env` | `dev/db/dev_identity_admin/app` | `url` | `DATABASE_URL` | data-assert |
+| `assert-data-env` | `dev/db/dev_identity_admin/app` | `username` | `PGUSER` | data-assert |
+| `assert-data-env` | `dev/db/dev_identity_admin/app` | `password` | `PGPASSWORD` | data-assert |
+| `assert-kafka-env` | `dev/kafka/identity-admin` | `password` | `KAFKA_PASSWORD` | kafka-assert |
+| `assert-data-env` | `dev/dragonfly/identity-admin` | `url` | `DRAGONFLY_URL` | data-assert(`acl-list` · `writer-set` · 정리 DEL) |
+| `assert-data-env` | `dev/dragonfly/sample-pod` | `url` | `DRAGONFLY_SAMPLE_URL` | data-assert(`reader-get` · `reader-set-denied` · `reader-cross-denied` · `noperm`) |
+| `assert-authz-env` | `dev/openfga/store_id` | `store_id` | `OPENFGA_STORE_ID` | authz-assert(T085까지 렌더 밖) |
+| `assert-authz-env` | `dev/openfga/preshared` | `key` | `OPENFGA_TOKEN` | authz-assert(T085까지 렌더 밖) |
 
 - 전부 `dev/` 접두다(`platform/`·`prod/` 경로 0개). `dataFrom`·항목별 `sourceRef`는 쓰지 않는다.
-- 세 Job이 **같은 Secret 하나**를 `envFrom`한다(설계 §6.3). Job마다 ES를 쪼개면 Job 사이 자격 격리가 한 겹
-  늘어난다(예: kafka-assert가 DB 비밀번호를 갖지 않음) — 채택 여부는 아래 §후속 결정.
+- **Job마다 자기 ES 하나만 `envFrom`한다**(T059 결정 D5 — 아래 §후속 결정 1 채택 · 2026-10-29). 그 전에는 세 Job이 ES `assert-env` 하나(위 8키)를
+  공유했다(설계 §6.3). 나눈 이유 둘: ① **자격 격리** — kafka-assert는 DB 비밀번호 · Dragonfly URL을, data-assert는 SCRAM 비밀번호를 갖지 않는다
+  ② **부분 실패 격리** — 한 ES의 kv 경로 하나가 비어도(`SecretSyncedError` → Secret 미생성) 그 ES를 쓰는 Job만 뜨지 못하고 다른 Job은 돈다. 공유 ES로는
+  지금 미시드인 `dev/openfga/*` 두 경로 때문에 세 Job이 모두 막혔다. 환경변수 이름 · ConfigMap은 그대로라 로그 계약은 바뀌지 않는다(`envFrom`의 Secret 이름만 바뀌었다).
+  단 data-assert initContainer의 fail-closed 문구 `필수 값 없음(ExternalSecret assert-env · ConfigMap assert-config)`는 옛 이름을 그대로 싣는다 — 스크립트 변경 0
+  (결정 D7)이라 다음 스크립트 변경 때 함께 고친다(판정 · 줄 수에는 영향 없음).
 - 비밀이 아닌 값(호스트·DB/토픽 이름·합성 식별자)은 ConfigMap `assert-config`에 있다. **T057**: 비인증 `PING`(`noauth`)은 자격 없이 붙어야 하므로 ConfigMap `DRAGONFLY_HOST`
   (`dragonfly-dev.data.svc` — gitops `platform/dragonfly/services.yaml`) · `DRAGONFLY_PORT`(`6379`)를 쓴다(자격이 든 `DRAGONFLY_URL`을 셸에서 파싱하지 않는다). Dragonfly 7검사는 이 둘과
   `DRAGONFLY_URL` · `DRAGONFLY_SAMPLE_URL` · `REVOKED_PROBE_KEY` · `DRAGONFLY_ACL_USER` · `DRAGONFLY_ACL_PATTERN` 중 하나라도 비면(또는 없으면) **7개 id 전부** `RESULT: FAIL <id> 필수 값 없음(…): <변수 이름>`
@@ -130,48 +139,110 @@ kubectl -n jt-dev logs job/data-assert | grep 'NOPERM'          # 읽기 전용 
 - **UID를 숫자(65534)로 못박는 이유**: 네 이미지의 config `User`가 비었거나(root) 이름 형식(`appuser`·`curl_user`)이라
   `runAsNonRoot: true`만 두면 kubelet이 비루트 여부를 판정하지 못해 파드가 기동하지 않는다.
 
-## 왜 지금 Argo CD Application이 없나 (설계 D3-A)
+## Application `platform-tests` (T059 · 2026-10-29)
 
-이 디렉터리는 **매니페스트와 로그 계약까지만** T041에서 만든다. `platform/policies/kustomization.yaml`도
-이 디렉터리를 참조하지 않는다(별도 kustomization). 이유는 셋이다.
+이 디렉터리는 Application **`platform-tests`**(`clusters/oci-k3s/apps/platform-tests.yaml`)가 적용한다. T041은 매니페스트와 로그 계약까지만 만들고
+Application을 두지 않았다(설계 D3-A — 검사 대상이 US3/US4 산출물이라 배포하면 즉시 실패했고, 이름 · 표 행이 계약에 없었다). T059가 아래 체크리스트를
+해소하고 붙였다(US3 E2E의 선행 산출물 — 모노레포 build-notes 「T059」 결정 D1–D14). 로그 계약 · `np-2-*` 파서 · tester 절차는 그대로다.
 
-1. **검사 대상이 아직 없다.** pg-main·Kafka·Dragonfly·OpenFGA와 CA 미러 Secret은 US3/US4 산출물이다. 지금
-   배포하면 Job이 즉시 실패하고, `cluster.tests.ps1`의 `argo-1`(모든 Application Synced/Healthy)이 US3/US4 내내 FAIL한다.
-2. **이름·표가 계약에 없다.** `tests/validate.sh` 7.1의 Application 이름 규약은 `root`·`platform-<component>`·
-   `<pod>-<env>`뿐이고, 계약 `contracts/gitops-repo.md` §sync-wave 표에도 이 Application 행이 없다.
-   validate를 계약보다 먼저 고치는 것은 우선순위 역전이다(`validate.sh` 머리 주석: "계약을 먼저 고친다").
-3. 그래서 지금 고정해 두는 것은 **로그 계약**이다. 대상이 생기는 태스크가 Application만 붙이면 되고,
-   `np-2-*` 파서와 tester 절차는 바뀌지 않는다.
+- **이름 ↔ 경로**: `platform-tests` ↔ source.path `platform/policies/tests` — `platform/<component>` 대응의 예외다. 계약(모노레포 `contracts/gitops-repo.md`)
+  §Application 규약 이름 행: `platform-<component>` · `<pod>-<env>`. **예외 1개(2026-10-29 T059)**: 검증 Job Application은 `platform-tests`이며 source.path는 `platform/policies/tests`다(`platform/<component>` 대응의 유일한 예외 — 디렉터리는 T041이 `platform/policies/` 아래에 두었고 하네스·계약·과제 문면이 그 경로를 가리킨다 · validate 7.1 분기).
+  `tests/validate.sh` 검사 7.1의 `tests` 분기가 이 경로만 받는다(그 밖의 경로 → `7.1 WAVE-path` FAIL — 자기검사 `wave-and-app`). 7.2는 `platform/*/` 한 단계만
+  세므로 `platform/tests/` 디렉터리는 없다 — 만들면 7.2가 FAIL한다(표의 `tests` 키가 그 디렉터리를 통과시키는 사각 · 리뷰 r1 A3 · C6). (`platform-argocd`가 `bootstrap/argocd`를 쓰는 것은 계약 §디렉터리의 자기 관리 배치 — 7.1의 별도 분기다.)
+- **sync-wave**: 계약 §sync-wave 단일 표의 `policies/tests` 행. 모든 플랫폼 컴포넌트 뒤라 검사 실패(Job Failed → Application Degraded)가
+  root 재구축에서 앞 wave를 막지 않는다. 숫자는 계약 표 · `tests/validate.sh` `WAVE_TABLE`(`tests` 행) · Application 어노테이션에만 있다(여기 옮겨 적지 않는다).
+  표의 마지막 **플랫폼** 행이지 전체의 마지막은 아니다 — `<pod>-<env>`(앱 · 뒤 행)가 생기면 root 콜드 재구축의 첫 operation은 이 Application의 health가 Healthy로
+  읽힐 때까지 기다린 뒤 앱 행으로 간다. 단, Argo CD v3.5.2는 live가 없는 리소스를 Application health 집계에서 뺀다(`controller/health.go` "Missing resources should
+  not affect parent app health")라, ES 2가 SecretSynced가 되고 Job이 아직 만들어지기 전의 짧은 창에서 이 Application은 Healthy로 읽힌다 — root가 그 창을 읽으면 Job
+  실행(2–3분)을 기다리지 않고 앱 행으로 간다. 즉 뒤 행(앱) 게이트는 검사 Job의 결과를 **보장하지 않는다**(경합 · 실측 VD-6 · 리뷰 r2 A-r2-1). 창을 지나 Job이
+  Progressing이면 기다리고, Degraded면 그 시도는 Failed이되 retry(root `ApplyOutOfSyncOnly=true` · limit 5)가 이미 만들어진 CR을 건너뛰어 앱 행을 적용하므로 최종
+  phase는 Succeeded다(흔적은 `operationState.retryCount ≥ 1`뿐 — 하네스 `argo-5`는 retry 5회 소진 때만 잡고 Degraded 자체는 `argo-1`이 잡는다 · 계약 §sync-wave 표의
+  `secret-stores` 행과 같은 성질 · 소스 판독). 검사 결과로 앱 행을 막아야 한다면 별도 설계가 필요하다(후속 — 이 과제 밖). 역방향: 이 Application은 앞 행(플랫폼 컴포넌트)
+  child 전부가 Healthy가 된 뒤 적용된다.
+- **project `tests`**(`clusters/oci-k3s/projects/tests.yaml`): sourceRepos = 이 저장소만 · destinations = `jt-dev`만 · cluster 리소스 금지 → dev scope 자격만.
+- **syncPolicy**: 플랫폼 표준(automated `prune: false` · `selfHeal: true` · SSA · `CreateNamespace`(실질 no-op — jt-dev가 없으면 project `tests`의
+  `clusterResourceWhitelist: []`라 Namespace 생성이 `resource :Namespace is not permitted in project tests`로 거부돼 operation Failed · fail closed · argo-5 · 소스 판독 ·
+  라이브 미실측 · ns 소유는 `platform-policies` — tests whitelist에 Namespace를 넣지 않는다) · `Prune=confirm` · `Delete=confirm` · `SkipDryRunOnMissingResource`) ·
+  finalizer 있음 · 예외(`ApplyOutOfSyncOnly` · `retry`) 없음 · `ignoreDifferences` 없음. Job은 마지막 리소스 wave라 Job의 진행 · 실패가 sync operation을 실패시키지
+  않고 Application **health**로 드러난다(Argo CD v3.5.2 내장 Job health — Complete → Healthy · Failed → Degraded · 그 밖 Progressing).
 
-그때까지 `cluster.tests.ps1`의 `np-2-data-assert`·`np-2-kafka-assert`·`np-2-authz-assert`는
-클러스터에 Job이 없으므로 계속 `SKIP np-2-<job>: until T041 (assert Job jt-dev/<job> … not present)`을 낸다.
-그 SKIP은 **매니페스트가 없어서가 아니라 배포되지 않아서**이며, Application이 붙는 순간 PASS 후보가 된다.
+### 선행 조건 체크리스트 — 해소 (T059)
 
-### 나중에 Application을 붙일 때의 선행 조건 체크리스트
+| # | T041 체크리스트 항목 | 해소 |
+|---|---|---|
+| 1 | 계약 §Application 규약 · **§sync-wave 단일 표에 행 추가**(값은 계약 표에만) | 모노레포 계약 이름 행 예외 1 + §sync-wave 표 `policies/tests` 행(T059 — 같은 날 모노레포 커밋) |
+| 2 | 그 다음 `tests/validate.sh` `WAVE_TABLE` · 7.1 이름 규약(계약 → validate 순서) | `WAVE_TABLE` `tests` 행 + 7.1 `tests` 분기 + 머리 주석 7.1 줄 · 자기검사 `wave-and-app` 음성 1건(경로 `platform/tests` → `7.1 WAVE-path`) · `positive` 양성 1문서(이 PR) |
+| 3 | AppProject **`tests`** 소속 | `project: tests` — AppProject spec은 그대로(머리 주석만 정정 — 이 PR) |
+| 4 | 선행 산출물 존재 확인 | 2026-10-29 agent-view 읽기(모노레포 build-notes 「T059」 사실 1–7): `ClusterSecretStore` 5 Valid(`vault-dev` 포함) · ns jt-dev CA 미러 ES 2(`pg-main-ca` · `jt-kafka-cluster-ca-cert`) SecretSynced · ns data 파드 6 Running(`pg-main-1` · `jt-kafka-combined-0` · entity-operator · strimzi-operator · `dragonfly-dev` · `dragonfly-prod`) · Argo Application 22 Synced/Healthy(Database/DatabaseRole · KafkaTopic/KafkaUser · Dragonfly 포함) · kv `dev/` 4경로 시드(db · dragonfly 3경로 = 2026-10-22 VD-4 실증 · kafka 1경로 = ns data ES `kafka-user-dev-identity-admin` Ready). **OpenFGA store · kv `dev/openfga/*`는 없다** → authz-assert 보류(결정 D4) |
+| 5 | 재실행 모델 확정 | **B 확정**(아래 §재실행 모델 · 결정 D6) |
+| 6 | 첫 실행 뒤 `cluster.tests.ps1` `np-2-*` PASS 확인 | 머지 뒤 컨트롤러(관찰 D11): `np-2-data-assert` · `np-2-kafka-assert` SKIP → PASS 기대 · `np-2-authz-assert`는 T085까지 SKIP |
 
-- [ ] 계약 `contracts/gitops-repo.md` §Application 규약과 **§sync-wave 단일 표에 이 검사 Application 행 추가**
-      (이름·destination ns·wave). 값은 계약 표에만 적고 다른 곳에 중복 기재하지 않는다.
-- [ ] 그 다음 `tests/validate.sh`의 `WAVE_TABLE`·7.1 이름 규약 갱신(계약 → validate 순서).
-- [ ] AppProject **`tests`** 소속으로 만든다(source = gitops 저장소만, destination = `jt-dev`만, cluster 리소스 금지).
-- [ ] 선행 산출물 존재 확인: `Cluster pg-main`·`Database`/`DatabaseRole`(dev role 포함) · CA 미러 Secret
-      `pg-main-ca`·`jt-kafka-cluster-ca-cert`(ns `jt-dev`) · `KafkaTopic`/`KafkaUser`(dev) · Dragonfly `dragonfly-dev`와
-      aclfile 사용자(`identity-admin`·`sample-pod`) · OpenFGA store + authorization model · Vault `dev/*` 경로 값 ·
-      `ClusterSecretStore vault-dev`.
-- [ ] 재실행 모델 확정(아래 §후속 결정) — Job은 immutable이라 "매니페스트 수정 → sync"만으로는 재실행되지 않는다.
-- [ ] 첫 실행 뒤 `cluster.tests.ps1` `np-2-*` 3건이 PASS로 바뀌는지 확인.
+머지 · 첫 실행 전까지 `cluster.tests.ps1`의 `np-2-*`는 클러스터에 Job이 없어 SKIP이다 — 매니페스트가 없어서가 아니라 배포되지 않아서다.
 
-## 재실행 모델 (미확정 — 후보만 기록)
+## 첫 배포 순서(머지 뒤)
 
-Job의 `spec`은 immutable이므로 Argo CD가 같은 이름의 Job을 갱신할 수 없다. 후보는 둘이다.
+리뷰 r1 C1(2026-10-29). 머지하면 root가 Application `platform-tests`를 만들고, 그 Application이 렌더 5장을 **리소스 wave 순서로** 적용한다(리소스 wave `"0"`이
+전부 Healthy가 된 뒤 `"1"`). 확인 명령은 전부 agent-view로 된다(get · describe · logs) — 「운영자(admin kubeconfig)」 표시가 붙은 명령만 운영자 전용이다.
 
-- **A. Argo Sync hook** — Application의 전체 sync마다 실행(selfHeal 부분 sync · 리소스 선택 Sync · Apply only는 hook을 건너뛴다 — Argo CD v3.5.2 `controller/sync.go:311`). `argocd.argoproj.io/hook: Sync` +
-  `hook-delete-policy: BeforeHookCreation`. 장점: sync 1회 = 검사 1회. 단점: 실패가 sync 실패로 이어져
-  `argo-1` 판정과 얽힌다.
-- **B. 일반 리소스 + 수동 재실행** — `kubectl -n jt-dev delete job <이름>` 후 sync(또는 `Replace=true`).
-  장점: Application 헬스와 검사 결과가 분리된다. 단점: 재실행이 수동이다.
+| 단계 | 무슨 일 | 기대 상태 | 예상 시간 |
+|---|---|---|---|
+| 0 머지 선행 | kv `dev/` 4경로 시드(`dev/db/dev_identity_admin/app` · `dev/dragonfly/identity-admin` · `dev/dragonfly/sample-pod` · `dev/kafka/identity-admin` — 새 시드 0) · ns jt-dev CA 미러 ES 2(`pg-main-ca` · `jt-kafka-cluster-ca-cert`) Ready · ClusterSecretStore `vault-dev` Valid · ns data 대상 파드 Running(`kubectl -n data get pods` — `pg-main-1` · `jt-kafka-combined-0` · `dragonfly-dev`) · CI(validate) PASS + 렌더 diff = 추가분만 · 운영자 kubectl 사전 동작 0 — 출력을 확인한 **뒤에만** 머지한다(모노레포 build-notes 「T059」 D10 ①–⑥) | 여섯 조건 전부 출력으로 확인 | — |
+| 1 root 폴링 → child 생성 | root가 폴링 주기(`bootstrap/argocd/argocd-cm.yaml` `timeout.reconciliation` 180 s) 안에 새 커밋을 보고 자동 sync로 Application `platform-tests`를 만든다. 즉시 당기려면 운영자(admin kubeconfig) `kubectl -n argocd annotate app root argocd.argoproj.io/refresh=normal --overwrite` | root operation **즉시 Succeeded** — 지금은 이 Application이 root의 마지막 wave라 health를 기다리지 않는다(앱 행이 생긴 뒤의 콜드 재구축은 §Application `platform-tests` sync-wave) | ≤ 180 s |
+| 2 리소스 wave `"0"` | ConfigMap `assert-config` · ES 2(`assert-data-env` · `assert-kafka-env`) SSA → ESO가 `vault-dev`로 kv를 읽어 Secret 2를 만든다 | ES 2 `Ready=True`(SecretSynced) → Healthy | 수 초 |
+| 3 리소스 wave `"1"` | Job 2(`data-assert` · `kafka-assert`) SSA — 마지막 리소스 wave라 적용 직후 operation이 닫힌다 | operation **Succeeded** · Application(그리고 root) health Progressing — Job이 끝날 때까지(이때 하네스 `argo-1`은 일시 FAIL) | 초 |
+| 4 파드 기동 · 검사 | data-assert: initContainer `dragonfly-assert`(Dragonfly 7검사) → `pg-assert`(pg 6검사 + init 결과 중계) · kafka-assert: 컨슈머 선기동 → 할당 확인 → produce → 마커 수신 → cross-env | pod Completed · 로그 마지막 줄 data-assert `SUMMARY: pass=13 fail=0` · kafka-assert `SUMMARY: pass=2 fail=0` | data-assert ≤ 2분 · kafka-assert ≤ 3분 |
+| 5 완료 | Job 2 Complete → 내장 Job health Healthy | Application `Synced/Healthy`(완료된 Job이 Synced로 남는지 = VD-1) | — |
+| 6 하네스(관찰 D11) | 모노레포 하네스(agent-view) | cluster **46/0/9** · data **15/0/1** · kafka **17/0/0** | — |
 
-현재 매니페스트는 **B에 가깝다**(hook 어노테이션 없음, `ttlSecondsAfterFinished` 7일). 확정은 Application을
-만드는 태스크에서 한다.
+단계 2–5의 확인 명령(agent-view): `kubectl -n argocd get app platform-tests`(SYNC STATUS · HEALTH STATUS 열) · `kubectl -n jt-dev get externalsecret assert-data-env assert-kafka-env`(READY · STATUS 열) ·
+`kubectl -n jt-dev get job`(COMPLETIONS 열) · §로그 계약의 `kubectl -n jt-dev logs job/<이름>`.
+
+## 증상표 — 어디서 멈추면 무엇을 보는가
+
+리뷰 r1 C1(2026-10-29). 「가장 먼저 볼 것」은 전부 agent-view 명령이다(get · describe · logs — `platform/policies/rbac-agent-view.yaml`). 「조치」의 쓰기 명령은
+**운영자 전용(admin kubeconfig)**이다 — 운영자 명령은 `--kubeconfig <관리자 kubeconfig 경로>`를 명령에 직접 적는다(관리자 kubeconfig가 없는 창에서 치면 `NotFound`로
+실패한다 — 모노레포 런북 `bootstrap.md` §3 T056 교훈 ②; 아래 표의 `kubectl … annotate` · `delete job`과 단계 1의 refresh 모두 같은 규칙). `<job>` = `data-assert` · `kafka-assert`.
+
+| 증상 | 가장 먼저 볼 것(agent-view 명령) | 원인 | 조치(운영자 전용 표시) |
+|---|---|---|---|
+| (a) ES `SecretSyncedError` — operation `Running`(message `… Retrying attempt #<n> …`) → 재시도 5회 뒤 `Failed` · 리소스 wave `"1"`의 Job이 **없다** | `kubectl -n jt-dev get externalsecret assert-data-env assert-kafka-env` · `kubectl -n argocd get app platform-tests -o jsonpath='{.status.operationState.phase} retry={.status.operationState.retryCount} {.status.operationState.message}'` | kv 경로 없음(미시드) · `vault-dev` 정책 거부 | kv 시드 → ESO 재조회 → 재시도 창(≈ 5분) 안이면 다음 재시도가 Job까지 간다 · 창 밖(`Failed`)이면 운영자(admin kubeconfig) 전체 수동 Sync(§재실행 모델 ⑤의 방법). ESO 재조회는 실패가 이어질수록 지수 백오프로 벌어진다(수 분 실패 뒤에는 다음 시도가 5–16분 뒤일 수 있다 — 모노레포 런북 `bootstrap.md` §4 T054 「언제」) — 기다리지 않으려면 운영자(admin kubeconfig) `kubectl --kubeconfig <관리자 kubeconfig> -n jt-dev annotate externalsecret assert-data-env assert-kafka-env "force-sync=<epoch>" --overwrite`(런북 §4 T056 「늦은 시드」 2단계와 같은 방법) |
+| (b) ES에 status가 없다(READY 빈 칸) · operation `Running`이 무기한 | `kubectl -n external-secrets get deploy external-secrets`(READY) · `kubectl -n jt-dev get externalsecret assert-data-env assert-kafka-env` | ESO 정지 — ES를 조정하지 않는다(sync 타임아웃이 0이라 Argo는 기다리기만 한다) | ESO 복구(`platform/external-secrets/` · Application `platform-external-secrets`) → 같은 operation이 이어 간다 |
+| (c) pod `CreateContainerConfigError` | `kubectl -n jt-dev describe pod -l job-name=<job>` → Events `secret "assert-<x>-env" not found` | Secret 삭제 · 순서 우회(리소스 선택 Sync로 Job만 적용) | ES 재조회로 Secret이 다시 생기면 pod가 이어 간다 · `activeDeadlineSeconds` 300 s 뒤 `DeadlineExceeded`면 운영자(admin kubeconfig) `kubectl -n jt-dev delete job <job>` → selfHeal |
+| (d) pod가 생기지 않는다 → 300 s 뒤 Job `Failed` reason `DeadlineExceeded` | `kubectl -n jt-dev describe job <job>` Events `exceeded quota` · `violates PodSecurity`(하네스 `np-7` — 이벤트 TTL 1h 안에서만 보인다) | ResourceQuota · PSA restricted 위반 | 원인 PR 뒤 운영자(admin kubeconfig) `kubectl -n jt-dev delete job <job>` → selfHeal |
+| (e) Job `Failed` reason `BackoffLimitExceeded` · Application Degraded · 로그에 `RESULT: FAIL <id>` | `kubectl -n jt-dev logs job/<job>` | 대상 시스템(id별 — pg = `platform/cnpg-databases`(DatabaseRole · PostSync Job ⓪–②) · Dragonfly = ACL 파일 · Kafka = ACL · CA · JAAS · 할당) | 수정 PR → 운영자(admin kubeconfig) `kubectl -n jt-dev delete job <job>` → selfHeal |
+| (f) Job `Failed` reason `DeadlineExceeded`(pod는 있었다) | **활성 pod가 삭제돼 로그가 없다**(`logs job/…` 실패 — 로그를 읽는 하네스 검사가 FAIL) → `kubectl -n jt-dev describe job <job>` Events · 대상 쪽 로그(`kubectl -n data logs deploy/dragonfly-dev --since=10m` · `kubectl -n data logs jt-kafka-combined-0 --since=10m`) | 할당 60 s + 마커 30 s 초과 · 네트워크 | 운영자(admin kubeconfig) `kubectl -n jt-dev delete job <job>`으로 재실행 → 같은 모양이면 kafka-assert에 기동 유예(data-assert `wait_ready` 모양)를 더할지 재검토(스크립트 변경 — 이 PR은 결정 D7로 스크립트 불변 · 다음 Job 스펙 변경 PR) |
+| (g) Application `OutOfSync`/`Healthy`가 영구 | `kubectl -n argocd get app platform-tests -o jsonpath='{.status.resources[?(@.status=="OutOfSync")]}'` | 완료된 Job의 live-only 필드(VD-1) | `ignoreDifferences`(Job `/spec/selector` · template 라벨) 후속 PR — §재실행 모델 |
+| (h) 주간 재실행 FAIL | (e)와 같다 | — | **Degraded가 7일 남는다**(`backoffLimit: 0` · 자동 재시도 없음 — 다음 재실행은 TTL 삭제 뒤) → 운영자(admin kubeconfig) `kubectl -n jt-dev delete job <job>`으로 즉시 재실행 |
+
+## 재실행 모델 — **B 확정** (T059 결정 D6 · 2026-10-29)
+
+Job의 `spec.template`은 immutable이라 Argo CD가 같은 이름의 Job을 갱신할 수 없다. T041이 남긴 후보 둘(A = Argo Sync hook · B = 일반 리소스) 중 **B**를 채택했다.
+
+- **모양**: hook 어노테이션 없음 · 리소스 wave ConfigMap · ES `"0"` → Job `"1"` · `ttlSecondsAfterFinished: 604800`(7일) 유지 · `backoffLimit: 0` 그대로.
+- **주간 재검사**: Job이 끝나고 7일 뒤 TTL 컨트롤러가 Job을 지우면 Application이 OutOfSync(리소스 없음)가 되고 selfHeal이 같은 스펙으로 다시 만든다
+  → 검사가 다시 돈다(첫 관찰 = VD-2 · 2026-11-05 무렵).
+- **수동 재실행(운영자 전용 — admin kubeconfig)**: `kubectl -n jt-dev delete job <이름>` → selfHeal이 다시 만든다(≤ 3분 — 조정 주기 상한) 또는 Argo Sync.
+  agent-view에는 `delete` 동사가 없다(`platform/policies/rbac-agent-view.yaml` — ClusterRole `view` + get/list/watch + `pods/portforward` create뿐) · tester · agent-view는 로그만 읽는다.
+- **Job 스펙을 바꾸는 PR**: 완료된 Job이 남아 있으면 머지 뒤 sync가 그 Job 적용에서 거부된다(`spec.template` immutable). 순서:
+  - ① 머지한다.
+  - ② `kubectl -n argocd get app platform-tests -o jsonpath='{.status.operationState.phase} {.status.operationState.message}'`에서 `field is immutable`을 확인한다(agent-view로 된다).
+    자동 sync operation은 기본 retry(대기 10·20·40·80·160 s — 재시도 창 ≈ 5분) 동안 phase `Running`이다(message `… Retrying attempt #<n> …`).
+  - ③ 운영자(admin kubeconfig) `kubectl -n jt-dev delete job <이름>`.
+  - ④ 창 안이면 → 다음 재시도가 새 스펙으로 Job을 만든다.
+  - ⑤ 창 밖이면(operation `Failed` — 같은 리비전으로는 자동 sync가 다시 시작하지 않는다 · 모노레포 하네스 `argo-5`(operationState `Failed` · `Error` — T059 D9)가 잡는다)
+    ③ 뒤 **운영자 전체 수동 Sync**(리소스 선택 없음): Argo CD UI `platform-tests` → SYNC(리소스 전부 · PRUNE 끔 · Apply Out of Sync Only 끔 · Retry 끔 · Sync options는
+    미리 채워진 값 그대로) → 안 되면 CLI `argocd app sync platform-tests`(**옵션 플래그 없이** — syncOptions를 하나라도 주면 spec 목록이 대체된다 · `--resource` ·
+    `--prune`도 주지 않는다) → admin kubeconfig만 있을 때 JSON patch(옛 `status.operationState` 제거 + `.operation` 추가 · `test` phase Failed) 순. **`.operation`만 넣는
+    `--type merge` patch 금지** — 정상 경로(`SetAppOperation`)가 하는 operationState 비우기가 빠져 옛 실패 기록이 새 기록에 섞인다(2026-10-19 T056 실측 · 출처:
+    `platform/kafka-topics/README.md` §1 증상표 첫 행 · 모노레포 런북 `docs/runbooks/bootstrap.md` §3 T056 교훈 ③ · §4 T056 「늦은 시드」 4단계). agent-view로는 할 수 없다
+    (K8s 동사 get · list · watch뿐 — Application에 쓸 수 없다 · 운영자 전용).
+  - ⑥ 머지 **전에**(또는 Argo가 새 리비전을 당기기 전에) Job을 지우지 않는다 — selfHeal이 옛 리비전의 옛 스펙 Job을 수 초 안에 다시 만들어(옛 스펙 검사가 한 번 더 돈다)
+    머지 뒤 같은 거부가 난다. 첫 사례에서 실측한다(VD-3).
+- **A(Sync hook)를 채택하지 않은 이유**: hook 결과는 sync · health 집계 밖이라 Job 실패가 Application의 Synced/Healthy에 가려져 하네스 `argo-1`이 보지 못한다
+  (`platform/cnpg-databases/README.md` §6 T059 — C5) · selfHeal 부분 sync · 리소스 선택 Sync · Apply only는 hook을 건너뛴다(Argo CD v3.5.2 `controller/sync.go:311`) —
+  주간 재검사가 일어나지 않는다. B는 Job 실패가 Application health(Degraded)로 드러나 `argo-1`이 본다.
+- **`Replace=true,Force=true`는 두지 않는다** — OutOfSync가 날 때마다 Job을 지우고 다시 만든다. 완료된 Job에 거짓 차이(live-only 필드)가 있으면 무한 재실행이 된다.
+  완료된 Job이 Synced로 남는지는 머지 직후 관찰한다(VD-1 — 아니면 `ignoreDifferences`(Job `/spec/selector` · template 라벨) 후속 PR · 그 뒤 재검토).
 
 ## 확인이 필요한 값 (계약에 없어 추정한 것)
 
@@ -187,14 +258,14 @@ Job의 `spec`은 immutable이므로 Argo CD가 같은 이름의 Job을 갱신할
 | `roundtrip` 상한 | `KAFKA_ROUNDTRIP_DEADLINE_S=30`(JVM 기동 포함 벽시계). quickstart의 "≤ 5초"는 메시지 경로 기준이라 값이 다르다 | 첫 실행 시 실측 후 조정 |
 | authz 검사 데이터 | 합성 식별자(`ASSERT_*`)를 Job이 직접 쓰고 지운다 | 아래 §후속 결정 |
 
-## 후속 결정 (Application을 만드는 태스크에서)
+## 후속 결정 — 결과 (T059 · 2026-10-29)
 
-1. **ES 분할**: `assert-env` 하나 → Job별 3개(`assert-data-env`·`assert-kafka-env`·`assert-authz-env`)로 나누면
-   Job 사이 자격 격리가 한 겹 늘어난다. 현재는 설계 §6.3대로 하나다.
-2. **authz 검사 데이터**: 지금은 합성 튜플을 Job이 쓰고 지운다(dev store만). `seed_tenant`가 만든 고정 테넌트
-   UUID를 단언 대상으로 삼는 안이 더 강한 검증이지만, 그 UUID는 US4 산출물이라 지금 매니페스트에 넣지 않았다.
-3. **`ttlSecondsAfterFinished`**: 현재 7일. 설계 §6.3은 "미지정(로그 보존)", T041 슬라이스 문면은 "명시"였다 —
-   재실행 모델과 함께 확정한다.
+1. **ES 분할 — 채택(결정 D5 · 이 PR)**: `assert-env` 하나 → Job별 3개(`assert-data-env` · `assert-kafka-env` · `assert-authz-env`). 근거는 §자격 매핑
+   (자격 격리 + 부분 실패 격리).
+2. **authz 검사 데이터 — T085**: 지금은 합성 튜플을 Job이 쓰고 지운다(dev store만). `seed_tenant`가 만든 고정 테넌트 UUID를 단언 대상으로 삼는 안이
+   더 강한 검증이지만, 그 UUID는 US4 산출물이라 T085가 정한다. authz-assert 자체도 T085까지 kustomization 밖이다(결정 D4).
+3. **`ttlSecondsAfterFinished` — 7일 확정(결정 D6)**: 재실행 모델 B의 주간 재검사 주기다(§재실행 모델 · VD-2). 설계 §6.3 "미지정(로그 보존)"과
+   T041 슬라이스 문면 "명시"를 함께 만족한다.
 
 ## 네트워크
 
@@ -202,7 +273,7 @@ Job의 `spec`은 immutable이므로 Argo CD가 같은 이름의 Job을 갱신할
 `jt-dev → identity 8080`(:83), `allow-dns`. **새 허용 규칙을 추가하지 않았다.** 새 목적지가 필요해지면
 `contracts/network-policy.md`를 먼저 고친다.
 
-ESO가 `assert-env` Secret을 만드는 경로는 `external-secrets → vault 8200`(:91)이며 `jt-dev` 정책과 무관하다.
+ESO가 Job별 Secret(`assert-data-env` · `assert-kafka-env` — T085부터 `assert-authz-env`)을 만드는 경로는 `external-secrets → vault 8200`(:91)이며 `jt-dev` 정책과 무관하다.
 
 ## 검증 기록 (T041, 저장소 로컬)
 
@@ -419,3 +490,28 @@ exit 1 · 값 · 길이 · 조각 출력 0 · JVM 기동 0) ⓑ 진단 줄 헬�
   - 모노레포(`bd0fdce` — 하네스 파일 작업 트리 변경 0) 하네스의 **판정 코드 자체**(같은 AST 방식 · 파일 수정 0 · `--tail=50`)를 전체 Job 로그(가짜 psql로 pg 6 PASS · 20줄)에 적용했다: ⓐ `SUMMARY: pass=13 fail=0` =
     `kafka.tests.ps1` job-d-2 PASS · `data.tests.ps1` `Test-JobLog` ok / ⓕ `pass=8 fail=5` = job-d-2 FAIL(5 problem — 거부 3검사 포함) · not ok / ⓖ `pass=10 fail=3` = job-d-2 FAIL(3) · not ok.
     빨강(r2 스크립트): ⓕ `pass=11 fail=2` = job-d-2 FAIL이지만 problem은 `writer-set` · `reader-get` 2개뿐(거부 3검사가 PASS로 가려진다) · ⓖ `pass=13 fail=0` = job-d-2 **PASS** · `Test-JobLog` ok(다른 사용자의 NOPERM이 전체 판정을 통과했다).
+
+## 검증 기록 (T059 — Application `platform-tests` · ES Job별 분할 · 리소스 wave, 저장소 로컬 · 2026-10-29)
+
+바꾼 것: Application `clusters/oci-k3s/apps/platform-tests.yaml`(신규) · `kustomization.yaml` resources(ES 1 + Job 3 → ES 2 + Job 2 · authz 두 파일은 주석 줄) · ES `assert-env`
+삭제 → `externalsecret-assert-{data,kafka,authz}-env.yaml` · Job 3파일의 `envFrom` Secret 이름 · 리소스 wave 어노테이션(`"1"`) · 머리 주석 「실행 시점」(kafka-assert는 머리의
+ES 이름도) · ConfigMap 어노테이션(`"0"` — 값 불변) · `tests/validate.sh` 7.1 · 자기검사 · 문서. Job 스크립트 · 이미지 · securityContext · 자원 · 볼륨은 그대로다.
+
+- `kustomize build platform/policies/tests` exit 0 — 객체 **5개**(kustomize 출력 순서: ConfigMap/assert-config · Job/data-assert · Job/kafka-assert · ExternalSecret/assert-data-env ·
+  ExternalSecret/assert-kafka-env) · sha256 `9213a0fe…`(main `ac0340a`) → `f3f0cca4…`. 리소스 wave = ConfigMap · ES `"0"` · Job `"1"` · ns 전부 `jt-dev` · 렌더의 envFrom · metadata에 옛 ES 이름 0건 · authz 0건(스크립트 FAIL 문구의 `assert-env` 1건은 D7로 유지 — §자격 매핑).
+- `envFrom` Secret 이름(렌더): data-assert initContainer `dragonfly-assert` · 본 컨테이너 `pg-assert` = `assert-data-env` · kafka-assert = `assert-kafka-env`(파일: authz-assert =
+  `assert-authz-env`). ES 키 집합: 옛 `assert-env` 8키 = 새 3장의 합 8키(`secretKey` · `remoteRef.key` · `property` — `diff` 0).
+- **변경 0 확인**: 렌더의 data-assert · kafka-assert와 파일 authz-assert에서 `envFrom[0].secretRef.name` · `metadata.annotations`만 지운(정규화한) JSON이 main과 동일 ·
+  ConfigMap은 `metadata.annotations` 밖 JSON 동일 · 스크립트 바이트 동일(앞 기록과 같은 측정 — initContainer **110줄** · pg-assert **158줄** · kafka-assert **225줄**).
+- `kubeconform -strict -ignore-missing-schemas -summary`(렌더): Valid 3 · Invalid 0 · Errors 0 · Skipped 2(ExternalSecret = CRD 스키마) · 같은 명령(파일 3 — Application ·
+  authz Job · authz ES): Valid 1 · Invalid 0 · Skipped 2.
+- `VALIDATE_SKIP_TOOLS=1 bash tests/validate.sh`(도구 전부 있음 — helm 포함): **PASS 39 · FAIL 0 · WARN 4 · SKIP 0 · 결과: PASS**(WARN 4는 기존 `platform/system-upgrade`
+  k3s-upgrade 이미지 4줄 그대로) — `[PASS] 2 APP-SSA — Application 23개 모두 ServerSideApply=true` · `[PASS] 3 ES — ExternalSecret 44개(파일+렌더링) ①②③④⑦ 통과` ·
+  `[PASS] 7.1 WAVE — Application 23개 sync-wave·이름·경로 = 단일 표` · `[PASS] 7.2 WAVE-dir — platform/ 디렉터리 21개 모두 단일 표에 있음`.
+  `--root platform/policies/tests` 부분 실행의 `[PASS] 3 ES — ExternalSecret 5개(파일+렌더링)` = 파일 3 + 렌더 2 — 렌더 밖 `assert-authz-env`도 파일 단위로 검사된다.
+- 자기검사 부분 실행(`VALIDATE_TESTS_ONLY='^(positive|wave-and-app)$'` — 전체 실행은 CI): validate.sh를 고치기 **전** = `2 케이스, 실패 2`(positive: `7.1 WAVE-unknown … platform-tests:
+  컴포넌트 'tests'는 §sync-wave 단일 표에 없음` · wave-and-app: 기대 줄 `7.1 WAVE-path … platform-tests: source.path 'platform/tests' ≠ platform/policies/tests` 없음) → 고친 뒤 =
+  `2 케이스, 실패 0`. 변이: 표 행만 두고 7.1 `tests` 분기를 뺀 사본은 positive에서 `7.1 WAVE-path … 'platform/policies/tests' ≠ platform/tests` FAIL · wave-and-app에서 기대 줄 없음
+  — 표 행과 분기가 각각 필요하다.
+- gitleaks(`gitleaks detect --no-git -s platform/policies/tests`): no leaks found.
+- **클러스터에서는 아직 실행되지 않았다** — 머지 뒤 컨트롤러가 관찰한다(모노레포 build-notes 「T059」 D11 · VD-1–VD-10).

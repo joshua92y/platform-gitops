@@ -169,6 +169,11 @@ PR_AUTHOR='<login>' PR_AUTHOR_ID=<id> PR_SENDER='<login>' PR_SENDER_ID=<id> VALI
 - 4b(platform 이미지 digest 경고)는 `image:` **스칼라 줄만** 검사한다 — helm values의 분리형 `image.repository` / `image.tag`는 보지 않는다(Renovate `pinDigests`와 컴포넌트 태스크의 수동 병기에 맡긴다).
 - 검사 5.6(`allow-apiserver-webhook`)이 **보는 것**: `platform/policies/` 아래 원본 YAML **과 그 디렉터리의 `kustomize build` 렌더 결과**, 출발 `ipBlock` cidr 집합(값 단위 정확 일치 · 중복 금지 · 형식 검사 · `except` 금지 · ipBlock 아닌 peer와 혼합 peer 금지), 계약 포트 집합(정확 일치 · 정수 · `endPort` 금지) · `protocol`(TCP만). 렌더 쪽은 세 가지를 더 본다: `patches`·merge key로 **넓어지는** 경우, 표 밖 ns에 같은 이름이 **나타나는** 경우(`kind: List` 풀림 · ns 변경 — 5.2의 EXCLUSIVE는 원본 파일만 본다), 표의 4개 ns에서 정책이 **사라지는** 경우(이름·ns 변경).
 - 검사 5.6이 **보지 않는 것**: 그 주소가 **오늘의 노드 실물과 같은지**(리스가 바뀌면 정책은 조용히 무력해진다 — 라이브 대조는 모노레포 하네스 `np-set-5`가 노드 객체 InternalIP · `.spec.podCIDR`에서 유도해 본다), `spec.policyTypes`·`spec.podSelector`(validate 전체가 어느 정책에서도 보지 않는다), 그리고 정책이 실제로 클러스터에 적용됐는지. kustomize가 없어 검사 1이 SKIP되면 **렌더 소스가 아예 없다** — 그 사실은 5.6 PASS 줄의 "webhook 정책을 담은 소스: 원본 N · 렌더 M"에서 `M = 0`으로 드러난다.
+- 7.1의 이름 ↔ 경로 대응 예외는 `platform-tests` ↔ `platform/policies/tests` 하나다(계약 §Application 규약 이름 행 · 2026-10-29 T059). (`platform-argocd`가
+  `platform/argocd`와 함께 `bootstrap/argocd`도 받는 것은 계약 §디렉터리의 자기 관리 배치다 — 7.1의 별도 분기.) 예외 경로는 7.1이 받지만 7.2는 `platform/*/`
+  한 단계만 세므로 `platform/tests/` 디렉터리는 필요 없다. 7.2는 `platform/tests/` 디렉터리를 **금지**한다 — 표의 `tests` 행은 `platform/policies/tests`(검증 Job
+  Application `platform-tests`)를 뜻하는데 그 키가 `WAVE_OF`에 있어, 실수로 만든 `platform/tests/`가 7.2를 통과하던 사각을 막는다(T059 리뷰 r1 A3 · C6).
+  픽스처: 음성 `wave-and-app`(경로 `platform/tests` → `7.1 WAVE-path` · 디렉터리 `platform/tests/` → `7.2 WAVE-dir`) · 양성 `positive`(올바른 경로 1문서).
 - 검사 7.3(`WAVE-secrets-base`)이 **보는 것**(다섯 갈래):
   - ⓐ **base 참조**: 모든 `kustomization.yaml`의 `resources`·`bases`·`components` 항목을 경로로 정규화해 `secrets/` 아래를 가리키는 항목이 `platform/secrets/kustomization.yaml`에만 있는지 본다. YAML 별칭으로 적은 항목(`- *b`)도 풀어서 본다(kustomize 5.8.1은 풀어서 빌드한다 — 2026-09-30 G4 수정 · 픽스처 `secrets-base-owner`의 `platform/kafka`). 항목을 yq로 풀어 읽지 못하는 kustomization은 판정할 수 없어 FAIL이다(fail-closed). **배달자 자신(`platform/secrets`)을 base로 끌어가는 전이 참조도 위반**이다(소비자 렌더에 ES가 들어간다). `secrets/<ns>/kustomization.yaml`이 자기 디렉터리 안의 파일을 가리키는 것은 위반이 아니고, 다른 ns를 가리키면 위반이다. **절대 경로(`/…`)와 저장소 밖으로 나가는 상대 경로는 위치 판정 불가로 FAIL**한다(fail-closed — 로컬에서만 렌더되고 Argo repo-server의 체크아웃 경로에서는 실패한다).
   - ⓑ **소유자 대조(렌더 기준)**: `secrets/**` **파일**의 ExternalSecret과 **같은 이름**이 배달자 밖 소스(파일·렌더)에도 있으면 FAIL — 파일 복사본 · 전이 base · helm 렌더로 두 Application이 같은 ES를 각자 적용하는 경로를 잡는다. 이름으로 맞추는 이유는 `secrets/<ns>/kustomization.yaml`의 `namespace:` 변환기가 원본에 없던 ns를 렌더에서 채울 수 있어서다(그래서 **같은 이름을 다른 ns에 두는 트리는 구분하지 못한다**).
@@ -178,7 +183,7 @@ PR_AUTHOR='<login>' PR_AUTHOR_ID=<id> PR_SENDER='<login>' PR_SENDER_ID=<id> VALI
   - **보지 않는 것**: 원격(URL) base, 배달자가 `secrets/` 밖에서 끌어오는 리소스, ES **이름이 같고 ns만 다른** 경우, 라이브에서 실제로 어느 Application이 그 ES를 적용했는지(그것은 ES의 Argo tracking 어노테이션 — `platform/secrets/README.md` §3). 그리고 **Windows 로컬 실행은 경로 대소문자 오기를 잡지 못한다**(대소문자 무시 파일시스템 — Linux의 검사 1이 빌드 실패로 잡는 일반 문제다).
   - **닫힌 구멍(기록)**: G3까지 **3.2는 `platform/secrets` 렌더를 위치로 보지 않았다**(트리거가 원본 경로 `^secrets/`였다) — 배달자에 `patches:`를 넣으면 원본은 그대로인 채 렌더에서만 `creationPolicy: Owner`·`remoteRef.key`가 바뀌어도 전 검사 PASS였다. T045 G4에서 **변환 키 금지(ⓔ)** + **3.2 대상에 배달자 렌더 포함**으로 닫았다(픽스처 `secrets-owner/deliverer-patch`·`secrets-owner/ns-transform`).
 - 검사 7.4(`APP-source` — T046 · 계약 §validate.yml 4 「(T046)」 둘째 줄)가 **보는 것**: 7.1과 같은 파일 열거(실제 트리에서는
-  `clusters/oci-k3s/apps/*.yaml` 21개 + `bootstrap/root-app.yaml`)에 kustomize 렌더를 더한 모든 `kind: Application`에서 `spec.source`의 키 집합이
+  `clusters/oci-k3s/apps/*.yaml` 22개 + `bootstrap/root-app.yaml`)에 kustomize 렌더를 더한 모든 `kind: Application`에서 `spec.source`의 키 집합이
   **정확히** `{repoURL, targetRevision, path}`(`kustomize`·`helm`·`directory`·`plugin` 등은 FAIL — `7.4 APP-source`) · `repoURL` = 이 저장소 ·
   `targetRevision: main`(`7.4 APP-source-ref`) · `spec.sources`(multi-source) 없음(`7.4 APP-source-multi`) · `spec.sourceHydrator` 없음
   (`7.4 APP-source-hydrator`) · 문서 최상위 `operation` 없음(`7.4 APP-source-operation`), 그리고 `--root` 트리(`tests/`·`charts/`·`.git/` 제외)에 `.argocd-source.yaml`·`.argocd-source-*.yaml` 파일 0개
