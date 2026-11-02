@@ -17,7 +17,7 @@
 #      `dev-identity-admin-assert`(platform/policies/tests/configmap-assert-config.yaml `KAFKA_GROUP` — 값 불변)가 dev 접두 안에 든다. Read는 Describe를 함의한다.
 #   Create 없음 — 토픽은 KafkaTopic CR로만 만든다(Kafka `auto.create.topics.enable: "false"` · research D6). cluster · transactionalId ACL 없음 — 기본 idempotent 프로듀서의
 #   `InitProducerId`는 topic Write가 하나라도 있으면 허용된다(KIP-679 · Kafka 4.3.1 core/src/main/scala/kafka/server/KafkaApis.scala :1616–1620 `authorizeByResourceType`
-#   — IdempotentWrite 불필요 · 라이브 증명은 T059 검사 Job · README §3 VD-7). deny 규칙 · quotas · template 없음.
+#   — IdempotentWrite 불필요 · 라이브 증명은 T059 검사 Job · README §3 VD-7 — 2026-11-02 확정: roundtrip 성공 + cross-env `TopicAuthorizationException`). deny 규칙 · quotas · template 없음.
 #   `type`(allow|deny)은 적지 않는다 — 기본 allow(api AclRule.java :37 · CRD 설명 "Default value is `allow`"). `host: "*"`는 기본값(:39)이지만 의도를 남긴다.
 #   목록 필드 `operations`만 쓴다(1.2.0 CRD에 단수 `operation` 없음 · `operations` 필수 — enum Read · Write · Create · Delete · Alter · Describe · ClusterAction ·
 #   AlterConfigs · DescribeConfigs · IdempotentWrite · All). UO는 operation마다 ACL 1행을 만든다(SimpleAclRule.java :144–148).

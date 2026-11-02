@@ -39,7 +39,7 @@
 #      규약 예외 없음 · 근거는 그 파일 머리 주석 · README §4). 검사 7.1이 `source.path = platform/kafka`를 대조한다.
 #   4) 시크릿 값: 없다. 런타임 Secret(클러스터 CA `jt-kafka-cluster-ca` · `jt-kafka-cluster-ca-cert` · 클라이언트 CA 2장 · operator 인증서 · 노드 인증서 `jt-kafka-combined-0`
 #      (노드별 · 파드 이름 — Strimzi 0.46.0부터 파드마다 한 장) · EO 인증서 2장 = 8장)은 operator가 만든다 — 희망 상태에 Secret 0장(README §0).
-#   5) 검사 Job `kafka-assert`(`platform/policies/tests/`) 배포 → T059. 스크레이프(9404 → Alloy) → T098. kafkaExporter(컨슈머 lag) → SP-2.
+#   5) 검사 Job `kafka-assert`(`platform/policies/tests/`) 배포 → T059 — 완료(2026-11-02 · PR #57 → main edf28559… · 첫 실행 `SUMMARY: pass=2 fail=0`). 스크레이프(9404 → Alloy) → T098. kafkaExporter(컨슈머 lag) → SP-2.
 #
 # 되돌리기(순서 고정 — README §5): **revert 머지가 먼저**(revert 전에 `kubectl delete kafka`를 하면 selfHeal이 CR을 즉시 재생성한다 — 새 clusterId ↔ 보존 PVC의 옛 cluster.id)
 #   → 렌더 0(`prune: false` + 객체의 `Prune=false`라 객체가 남는다 · `OutOfSync`가 정상) → 지워야 한다면

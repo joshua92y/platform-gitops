@@ -163,7 +163,7 @@ Application을 두지 않았다(설계 D3-A — 검사 대상이 US3/US4 산출�
 - **syncPolicy**: 플랫폼 표준(automated `prune: false` · `selfHeal: true` · SSA · `CreateNamespace`(실질 no-op — jt-dev가 없으면 project `tests`의
   `clusterResourceWhitelist: []`라 Namespace 생성이 `resource :Namespace is not permitted in project tests`로 거부돼 operation Failed · fail closed · argo-5 · 소스 판독 ·
   라이브 미실측 · ns 소유는 `platform-policies` — tests whitelist에 Namespace를 넣지 않는다) · `Prune=confirm` · `Delete=confirm` · `SkipDryRunOnMissingResource`) ·
-  finalizer 있음 · 예외(`ApplyOutOfSyncOnly` · `retry`) 없음 · `ignoreDifferences` 없음. Job은 마지막 리소스 wave라 Job의 진행 · 실패가 sync operation을 실패시키지
+  finalizer 있음 · 예외(`ApplyOutOfSyncOnly` · `retry`) 없음 · `ignoreDifferences` 없음(VD-1 — 2026-11-02 실측: Synced 유지 · `ignoreDifferences` 불필요). Job은 마지막 리소스 wave라 Job의 진행 · 실패가 sync operation을 실패시키지
   않고 Application **health**로 드러난다(Argo CD v3.5.2 내장 Job health — Complete → Healthy · Failed → Degraded · 그 밖 Progressing).
 
 ### 선행 조건 체크리스트 — 해소 (T059)
@@ -175,7 +175,7 @@ Application을 두지 않았다(설계 D3-A — 검사 대상이 US3/US4 산출�
 | 3 | AppProject **`tests`** 소속 | `project: tests` — AppProject spec은 그대로(머리 주석만 정정 — 이 PR) |
 | 4 | 선행 산출물 존재 확인 | 2026-10-29 agent-view 읽기(모노레포 build-notes 「T059」 사실 1–7): `ClusterSecretStore` 5 Valid(`vault-dev` 포함) · ns jt-dev CA 미러 ES 2(`pg-main-ca` · `jt-kafka-cluster-ca-cert`) SecretSynced · ns data 파드 6 Running(`pg-main-1` · `jt-kafka-combined-0` · entity-operator · strimzi-operator · `dragonfly-dev` · `dragonfly-prod`) · Argo Application 22 Synced/Healthy(Database/DatabaseRole · KafkaTopic/KafkaUser · Dragonfly 포함) · kv `dev/` 4경로 시드(db · dragonfly 3경로 = 2026-10-22 VD-4 실증 · kafka 1경로 = ns data ES `kafka-user-dev-identity-admin` Ready). **OpenFGA store · kv `dev/openfga/*`는 없다** → authz-assert 보류(결정 D4) |
 | 5 | 재실행 모델 확정 | **B 확정**(아래 §재실행 모델 · 결정 D6) |
-| 6 | 첫 실행 뒤 `cluster.tests.ps1` `np-2-*` PASS 확인 | 머지 뒤 컨트롤러(관찰 D11): `np-2-data-assert` · `np-2-kafka-assert` SKIP → PASS 기대 · `np-2-authz-assert`는 T085까지 SKIP |
+| 6 | 첫 실행 뒤 `cluster.tests.ps1` `np-2-*` PASS 확인 | 머지 뒤 컨트롤러(관찰 D11): `np-2-data-assert` · `np-2-kafka-assert` SKIP → PASS 기대 · `np-2-authz-assert`는 T085까지 SKIP — **완료(2026-11-02 · PR #57 → main edf28559…)**: `np-2-data-assert` · `np-2-kafka-assert` PASS(cluster 46/0/9) · `np-2-authz-assert` SKIP(T085) |
 
 머지 · 첫 실행 전까지 `cluster.tests.ps1`의 `np-2-*`는 클러스터에 Job이 없어 SKIP이다 — 매니페스트가 없어서가 아니라 배포되지 않아서다.
 
@@ -191,11 +191,14 @@ Application을 두지 않았다(설계 D3-A — 검사 대상이 US3/US4 산출�
 | 2 리소스 wave `"0"` | ConfigMap `assert-config` · ES 2(`assert-data-env` · `assert-kafka-env`) SSA → ESO가 `vault-dev`로 kv를 읽어 Secret 2를 만든다 | ES 2 `Ready=True`(SecretSynced) → Healthy | 수 초 |
 | 3 리소스 wave `"1"` | Job 2(`data-assert` · `kafka-assert`) SSA — 마지막 리소스 wave라 적용 직후 operation이 닫힌다 | operation **Succeeded** · Application(그리고 root) health Progressing — Job이 끝날 때까지(이때 하네스 `argo-1`은 일시 FAIL) | 초 |
 | 4 파드 기동 · 검사 | data-assert: initContainer `dragonfly-assert`(Dragonfly 7검사) → `pg-assert`(pg 6검사 + init 결과 중계) · kafka-assert: 컨슈머 선기동 → 할당 확인 → produce → 마커 수신 → cross-env | pod Completed · 로그 마지막 줄 data-assert `SUMMARY: pass=13 fail=0` · kafka-assert `SUMMARY: pass=2 fail=0` | data-assert ≤ 2분 · kafka-assert ≤ 3분 |
-| 5 완료 | Job 2 Complete → 내장 Job health Healthy | Application `Synced/Healthy`(완료된 Job이 Synced로 남는지 = VD-1) | — |
+| 5 완료 | Job 2 Complete → 내장 Job health Healthy | Application `Synced/Healthy`(완료된 Job이 Synced로 남는지 = VD-1 — 2026-11-02 실측: Synced 유지 · `ignoreDifferences` 불필요) | — |
 | 6 하네스(관찰 D11) | 모노레포 하네스(agent-view) | cluster **46/0/9** · data **15/0/1** · kafka **17/0/0** | — |
 
 단계 2–5의 확인 명령(agent-view): `kubectl -n argocd get app platform-tests`(SYNC STATUS · HEALTH STATUS 열) · `kubectl -n jt-dev get externalsecret assert-data-env assert-kafka-env`(READY · STATUS 열) ·
 `kubectl -n jt-dev get job`(COMPLETIONS 열) · §로그 계약의 `kubectl -n jt-dev logs job/<이름>`.
+
+**실측(2026-11-02 · PR #57 → main edf28559…)**: 단계 1–6이 표대로 지나갔다 — root operation 3초 · ES → Job 2초 · `data-assert` 6초 · `kafka-assert` 37초(이미지 pull 9초 포함) ·
+Synced/Healthy · 하네스 46/0/9 · 15/0/1 · 17/0/0. 시간표 · 로그 · VD는 아래 §검증 기록 (T059 라이브 — 첫 배포 · 2026-11-02).
 
 ## 증상표 — 어디서 멈추면 무엇을 보는가
 
@@ -211,7 +214,7 @@ Application을 두지 않았다(설계 D3-A — 검사 대상이 US3/US4 산출�
 | (d) pod가 생기지 않는다 → 300 s 뒤 Job `Failed` reason `DeadlineExceeded` | `kubectl -n jt-dev describe job <job>` Events `exceeded quota` · `violates PodSecurity`(하네스 `np-7` — 이벤트 TTL 1h 안에서만 보인다) | ResourceQuota · PSA restricted 위반 | 원인 PR 뒤 운영자(admin kubeconfig) `kubectl -n jt-dev delete job <job>` → selfHeal |
 | (e) Job `Failed` reason `BackoffLimitExceeded` · Application Degraded · 로그에 `RESULT: FAIL <id>` | `kubectl -n jt-dev logs job/<job>` | 대상 시스템(id별 — pg = `platform/cnpg-databases`(DatabaseRole · PostSync Job ⓪–②) · Dragonfly = ACL 파일 · Kafka = ACL · CA · JAAS · 할당) | 수정 PR → 운영자(admin kubeconfig) `kubectl -n jt-dev delete job <job>` → selfHeal |
 | (f) Job `Failed` reason `DeadlineExceeded`(pod는 있었다) | **활성 pod가 삭제돼 로그가 없다**(`logs job/…` 실패 — 로그를 읽는 하네스 검사가 FAIL) → `kubectl -n jt-dev describe job <job>` Events · 대상 쪽 로그(`kubectl -n data logs deploy/dragonfly-dev --since=10m` · `kubectl -n data logs jt-kafka-combined-0 --since=10m`) | 할당 60 s + 마커 30 s 초과 · 네트워크 | 운영자(admin kubeconfig) `kubectl -n jt-dev delete job <job>`으로 재실행 → 같은 모양이면 kafka-assert에 기동 유예(data-assert `wait_ready` 모양)를 더할지 재검토(스크립트 변경 — 이 PR은 결정 D7로 스크립트 불변 · 다음 Job 스펙 변경 PR) |
-| (g) Application `OutOfSync`/`Healthy`가 영구 | `kubectl -n argocd get app platform-tests -o jsonpath='{.status.resources[?(@.status=="OutOfSync")]}'` | 완료된 Job의 live-only 필드(VD-1) | `ignoreDifferences`(Job `/spec/selector` · template 라벨) 후속 PR — §재실행 모델 |
+| (g) Application `OutOfSync`/`Healthy`가 영구 | `kubectl -n argocd get app platform-tests -o jsonpath='{.status.resources[?(@.status=="OutOfSync")]}'` | 완료된 Job의 live-only 필드(VD-1 — 2026-11-02 첫 배포 실측은 Synced 유지라 이 증상은 나오지 않았다) | `ignoreDifferences`(Job `/spec/selector` · template 라벨) 후속 PR — §재실행 모델 |
 | (h) 주간 재실행 FAIL | (e)와 같다 | — | **Degraded가 7일 남는다**(`backoffLimit: 0` · 자동 재시도 없음 — 다음 재실행은 TTL 삭제 뒤) → 운영자(admin kubeconfig) `kubectl -n jt-dev delete job <job>`으로 즉시 재실행 |
 
 ## 재실행 모델 — **B 확정** (T059 결정 D6 · 2026-10-29)
@@ -220,7 +223,7 @@ Job의 `spec.template`은 immutable이라 Argo CD가 같은 이름의 Job을 갱
 
 - **모양**: hook 어노테이션 없음 · 리소스 wave ConfigMap · ES `"0"` → Job `"1"` · `ttlSecondsAfterFinished: 604800`(7일) 유지 · `backoffLimit: 0` 그대로.
 - **주간 재검사**: Job이 끝나고 7일 뒤 TTL 컨트롤러가 Job을 지우면 Application이 OutOfSync(리소스 없음)가 되고 selfHeal이 같은 스펙으로 다시 만든다
-  → 검사가 다시 돈다(첫 관찰 = VD-2 · 2026-11-05 무렵).
+  → 검사가 다시 돈다(첫 관찰 = VD-2 · 2026-11-05 무렵 — 2026-11-02 첫 실행 기준으로 다시 세면 11-09 무렵 · 미실측).
 - **수동 재실행(운영자 전용 — admin kubeconfig)**: `kubectl -n jt-dev delete job <이름>` → selfHeal이 다시 만든다(≤ 3분 — 조정 주기 상한) 또는 Argo Sync.
   agent-view에는 `delete` 동사가 없다(`platform/policies/rbac-agent-view.yaml` — ClusterRole `view` + get/list/watch + `pods/portforward` create뿐) · tester · agent-view는 로그만 읽는다.
 - **Job 스펙을 바꾸는 PR**: 완료된 Job이 남아 있으면 머지 뒤 sync가 그 Job 적용에서 거부된다(`spec.template` immutable). 순서:
@@ -242,7 +245,7 @@ Job의 `spec.template`은 immutable이라 Argo CD가 같은 이름의 Job을 갱
   (`platform/cnpg-databases/README.md` §6 T059 — C5) · selfHeal 부분 sync · 리소스 선택 Sync · Apply only는 hook을 건너뛴다(Argo CD v3.5.2 `controller/sync.go:311`) —
   주간 재검사가 일어나지 않는다. B는 Job 실패가 Application health(Degraded)로 드러나 `argo-1`이 본다.
 - **`Replace=true,Force=true`는 두지 않는다** — OutOfSync가 날 때마다 Job을 지우고 다시 만든다. 완료된 Job에 거짓 차이(live-only 필드)가 있으면 무한 재실행이 된다.
-  완료된 Job이 Synced로 남는지는 머지 직후 관찰한다(VD-1 — 아니면 `ignoreDifferences`(Job `/spec/selector` · template 라벨) 후속 PR · 그 뒤 재검토).
+  완료된 Job이 Synced로 남는지는 머지 직후 관찰한다(VD-1 — 아니면 `ignoreDifferences`(Job `/spec/selector` · template 라벨) 후속 PR · 그 뒤 재검토 · 2026-11-02 실측: Synced 유지 · `ignoreDifferences` 불필요).
 
 ## 확인이 필요한 값 (계약에 없어 추정한 것)
 
@@ -252,10 +255,10 @@ Job의 `spec.template`은 immutable이라 Argo CD가 같은 이름의 Job을 갱
 |---|---|---|
 | Kafka bootstrap Service DNS | `jt-kafka-kafka-bootstrap.data.svc:9093` (Strimzi 관례 `<cluster>-kafka-bootstrap`) | T055 |
 | Kafka 컨슈머 그룹 이름 | `dev-identity-admin-assert` — **해소(T056)**: KafkaUser `dev-identity-admin`의 ACL ⓑ group **prefix** `dev-identity-admin-` · `Read`(data-model §6 ACL 행(2026-10-16 정정 — 모노레포 `9442b14`) — gitops `platform/kafka-topics/kafkausers.yaml`) 안에 든다. ConfigMap 값은 그대로다(prod 그룹 접두 `identity-admin-`과 교차하지 않는다) · ConfigMap 머리 주석의 「T056에서 확인」 문구도 확정 문구로 바꿨다(리뷰 r2 S9 — 주석은 렌더에서 빠진다) | T056 확정 |
-| kafka-assert 동시 JVM 메모리(T056) | roundtrip이 컨슈머(`-Xmx256m`)를 띄운 채 describe(`-Xmx128m` — 이 호출만 낮춘다) · 프로듀서(`-Xmx256m`)를 띄워 **JVM 2개가 동시에** 돈다(힙 상한 합 ≤ 512Mi) — limit 640Mi 안이라고 보지만 실측 전이다(`resources` 주석도 이 내용으로 정정 — 리뷰 r1 S6 · O4a) | T059 첫 실행(OOMKilled 0 · `kubectl top`) |
-| roundtrip 준비 확인 · 지연 실측(T056) | 할당 확인 상한 60 s(2 s 간격 describe · 자기 멤버 = CLIENT-ID가 이 실행의 `client.id`인 행만) · 선기동 컨슈머 유휴 상한 = `(60 + KAFKA_ROUNDTRIP_DEADLINE_S) × 1000 + KAFKA_CONSUME_TIMEOUT_MS` ms(= 110000 — `KAFKA_CONSUME_TIMEOUT_MS`의 뜻이 "소비 대기"에서 "유휴 여유분"으로 바뀌었다 · ConfigMap의 그 키 위에 같은 뜻의 주석을 달았다 — 리뷰 r2 S9) · `latency=<n>ms`는 모의로만 확인(모의 185–440 ms — r1 · r2 실행 · 가짜 컨슈머의 폴링 잡음 · 고정 시계 123 ms — 검증 기록 T056) | T059 첫 실행(할당 소요 · latency 값 · job-k-3) |
+| kafka-assert 동시 JVM 메모리(T056) | roundtrip이 컨슈머(`-Xmx256m`)를 띄운 채 describe(`-Xmx128m` — 이 호출만 낮춘다) · 프로듀서(`-Xmx256m`)를 띄워 **JVM 2개가 동시에** 돈다(힙 상한 합 ≤ 512Mi) — limit 640Mi 안이라고 보지만 실측 전이다(`resources` 주석도 이 내용으로 정정 — 리뷰 r1 S6 · O4a) | T059 첫 실행(OOMKilled 0 · `kubectl top`) — **완료(2026-11-02 · PR #57 → main edf28559…)**: Job Complete 37초(`backoffLimit 0` — OOMKilled 0) · `kubectl top` 수치는 미실측 |
+| roundtrip 준비 확인 · 지연 실측(T056) | 할당 확인 상한 60 s(2 s 간격 describe · 자기 멤버 = CLIENT-ID가 이 실행의 `client.id`인 행만) · 선기동 컨슈머 유휴 상한 = `(60 + KAFKA_ROUNDTRIP_DEADLINE_S) × 1000 + KAFKA_CONSUME_TIMEOUT_MS` ms(= 110000 — `KAFKA_CONSUME_TIMEOUT_MS`의 뜻이 "소비 대기"에서 "유휴 여유분"으로 바뀌었다 · ConfigMap의 그 키 위에 같은 뜻의 주석을 달았다 — 리뷰 r2 S9) · `latency=<n>ms`는 모의로만 확인(모의 185–440 ms — r1 · r2 실행 · 가짜 컨슈머의 폴링 잡음 · 고정 시계 123 ms — 검증 기록 T056) | T059 첫 실행(할당 소요 · latency 값 · job-k-3) — **완료(2026-11-02 · PR #57 → main edf28559…)**: latency=304ms · 벽시계 3s · job-k-3 PASS(≤ 5000ms) · 할당 소요는 로그에 따로 찍히지 않는다(Job 전체 37초 — 이미지 pull 9초 포함) |
 | OpenFGA Service DNS | `openfga.identity.svc:8080` — helm 릴리스 이름에 따라 달라진다 | T082 |
-| `roundtrip` 상한 | `KAFKA_ROUNDTRIP_DEADLINE_S=30`(JVM 기동 포함 벽시계). quickstart의 "≤ 5초"는 메시지 경로 기준이라 값이 다르다 | 첫 실행 시 실측 후 조정 |
+| `roundtrip` 상한 | `KAFKA_ROUNDTRIP_DEADLINE_S=30`(JVM 기동 포함 벽시계). quickstart의 "≤ 5초"는 메시지 경로 기준이라 값이 다르다 | 첫 실행 시 실측 후 조정 — **실측(2026-11-02 · PR #57 → main edf28559…)**: 벽시계 3s · latency=304ms — 상한 안(값은 그대로) |
 | authz 검사 데이터 | 합성 식별자(`ASSERT_*`)를 Job이 직접 쓰고 지운다 | 아래 §후속 결정 |
 
 ## 후속 결정 — 결과 (T059 · 2026-10-29)
@@ -515,3 +518,45 @@ ES 이름도) · ConfigMap 어노테이션(`"0"` — 값 불변) · `tests/valid
   — 표 행과 분기가 각각 필요하다.
 - gitleaks(`gitleaks detect --no-git -s platform/policies/tests`): no leaks found.
 - **클러스터에서는 아직 실행되지 않았다** — 머지 뒤 컨트롤러가 관찰한다(모노레포 build-notes 「T059」 D11 · VD-1–VD-10).
+
+## 검증 기록 (T059 라이브 — 첫 배포 · 2026-11-02)
+
+머지 뒤 컨트롤러가 agent-view로 관찰한 첫 배포를 옮겨 적는다(이 기록을 더한 후속 문서 PR은 README · 주석만 바꿨다 — 렌더 sha256 `f3f0cca4…` 그대로).
+시각은 KST이고, VD 번호는 모노레포 build-notes 「T059」 결정 D14의 번호다.
+
+- **시간표**:
+
+  | 시각(KST) | 무슨 일 | 걸린 시간 |
+  |---|---|---|
+  | 12:17:55 | PR #57 squash 머지 → main `edf285596c7bf456400ccdcf2b00f5e20463105d` | — |
+  | 12:20:55–12:20:58 | root 폴링(머지 뒤 ≈ 3분) → root operation "successfully synced (all tasks run)" → child `platform-tests` 생성 | 3초 |
+  | 12:20:56 | ES 2(`assert-data-env` · `assert-kafka-env`) `Ready=True` · `SecretSynced` | — |
+  | 12:20:58 | Job 2(`data-assert` · `kafka-assert`) 생성 — 리소스 wave `"0"`(ES) → `"1"`(Job) 순서 | ES → Job 2초 |
+  | 12:21:04 | `data-assert` Complete | 6초 |
+  | 12:21:35 | `kafka-assert` Complete(이미지 pull 9초 포함) | 37초 |
+  | 12:21:46 | Application `platform-tests` Synced/Healthy 확인 · root Synced/Healthy | — |
+
+- **Argo 상태**: `status.resources` 5개 전부 Synced(완료된 Job 포함) · operationState에 retryCount 없음 · Degraded 0 · Job 파드 2개 같은 노드 · 재시도 · 기동 경합 흔적 0.
+- **로그**(§로그 계약 그대로):
+  - `data-assert` — `RESULT: PASS` 13: pg 6(`pg-cross-db-denied` · `catalog-connect-false` · `revoke-public` · `ssl-verify-full` · `role-attrs` · `app-session-timeouts`) +
+    Dragonfly 7(`noauth` · `acl-list` · `writer-set` · `reader-get` · `reader-set-denied` · `reader-cross-denied` · `noperm`) · `SUMMARY: pass=13 fail=0`.
+  - `kafka-assert` — `roundtrip dev.identity-admin.session.revoked produce→consume 3s latency=304ms` ·
+    `cross-env-denied dev-identity-admin -> identity-admin.session.revoked: … TopicAuthorizationException`(`ClusterAuthorizationException` 아님) · `SUMMARY: pass=2 fail=0`.
+- **모노레포 하네스**(12:23–12:28 · agent-view · OCI svc-verify 재인증 뒤 · 한 번에 하나):
+  - cluster **46 PASS / 0 FAIL / 9 SKIP** — `argo-1`(Application 23 Synced/Healthy) · `argo-5` PASS(새 단언 — operationState Failed/Error 0 · operationState 없는 Application 3) ·
+    `np-2-data-assert` · `np-2-kafka-assert` PASS · `backup-1..3` PASS · SKIP 9 = 운영자 수동 5 · `np-2-authz-assert`(T085) · `mon-1`(T098) · `limits-1/2`(T075).
+  - data **15 / 0 / 1** — `job-1` · `job-2` · `bucket-1`(베이스 42) · `bucket-2`(WAL 67 · 최신 3 연속) PASS · SKIP `env-1`(T075).
+  - kafka **17 / 0 / 0** — `job-k-1..3` · `job-d-1/2` PASS · `job-k-3` latency 304ms ≤ 5000ms.
+- **VD**:
+
+  | VD | 무엇 | 결과 |
+  |---|---|---|
+  | VD-1 | 완료된 Job이 Synced로 남는가 | **PASS** — `status.resources` 5 전부 Synced · `ignoreDifferences` 불필요(§재실행 모델 · 증상표 (g)) |
+  | VD-4 | kafka-assert 기동 경합 | 흔적 **0** — `wait_ready` 추가 불필요(스크립트 불변 · 결정 D7 유지) |
+  | VD-5 | roundtrip 실측 | `latency=304ms` · 벽시계 3s(상한 30s · JVM 기동 포함) |
+  | VD-7 · VD-8 | ES 리소스 wave `"0"` → Job `"1"` 순서 · ES 헬스가 SecretSynced를 Healthy로 보는가 | **PASS** — ES SecretSynced 12:20:56 → Job 생성 12:20:58(2초) |
+  | VD-9 | Job 2개 동시 실행 · 노드 배치 | Job 파드 2개가 같은 노드에서 함께 돌아 둘 다 Complete |
+  | VD-10 | Degraded일 때 root 헬스 전파 | **해당 없음** — Degraded 0 |
+
+- **미확인(미실측으로 둔다)**: `CreateNamespace` 거부 메시지(jt-dev가 이미 있었다 — §Application `platform-tests` syncPolicy) · VD-11(ESO가 ES 어노테이션을 Secret에
+  복사하는가 — 운영자 Secret 읽기) · 주간 재실행(VD-2 · 11-09 무렵 — §재실행 모델) · Job 스펙 변경 PR의 immutable 경로(VD-3) · root 재구축 때 앞 행 · 뒤 행 게이트(VD-6 · SP-3 리허설).

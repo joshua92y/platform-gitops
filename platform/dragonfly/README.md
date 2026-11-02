@@ -58,7 +58,7 @@ Argo CD Application **`platform-dragonfly` 하나**가 이 디렉터리 하나�
   사용자 비밀번호 5개 전부 상이(시드 블록 B5) · prod aclfile에 `sample-pod` 없음 · 공유 이름 `identity-admin`은 env마다 다른 비밀번호.
 - Vault kv 값(아래 P1 7경로) → 운영자 시드. Vault 정책 → 모노레포 `infra/vault/policies.tf`(eso-data `kv/data/{dev,prod}/dragonfly/*` — 이미 허용 · :41 · :46 · :51 · :56).
 - 앱 ns의 `<pod>-env`(`DRAGONFLY_URL` ← `kv/{env}/dragonfly/<pod>` 키 `url` · store `vault-{env}`) → 앱 overlay(T072). 검사 Job `data-assert`의 **배포** → T059(Job 스크립트의 Dragonfly 검사 7개는 이 PR이
-  `platform/policies/tests/job-data-assert.yaml`에 더했다 — 그 디렉터리 README 「검증 기록 (T057)」).
+  `platform/policies/tests/job-data-assert.yaml`에 더했다 — 그 디렉터리 README 「검증 기록 (T057)」) — **완료(2026-11-02 · PR #57 → main edf28559…)**: Application `platform-tests`가 배포했다 · 첫 실행 Dragonfly 7검사 PASS.
 - Reloader 어노테이션 · `/metrics` 수집 경로 · 채널 ACL(`&<pod>:*`) → 두지 않는다(§4 · §5 · §6).
 - AppProject `platform` 변경 **없음**: 8장 전부 네임스페이스 범위이고 destinations에 `data`가 있다(`clusters/oci-k3s/projects/platform.yaml` — namespaceResource 제한 없음).
 
@@ -116,7 +116,7 @@ USER sample-pod ON #<sha256hex> %R~revoked:* ~sample-pod:* +@all
 | 하네스 `kafka.tests.ps1` df-1 | Deployment 2 존재 · Available · replicas 1 · availableReplicas 1 · 컨테이너 1 · `--maxmemory=768mb` · `--aclfile /etc/dragonfly/users.acl`(분리 표기) · `--requirepass`/`-requirepass`/`--flagfile`/`--fromenv`/`--tryfromenv` 0 · env 이름 `DFLY_requirepass`·`DFLY_PASSWORD` 0 · envFrom 0 · grace `60` · `Recreate` · automount `false` |
 | 하네스 df-2 | Service `dragonfly-dev` · `dragonfly-prod`의 `spec.ports[].port`에 `6379` |
 | 하네스 `cluster.tests.ps1` argo-4-dragonfly | ns data에서 이름에 `dragonfly`가 들거나 라벨 `app.kubernetes.io/name=dragonfly`인 PVC **전부**의 `argocd.argoproj.io/sync-options` = **정확히** `Delete=false,Prune=false` — 2장 |
-| 하네스 job-d-1/2 · `data.tests.ps1` job-1/2 · `cluster.tests.ps1` np-2-data-assert | 검사 Job `data-assert`(ns jt-dev)가 배포돼야 판정된다(T059 · 그 전에는 §3 VD-4의 임시 적용 동안만) — data job-2는 **추적 밖 id의 FAIL도 문제**로 보므로 Dragonfly 7개도 전부 PASS여야 한다 |
+| 하네스 job-d-1/2 · `data.tests.ps1` job-1/2 · `cluster.tests.ps1` np-2-data-assert | 검사 Job `data-assert`(ns jt-dev)가 배포돼야 판정된다(T059 · 그 전에는 §3 VD-4의 임시 적용 동안만 — **완료(2026-11-02 · PR #57 → main edf28559…)**: 배포 · 왼쪽 열 단언 전부 PASS) — data job-2는 **추적 밖 id의 FAIL도 문제**로 보므로 Dragonfly 7개도 전부 PASS여야 한다 |
 
 ---
 
@@ -349,6 +349,7 @@ Application `platform-dragonfly`는 `prune: false` + `Prune=confirm` + `Delete=c
   `NOTE: cleanup` 1줄 · 최대 22줄(`platform/policies/tests/README.md` §로그 계약 · 검증 기록 T057). VD-4 임시 적용(§3)을 Application 배포로 대체 · `ttlSecondsAfterFinished` 7d · 하네스 job-d-1/2 · np-2-data-assert · data job-1/2.
   병합 절의 결과 파일 부재 fallback(Dragonfly 7 id 각 1줄 FAIL · 14줄)은 이 PR 수정 라운드 r1이 끝냈다 — 인계 없음.
   **kafka-assert · authz-assert도 기동 경합 후보다** — 새 pod의 첫 1–2초 NetworkPolicy(kube-router) 반영 전 REJECT(§3 VD-4 1차 실측 ②) → 같은 `wait_ready` 패턴(첫 호출 전 연결 확인 · 1초 간격 최대 15회 · 걸린 초를 첫 검사 근거에 — data-assert initContainer T057 수정 라운드 r2 · `platform/policies/tests/README.md` 검증 기록 T057 r2).
+  — **완료(2026-11-02 · PR #57 → main edf28559…)**: 7검사 PASS(첫 실행 6초 · `noauth` NOAUTH · `acl-list` `%R~revoked:*` · 거부 3검사 NOPERM) · 하네스 job-d-1/2 · job-1/2 · np-2-data-assert PASS · kafka-assert 기동 경합 흔적 0 → `wait_ready` 추가 불필요(스크립트 불변 유지) · authz-assert는 T085.
 - **T062 · T066 · T072(앱 템플릿 · identity-admin)**: `DRAGONFLY_URL` ← `kv/{env}/dragonfly/<pod>` 키 `url`(`<pod>-env` · store `vault-{env}`) · 키 접두 `<pod>:`(Celery `global_keyprefix` · Django `KEY_PREFIX`) ·
   **채널 ACL 실측** — Celery/Kombu(pidbox · events · result backend pub/sub)가 채널을 쓰면 `<pod>` 줄에 `&<pod>:*`가 필요할 수 있다(지금은 `resetchannels` — `ACL LIST`에 보인다). 새 pod = aclfile 한 줄 + kv 경로 1개 추가(시드 블록 · 그 env의 `acl` 재렌더) — 이 디렉터리의 매니페스트는 바뀌지 않는다.
 - **T084(회전)**: §5 회전 순서 실측 · `secret-rotation.md`에 Dragonfly 행(kv `<user>` + `acl` 동시 · `ACL LOAD` 우선 · 앱 `<pod>-env` Reloader) · 새 값도 P1 형식 · `ACL LOAD` 성공 = 기존 연결 전부 끊김(`acl_family.cc` :334–340 — §4) → 소비자 재접속 창 실측.

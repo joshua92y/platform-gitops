@@ -24,7 +24,7 @@
 #   1) `Kafka jt-kafka` · `KafkaNodePool` · Strimzi operator → `platform/kafka/`(T055). Namespace · PSA · NetworkPolicy → `platform/policies/`(변경 0).
 #   2) Vault kv 값(`kv/prod/kafka/identity-admin` · `kv/dev/kafka/identity-admin` 키 `password`) → 운영자 시드(**머지 전** — README §0 P1 · 모노레포 런북 bootstrap.md
 #      §4 T056). 이 저장소에 비밀은 없다(Secret 0장 — ESO와 UO가 런타임에 만든다).
-#   3) 앱 ns의 `<pod>-env`(`KAFKA_PASSWORD` ← 같은 kv 경로 · store `vault-{env}`) → 앱 overlay(T072). 검사 Job `kafka-assert`의 **배포** → T059(tests Application).
+#   3) 앱 ns의 `<pod>-env`(`KAFKA_PASSWORD` ← 같은 kv 경로 · store `vault-{env}`) → 앱 overlay(T072). 검사 Job `kafka-assert`의 **배포** → T059(tests Application) — 완료(2026-11-02 · PR #57 → main edf28559… · Application `platform-tests` · roundtrip 3s latency=304ms · cross-env 거부).
 #   4) 토픽·그룹 밖 ACL(cluster · transactionalId) · quotas · superUsers → 두지 않는다(kafkausers.yaml 머리 주석 · README §4 — KIP-679).
 #
 # 되돌리기(README §5): Application `prune: false` + `Delete=confirm`이라 revert 머지는 객체를 지우지 않는다(렌더 0 → `OutOfSync`가 정상).

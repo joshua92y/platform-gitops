@@ -60,7 +60,7 @@ Strimzi **`KafkaTopic` 4**(`identity-admin.session.revoked` · `dev.identity-adm
 - `Kafka jt-kafka` · `KafkaNodePool` · Strimzi operator · Entity Operator → `platform/kafka/`(T055). superUsers는 두지 않는다(T055 · 하네스 kafka-2).
 - Namespace · PSA · NetworkPolicy → `platform/policies/`(정책 변경 **0** — 파드를 만들지 않는다 · 앱 → Kafka 9093은 매트릭스 `jt-dev`·`jt-prod` → `data` 행이 이미 연다).
 - Vault kv 값(`kv/prod/kafka/identity-admin` · `kv/dev/kafka/identity-admin` 키 `password`) → 운영자 시드(P1). Vault 정책 → 모노레포 `infra/vault/policies.tf`(eso-data `kv/data/{dev,prod}/kafka/*` 이미 허용).
-- 앱 ns의 `<pod>-env`(`KAFKA_PASSWORD` ← 같은 kv · store `vault-{env}`) → 앱 overlay(T072). 검사 Job Application(`platform/policies/tests` — kafka-assert 실행) → T059.
+- 앱 ns의 `<pod>-env`(`KAFKA_PASSWORD` ← 같은 kv · store `vault-{env}`) → 앱 overlay(T072). 검사 Job Application(`platform/policies/tests` — kafka-assert 실행) → T059 — **완료(2026-11-02 · PR #57 → main edf28559…)**: Application `platform-tests` 배포 · kafka-assert 첫 실행 `SUMMARY: pass=2 fail=0`.
 - 그룹·토픽 밖 ACL(cluster · transactionalId) · quotas · Create 권한 → 두지 않는다(§4).
 - AppProject `platform` 변경 **없음**: 13장 전부 네임스페이스 범위이고 destinations에 `data` · `identity` · `jt-dev` · `jt-prod`가 이미 있다(`clusters/oci-k3s/projects/platform.yaml` — 14 ns)
   (계약 gitops-repo.md :49 「`platform`에 `jt-dev`를 넣지 않는다」 문장과의 모순은 converge 인계 1번 — 이 디렉터리가 project platform 리소스(CA 미러 ES — jt-dev·jt-prod 4장 · identity 1장)를 앱 ns에 더한다).
@@ -187,7 +187,7 @@ pwsh -NoProfile -File tests/platform/cluster.tests.ps1
 | VD-4 | **UO 자격 Secret 키**(운영자 — 이름만) = `password` · `sasl.jaas.config` · 비밀번호 Secret 키 = `password` 하나(template 없음의 효과) | 기대와 같으면 그대로. 비밀번호 Secret에 다른 키가 보이면 ESO 동작이 소스 판독과 다르다는 기록 |
 | VD-5 | **미러 Secret 키 = `ca.crt`만**(운영자 직접 — 또는 agent-view로는 ES spec · 하네스 ca-1) · 5장 | `ca.key`가 하나라도 보이면 §1 증상표의 보안 사고 행 |
 | VD-6 | **ACL 실적용**(운영자 `kafka-acls.sh --list` — §2) — 사용자당 4행(topic prefix Read·Write·Describe + group prefix Read) · 교차 env 행 0 | 기대와 같으면 그대로. 다르면 UO 로그(`SimpleAclOperator`)와 함께 기록 |
-| VD-7 | **IdempotentWrite 불필요**(KIP-679) — T059 검사 Job `kafka-assert`의 roundtrip produce 성공 + cross-env-denied가 `TopicAuthorizationException`(**`ClusterAuthorizationException`이 아님**) | 성공이면 cluster ACL 0 확정. `ClusterAuthorizationException`(InitProducerId 거부)이면 `cluster` `IdempotentWrite` 행 추가 PR(컨트롤러 결정) |
+| VD-7 | **IdempotentWrite 불필요**(KIP-679) — T059 검사 Job `kafka-assert`의 roundtrip produce 성공 + cross-env-denied가 `TopicAuthorizationException`(**`ClusterAuthorizationException`이 아님**) | 성공이면 cluster ACL 0 확정. `ClusterAuthorizationException`(InitProducerId 거부)이면 `cluster` `IdempotentWrite` 행 추가 PR(컨트롤러 결정) — **확정(2026-11-02 실측 · PR #57 → main edf28559…)**: roundtrip produce 성공(latency=304ms) · cross-env-denied = `TopicAuthorizationException`(`ClusterAuthorizationException` 아님) → cluster ACL 0 확정 · `IdempotentWrite` 행 없음 |
 | VD-8 | **Synced 안정** — TO finalizer 추가 · UO/TO status 쓰기 · ESO/CRD 기본값 주입 뒤 15분 간격 2회 `Synced` · KafkaUser/KafkaTopic resourceVersion 변화 기록 · Application 조건 `OrphanedResourceWarning` 수가 머지 전과 같은가(새 런타임 Secret은 ownerReference가 있어 고아가 아니라고 본다 — 판독) | 안정이면 그대로. 영구 OutOfSync면 필드 기록 → 1차 조치 `ServerSideDiff=true`(계약 예외 문단 개정 뒤) |
 | VD-9 | **회전 경로**(후속 — T084): kv 교체 → ES ≤ 5분 Secret 갱신 → UO 다음 주기 조정(≤ 2분 — 이 Secret은 UO 감시 라벨 밖이라 이벤트로 깨지 않는다) → Kafka SCRAM 자격 갱신 · 앱 `<pod>-env`도 ≤ 5분(Reloader 롤아웃) — 그 사이 옛 비밀번호 클라이언트의 인증 실패 창 | 이번 PR에서는 실측하지 않는다(값 회전 없음). T084가 순서·창을 실측해 `secret-rotation.md`에 기록 |
 
@@ -262,7 +262,7 @@ Application `platform-kafka-topics`는 `prune: false` + `Prune=confirm` + `Delet
 
 **되돌리기 순서**(이 PR을 무르고 객체까지 치워야 할 때 — 운영자 · admin kubeconfig):
 1. revert PR 머지 → 렌더 0 → 객체는 남고 `OutOfSync`. **여기서 멈추는 것이 기본이다** — 객체가 남아 있어도 해가 없다(토픽·사용자는 쓰는 곳이 생길 때까지 비어 있다).
-2. 지워야 한다면 소비자 0을 먼저 확인한다(T059 검사 Job · 앱 pod가 이 사용자·토픽을 쓰지 않는다).
+2. 지워야 한다면 소비자 0을 먼저 확인한다(T059 검사 Job · 앱 pod가 이 사용자·토픽을 쓰지 않는다) — **완료(2026-11-02 · PR #57 → main edf28559…)**: 검사 Job `kafka-assert`가 배포돼 이제 `dev-identity-admin` · `dev.identity-admin.session.revoked`의 소비자다(재실행 모델 B — ttl 7d 뒤 selfHeal이 다시 만든다) → 지우기 전 Application `platform-tests`의 Job도 센다.
 3. KafkaUser → KafkaTopic → ES 순서로 수동 삭제(토픽 삭제는 데이터 삭제 — 되돌릴 수 없다). TO가 살아 있어야 KafkaTopic 삭제가 끝난다.
 4. Vault kv 2경로는 지우지 않는다(값 교체는 회전 절차 — 런북 §4 T056 「정리 판단」은 **머지 전**에만).
 
@@ -290,6 +290,7 @@ Application `platform-kafka-topics`는 `prune: false` + `Prune=confirm` + `Delet
 - **T059(US3 E2E · 검사 Job Application)**: `platform/policies/tests` Application(AppProject `tests`)이 `kafka-assert`를 돌린다 — 이 PR이 Job의 roundtrip에 `latency=<n>ms` 토큰을 더했다(컨슈머 선기동 · 자기 멤버(실행마다 고유 `client.id`)의 할당 확인 · 지연 = 수신 시각 − CreateTime · 마커 미수신 · produce 실패 경로의 `EVIDENCE: producer 마지막 오류:` · 비밀번호 형식 검사(base64url 밖이면 JVM 기동 전에 두 검사 FAIL — 리뷰 r2 K5) ·
   진단 줄 필터 `safe_tail`(진단 다섯 곳이 `password` · `jaas` 줄을 거른다 — 리뷰 r2 K5 · O11) — `platform/policies/tests/README.md` §로그 계약 · 검증 기록 T056).
   첫 실측: 할당 소요 · latency 값(하네스 job-k-3 ≤ 5000) · VD-7(cross-env가 `TopicAuthorizationException`) · 동시 JVM 2개의 메모리(limit 640Mi — OOMKilled 0). 하네스 job-k-1..3 · `np-2-kafka-assert`.
+  — **완료(2026-11-02 · PR #57 → main edf28559…)**: 첫 실행 37초(이미지 pull 9초 포함) · roundtrip 벽시계 3s · latency=304ms(job-k-3 ≤ 5000ms PASS) · VD-7 확정(§3) · 동시 JVM 2개 OOMKilled 0(Job Complete — `backoffLimit 0`) · 메모리 수치(`kubectl top`)는 미실측 · 할당 소요는 로그에 따로 찍히지 않는다 · 하네스 job-k-1..3 · `np-2-kafka-assert` PASS.
 - **T072(앱 템플릿 `<pod>-env`)**: `KAFKA_PASSWORD` ← `kv/{env}/kafka/<pod>` 키 `password`(store `vault-{env}` — 같은 비밀, store 둘 · data-model §8) · 사용자 이름(`<pod>` / `dev-<pod>`) · bootstrap `jt-kafka-kafka-bootstrap.data.svc:9093` · 토픽 이름은 ConfigMap(비밀 아님) ·
   CA = Secret `jt-kafka-cluster-ca-cert`의 `ca.crt`(PEM truststore — 이 PR의 미러) · 컨슈머 그룹은 KafkaUser 이름 접두 안에서 짓는다 — prod `<pod>-` · dev `dev-<pod>-`(ACL ⓑ · 결정 D3 · data-model §6). 새 pod는 이 디렉터리에 KafkaUser 2 · KafkaTopic · 비밀번호 ES 2를 같은 모양으로 더하는 PR + kv 시드가 선행한다.
   DLQ도 env 접두 — prod `<pod>.dlq` · dev `dev.<pod>.dlq`(events.md :5 · 2026-10-16 정정 — dev 자격은 `<pod>.dlq`에 쓸 수 없다).
