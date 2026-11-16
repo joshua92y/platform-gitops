@@ -1,7 +1,13 @@
 # apps/identity-admin/overlays/dev/ — namespace(jt-dev)·images[].digest(태그 금지)·
 # Ingress host JSON6902·replicas. 계약 gitops-repo.md §디렉터리·§이미지·승격.
 # dev digest bump는 joshuatech-gitapp-1[bot]의 auto-merge PR로만 바뀐다.
-# 빈 뼈대(T003) — 실제 내용은 T031+에서 작성한다.
+# 지금은 images 항목 하나만 있다(T074 seed) — resources · namespace · Ingress · replicas는 T075에서 작성한다.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources: []
+# 자리 값 — 어떤 이미지도 가리키지 않는다. 모노레포 publish-pod 첫 실행의 봇 PR이 digest 줄을 제자리에서 바꾼다(T074).
+# 이 overlay를 쓰는 Application은 T075가, 이 자리 값이 실제 digest로 바뀐 뒤에 만든다. 이 항목의 name · newName · digest 줄을 지우거나 옮기지 않는다.
+images:
+  - name: ghcr.io/joshua92y/identity-admin
+    newName: ghcr.io/joshua92y/identity-admin
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
