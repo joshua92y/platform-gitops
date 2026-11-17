@@ -10,4 +10,4 @@ resources: []
 images:
   - name: ghcr.io/joshua92y/identity-admin
     newName: ghcr.io/joshua92y/identity-admin
-    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+    digest: sha256:faf55a5752533dffb3b5e93e3b8d8857890d4a0690945de70c526de50be057dd
