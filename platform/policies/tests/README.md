@@ -39,9 +39,10 @@ SUMMARY: pass=<n> fail=<n>
 - **종료 코드**: `fail=0`이면 0, 하나라도 실패하면 1. 즉 `status.succeeded ≥ 1`은 "모든 검사 PASS"와 같다.
 - 보조 줄은 `EVIDENCE:`(원문 증거)와 `NOTE:`(정리 작업 기록)뿐이다. 파서는 `^RESULT:`·`^SUMMARY:`만 본다.
 - **출력은 짧게 유지한다.** `cluster.tests.ps1`의 `np-2-*`와 모노레포 `data.tests.ps1`의 `job-2`는 `kubectl logs job/<이름> --tail=50`을 읽으므로,
-  모든 `RESULT:`와 `SUMMARY:`는 마지막 50줄 안에 들어와야 한다(현재 최대 **22줄** = data-assert: pg `RESULT` 6 + initContainer 줄 ≤ 15
-  (`RESULT` 7 + `EVIDENCE:` 머리 1 + ACL LIST ≤ 6(`head -n 6`) + `NOTE:` 정리 1) + `SUMMARY` 1 · kafka-assert ≤ 5 · authz-assert ≤ 5 — **T057 재계산**(dev aclfile 4사용자면 ACL LIST 4행 → 20줄) ·
-  kafka-assert는 T056 재계산. 이전 표기: T054 "16줄"(initContainer ≤ 9 = `RESULT` 2) · 그 전 "11줄"은 ACL LIST 6줄 상한을 덜 센 값이었다(T054 전 data-assert 최대 = 14줄)).
+  모든 `RESULT:`와 `SUMMARY:`는 마지막 50줄 안에 들어와야 한다(현재 최대 **15줄** = data-assert: pg `RESULT` 6 + initContainer 줄 8
+  (`RESULT` 7 + `NOTE:` 정리 1) + `SUMMARY` 1 · kafka-assert ≤ 5 · authz-assert ≤ 5 — **T075 GP-A 재계산**(`acl-list`가 `ACL LIST` 행을 더는 싣지 않는다 — `EVIDENCE:` 머리 1 + 행 ≤ 6이 빠졌다 · 검증 기록 T075 GP-A) ·
+  kafka-assert는 T056 재계산. 이전 표기: T057 "22줄"(initContainer ≤ 15 = `RESULT` 7 + `EVIDENCE:` 머리 1 + ACL LIST ≤ 6(`head -n 6`) + `NOTE:` 정리 1 — dev aclfile 4사용자면 20줄) ·
+  T054 "16줄"(initContainer ≤ 9 = `RESULT` 2) · 그 전 "11줄"은 ACL LIST 6줄 상한을 덜 센 값이었다(T054 전 data-assert 최대 = 14줄)).
   **kafka-assert ≤ 5 — T056 재계산(리뷰 r1 O5 · r2 K5 · O11)**(컨슈머 선기동 · `latency=` 토큰 · 프로듀서 오류 증거 · 비밀번호 형식 검사): `RESULT` 2 + `SUMMARY` 1 + `EVIDENCE:` ≤ 2. `EVIDENCE:`를 내는 경로는 roundtrip의
   둘뿐이다 — "마커 미수신"(`EVIDENCE: consumer 수신 <n>줄 · stderr: …` 1줄 + `EVIDENCE: producer 마지막 오류: …` ≤ 1줄)과 "produce 실패"(`EVIDENCE: producer 마지막 오류: …` ≤ 1줄).
   **비밀번호 형식 검사(리뷰 r2 K5)**: 필수 값 확인 직후 · client.properties를 쓰기 **전**에 `KAFKA_PASSWORD`에 base64url(`A–Z a–z 0–9 _ -`) 밖의 문자가 하나라도 있으면 두 검사를
@@ -56,7 +57,7 @@ SUMMARY: pass=<n> fail=<n>
   (검증 기록 T056 — 모의 11경로 3–5줄).
 - **data-assert 결과 파일 부재 fallback(T057 수정 라운드 r1)** = Dragonfly 7 id 전부 FAIL(`RESULT: FAIL <id> initContainer 결과 파일(/work/dragonfly.result)이 없다` · id 수 불변 · 출력 순서 그대로 · 줄 수 pg 6 + 7 + `SUMMARY` 1 = **14** · exit 1 — 이전에는 `acl-list` · `noperm` 2줄뿐이었다).
 - **data-assert 기동 유예(T057 수정 라운드 r2)**: initContainer는 필수 값 확인 직후 비인증 `PING`으로 Dragonfly 연결을 최대 15회(1초 간격) 기다린다 — **줄을 내지 않고** `noauth` 근거 끝 ` wait=<n>s` 토큰 하나만 더한다
-  (줄 수 · 최대 **22줄** 불변 · 지연 상한 = REJECT면 ≈ 15 s · 패킷이 버려져 `-t 2` 시간 초과가 나면 ≈ 15 × (2 + 1) = 45 s — Job `activeDeadlineSeconds` 300 안 · 검사 id 표 `noauth` 행).
+  (줄 수 · 최대 줄 수(위 항목) 불변 · 지연 상한 = REJECT면 ≈ 15 s · 패킷이 버려져 `-t 2` 시간 초과가 나면 ≈ 15 × (2 + 1) = 45 s — Job `activeDeadlineSeconds` 300 안 · 검사 id 표 `noauth` 행).
 - 값 자체(비밀번호·토큰·URL의 자격 부분)는 절대 출력하지 않는다. **data-assert initContainer(T057)**: 출력에 실리는 redis-cli 응답은 전부 같은 가림을 거친다 —
   `redis://…`(공백 전까지) → `redis://<redacted>` · `#` 뒤 hex **8자 이상** → `#<redacted>`(`sed -E` 한 번) — 응답 조각은 그 첫 줄 100자다. 옛 규칙 "`#` 뒤 hex 16자 이상"은
   Dragonfly `ACL LIST`가 해시를 **15자로 줄여** 보여 주므로(gitops `platform/dragonfly/README.md` §4) 한 번도 매치되지 않아 해시 앞 15자가 로그에 남았다(T057 정정 · 검증 기록 T057의 변이 m2).
@@ -68,8 +69,8 @@ SUMMARY: pass=<n> fail=<n>
 kubectl -n jt-dev logs job/data-assert
 kubectl -n jt-dev logs job/kafka-assert
 kubectl -n jt-dev logs job/authz-assert
-kubectl -n jt-dev logs job/data-assert | grep -A5 'ACL LIST'   # VD-4 증거
-kubectl -n jt-dev logs job/data-assert | grep 'NOPERM'          # 읽기 전용 ACL 증거 = RESULT: PASS 줄(근거 NOPERM sample-pod has no ACL permissions) — AUTH failed가 든 줄은 FAIL(G9)
+kubectl -n jt-dev logs job/data-assert | grep -E 'acl-list|reader-get|reader-set-denied'   # acl-list = identity-admin ACL LIST → NOPERM(UD-9 회귀 탐지기) · VD-4 근거 = reader-get(probe) · reader-set-denied(NOPERM) · T075 보정 2026-11-17
+kubectl -n jt-dev logs job/data-assert | grep 'NOPERM'          # 읽기 전용 ACL 증거 = RESULT: PASS 줄(근거 NOPERM sample-pod has no ACL permissions) · acl-list PASS 줄은 NOPERM identity-admin(T075 GP-A) — AUTH failed가 든 줄은 FAIL(G9)
 ```
 
 ### 검사 id
@@ -83,7 +84,7 @@ kubectl -n jt-dev logs job/data-assert | grep 'NOPERM'          # 읽기 전용 
 | | `role-attrs` | 로그인 없이 카탈로그(`pg_roles`)로 app 2(`identity_admin_app`·`dev_identity_admin_app`) `rolbypassrls=f`·`rolsuper=f`, pod owner 2(`identity_admin_owner`·`dev_identity_admin_owner`) `rolbypassrls=t`·`rolsuper=f` — 넷 다 `rolcreatedb=f`·`rolcreaterole=f`·`rolcanlogin=t`(DatabaseRole 선언이 PG에 실제로 적용됐는지). role 이름은 ConfigMap `PROD_APP_ROLE`·`DEV_APP_ROLE`·`PROD_OWNER_ROLE`·`DEV_OWNER_ROLE` | tasks.md T054 문면 · data-model §7 · 모노레포 build-notes 「T050 · T051」(T054 몫) |
 | | `app-session-timeouts` | `pg_roles.rolconfig`(DB 무관 role 설정)에 app 2 모두 `statement_timeout=15s` **그리고** `idle_in_transaction_session_timeout=30s` — 적용 주체는 gitops `platform/cnpg-databases`의 PostSync Job(app role 자신의 `ALTER ROLE CURRENT_USER SET`). **role 수준 기본값만 본다** — DB별 덮어쓰기(`ALTER ROLE … IN DATABASE … SET` = `pg_db_role_setting.setdatabase ≠ 0`, app role 자신도 낼 수 있다)는 보지 않는다(실효 값이 달라도 PASS — security r2 K13 · 확장은 후속) | data-model §7 app role 행(2026-10-14) · 같은 build-notes |
 | | `noauth` | 자격 없이 `PING`(ConfigMap `DRAGONFLY_HOST`·`DRAGONFLY_PORT` = Service `dragonfly-dev`) → `NOAUTH`(aclfile `USER default OFF +auth +hello` — default가 OFF라 비인증 명령은 AUTH · HELLO 밖 전부 `NOAUTH` · T057 수정 라운드 r2 F12). `PONG`이면 FAIL "aclfile 미적재(default nopass) 의심" — 파싱 오류 1건이면 Dragonfly가 무인증으로 기동한다(gitops `platform/dragonfly/README.md` §1). **기동 유예(T057 수정 라운드 r2 · F13)**: 필수 값 확인 직후 · 이 검사 전에 비인증 `PING`(`-t 2`)을 1초 간격 **최대 15회** 보내, 응답에 `Could not connect`가 없어지면(`NOAUTH`도 연결 성공) 바로 넘어간다 — 새 pod의 첫 1–2초 NetworkPolicy(kube-router) 반영 전 REJECT(`Connection refused`)를 흡수한다(VD-4 1차 실측 2026-10-22 06:39:50Z — 첫 세 호출만 거부 · Dragonfly 재시작 0). 근거 끝에 **` wait=<n>s`** 토큰 1개(PASS · FAIL 모두 · `n` = 거부된 시도 수 = `sleep 1` 횟수 — 보통 0–2). 15회 뒤에도 거부면 그대로 이 검사가 FAIL이다(`… -> Could not connect … wait=15s` — 조용한 통과 0). 유예는 줄을 내지 않는다(§로그 계약 줄 수 불변) · 필수 값 결손(fail-closed 7줄)이면 유예 전에 끝나 토큰이 없다 | T057(r2 F12 · F13) · denylist.md · 모노레포 build-notes 「T050 · T051」 T057 몫 · 같은 build-notes 「T057」 VD-4 1차 실측 |
-| | `acl-list` | Dragonfly `ACL LIST`(identity-admin — `DRAGONFLY_URL`)에 dev 검사 계정(`sample-pod`) 행이 있고 읽기 전용 패턴 `%R~revoked:*`를 포함. 앞에 `EVIDENCE:` 머리 1줄 + 가린 행 ≤ 6줄 | quickstart §US3 VD-4 · T057 · denylist.md |
+| | `acl-list` | **UD-9 B2 회귀 탐지기(T075 GP-A)**: identity-admin(`DRAGONFLY_URL`)으로 `ACL LIST` → 응답에 정확히 `NOPERM identity-admin ` 접두(뒤 공백 포함 — 실제 응답 `NOPERM identity-admin has no ACL permissions`)가 있을 때만 PASS(근거 끝 = 응답 첫 줄 그대로 · 모노레포 하네스 `kafka.tests.ps1` job-d-2가 PASS 근거의 이 표지를 본다). pod 사용자 줄의 꼬리 `+@all -@admin -@dangerous -client`가 ACL 명령을 막는다 — `ACL LIST`는 @admin · @dangerous 둘 다에 들므로 **이 검사가 잡는 것은 dev identity-admin 줄에서 `-@admin` · `-@dangerous`가 모두 빠진 경우(옛 판 재실행 꼴)뿐이다**. `-client` 단독 누락 · 다른 pod 줄 · prod는 렌더 때 W-6 토큰 대조와 적용 때 O-6 사후 DRYRUN이 본다(모노레포 런북 `docs/runbooks/bootstrap.md` §4 T075). **판정(G9)**: `reader-set-denied` 행과 같은 `case` — `AUTH failed`가 든 응답은 그 앞 갈래에서 FAIL(인증 실패 — NOPERM 판정 불가 · 응답 첫 줄을 싣는다) · 응답 첫 줄이 `user `(ACL 행 — 해시 15자 축약이 든다)면 응답을 싣지 않는 FAIL `… ACL LIST가 NOPERM으로 거부되지 않음 — B2 꼬리 누락 의심(ACL 행은 싣지 않는다)` · 그 밖(연결 거부 · 시간 초과 · `LOADING` · 빈 응답 · 다른 사용자의 접두 `NOPERM sample-pod …` · `NOPERM identity-admin-x …` 등)은 중립 FAIL `… ACL LIST가 기대한 NOPERM이 아니다 -> <응답 첫 줄(가림)>`. `EVIDENCE:` 줄을 내지 않는다. **VD-4 근거는 행동 단언** `reader-get`(→ `probe` = `%R~` 키 패턴 적재) · `reader-set-denied`(→ `NOPERM sample-pod `)다. 이전(T057–T059): `ACL LIST`의 `sample-pod` 행에 `DRAGONFLY_ACL_PATTERN`(`%R~revoked:*`) 포함 + 앞에 `EVIDENCE:` 머리 1줄 + 가린 행 ≤ 6줄 | quickstart §US3 VD-4 · T057 · T075 GP-A · denylist.md §ACL · §VD-4(T075 보정 — UD-9) |
 | | `writer-set` | identity-admin으로 `SET revoked:sub:assert-probe probe EX 120` → 정확히 `OK`(쓰는 쪽 `~revoked:*`) | T057 · denylist.md §ACL 표 · §검증 T051 |
 | | `reader-get` | `sample-pod`로 같은 키 `GET` → 정확히 `probe`(`%R~` 읽기 허용 · nil = 빈 응답이면 FAIL) | T057 · denylist.md |
 | | `reader-set-denied` | `sample-pod`로 같은 키 `SET … x` → `NOPERM`(`OK`면 FAIL "%R~ 패턴이 쓰기를 막지 않음"). **판정(G9)**: 응답에 정확히 `NOPERM <검사 계정> ` 접두(`DRAGONFLY_ACL_USER` + 공백 — 실제 응답 `NOPERM sample-pod has no ACL permissions` · Dragonfly v1.40.1의 NOPERM 문구는 `-NOPERM <authed_username> has no ACL permissions` 하나 — `main_service.cc` :1340 · :1462)가 있을 때만 PASS · 응답에 `AUTH failed`가 있으면 그 **앞** 갈래에서 FAIL `… 인증 실패(AUTH failed) — NOPERM 판정 불가 · aclfile default 줄 또는 비밀번호 확인 -> <응답>`(redis-cli 8.8.2는 인증 실패를 `AUTH failed: <서버 응답>`으로 찍는다 — `redis-cli.c` :1610 · 옛 판정 `*NOPERM*`은 `AUTH failed: NOPERM default has no ACL permissions`도 PASS로 셌다 — VD-4 1차 실측 거짓 양성) · 다른 사용자의 접두(`NOPERM default …`)는 그 밖 갈래 FAIL | T057 · denylist.md · G9(리뷰 r3 A-R3-1) |
@@ -115,12 +116,13 @@ kubectl -n jt-dev logs job/data-assert | grep 'NOPERM'          # 읽기 전용 
   공유했다(설계 §6.3). 나눈 이유 둘: ① **자격 격리** — kafka-assert는 DB 비밀번호 · Dragonfly URL을, data-assert는 SCRAM 비밀번호를 갖지 않는다
   ② **부분 실패 격리** — 한 ES의 kv 경로 하나가 비어도(`SecretSyncedError` → Secret 미생성) 그 ES를 쓰는 Job만 뜨지 못하고 다른 Job은 돈다. 공유 ES로는
   지금 미시드인 `dev/openfga/*` 두 경로 때문에 세 Job이 모두 막혔다. 환경변수 이름 · ConfigMap은 그대로라 로그 계약은 바뀌지 않는다(`envFrom`의 Secret 이름만 바뀌었다).
-  단 data-assert initContainer의 fail-closed 문구 `필수 값 없음(ExternalSecret assert-env · ConfigMap assert-config)`는 옛 이름을 그대로 싣는다 — 스크립트 변경 0
-  (결정 D7)이라 다음 스크립트 변경 때 함께 고친다(판정 · 줄 수에는 영향 없음).
+  data-assert initContainer의 fail-closed 문구는 옛 이름(`필수 값 없음(ExternalSecret assert-env · ConfigMap assert-config)`)을 실었다 — T059는 스크립트 변경 0
+  (결정 D7)이라 다음 스크립트 변경으로 미뤘고, 그 변경인 **T075 GP-A가 `assert-data-env`로 고쳤다**(판정 · 줄 수에는 영향 없음 · 검증 기록 T075 GP-A).
 - 비밀이 아닌 값(호스트·DB/토픽 이름·합성 식별자)은 ConfigMap `assert-config`에 있다. **T057**: 비인증 `PING`(`noauth`)은 자격 없이 붙어야 하므로 ConfigMap `DRAGONFLY_HOST`
   (`dragonfly-dev.data.svc` — gitops `platform/dragonfly/services.yaml`) · `DRAGONFLY_PORT`(`6379`)를 쓴다(자격이 든 `DRAGONFLY_URL`을 셸에서 파싱하지 않는다). Dragonfly 7검사는 이 둘과
   `DRAGONFLY_URL` · `DRAGONFLY_SAMPLE_URL` · `REVOKED_PROBE_KEY` · `DRAGONFLY_ACL_USER` · `DRAGONFLY_ACL_PATTERN` 중 하나라도 비면(또는 없으면) **7개 id 전부** `RESULT: FAIL <id> 필수 값 없음(…): <변수 이름>`
-  (값 미출력 · id 수 불변 · redis-cli 호출 0)이다.
+  (값 미출력 · id 수 불변 · redis-cli 호출 0)이다. `DRAGONFLY_ACL_PATTERN`은 T075 GP-A 뒤 어느 검사도 판정에 쓰지 않는다(옛 `acl-list`의 패턴) —
+  필수 값 목록과 ConfigMap 키는 그대로 두었다(정리는 후속 — ConfigMap 키만 먼저 지우면 7검사가 전부 FAIL한다 — 필수 목록을 먼저(또는 같은 PR에서) 지운다).
 
 ## 이미지
 
@@ -560,3 +562,55 @@ ES 이름도) · ConfigMap 어노테이션(`"0"` — 값 불변) · `tests/valid
 
 - **미확인(미실측으로 둔다)**: `CreateNamespace` 거부 메시지(jt-dev가 이미 있었다 — §Application `platform-tests` syncPolicy) · VD-11(ESO가 ES 어노테이션을 Secret에
   복사하는가 — 운영자 Secret 읽기) · 주간 재실행(VD-2 · 11-09 무렵 — §재실행 모델) · Job 스펙 변경 PR의 immutable 경로(VD-3) · root 재구축 때 앞 행 · 뒤 행 게이트(VD-6 · SP-3 리허설).
+
+## 검증 기록 (T075 GP-A — data-assert `acl-list` 새 뜻(UD-9 B2 회귀 탐지기), 저장소 로컬 · 2026-11-17)
+
+바꾼 것은 `job-data-assert.yaml`의 **dragonfly-assert initContainer 스크립트** 두 곳과 머리 주석이다: ② `acl-list`(:134–149 — 판정 · 이유 주석) · 필수 값 결손 문구의 ES 이름
+(`assert-env` → `assert-data-env` — §자격 매핑 결정 D7의 「다음 스크립트 변경」). pg-assert 컨테이너 · 병합 절 · Job spec · 이미지 · ConfigMap · ES는 그대로다.
+이유 = 사용자 결정 UD-9 B2(2026-11-17 — 모노레포 계약 `contracts/denylist.md` §ACL): pod 사용자 줄이 `+@all -@admin -@dangerous -client`로 끝나 identity-admin은 `ACL LIST`를 쓸 수 없다
+(@admin · @dangerous) — 옛 ②(ACL LIST의 sample-pod 행에 `%R~revoked:*`)는 늘 FAIL이 된다. 새 ② = identity-admin `ACL LIST` → `NOPERM identity-admin `(id 일곱 · 출력 순서 그대로) ·
+VD-4 근거 = `reader-get` · `reader-set-denied`. **회귀 탐지 범위**: `ACL LIST`는 @admin · @dangerous 둘 다에 들므로 이 검사가 잡는 것은 dev identity-admin 줄에서 `-@admin` · `-@dangerous`가
+모두 빠진 경우(옛 판 재실행 꼴)뿐이다 — `-client` 단독 누락 · 다른 pod 줄 · prod는 렌더 때 W-6 토큰 대조와 적용 때 O-6 사후 DRYRUN이 본다(모노레포 런북 §4 T075).
+갈래 꼴은 ⑤ ⑥의 G9 `case`와 같다(모노레포 job-d-2 리뷰가 확인한 꼴) — 그 밖 갈래는 응답 첫 줄이 `user `(ACL 행)면 응답을 싣지 않는 FAIL, 그 밖은 응답 첫 줄(가림)을 싣는 중립 FAIL이다
+(수정 라운드 1 · GA-3 — 연결 거부 · 시간 초과 · `LOADING` · 빈 응답 · 다른 사용자 NOPERM이 「B2 꼬리 누락 의심」으로 잘못 읽히지 않게).
+
+- 렌더: `kustomize build platform/policies/tests` exit 0 — 객체 5 그대로 · sha256 `f3f0cca4…`(main `f920df6`) → `61537cb8…`(수정 라운드 1 — 1라운드 `df32e445…`). data-assert initContainer
+  `args`만 자리표시로 바꾼 두 렌더가 바이트 동일(그 밖 변경 0) · pg-assert 스크립트 바이트 동일(158줄). 렌더에서 뽑은 initContainer 스크립트 **115줄**(같은 측정 — YAML 블록 :87–200의
+  114줄 + yq 끝 빈 줄 1 · main 110) `sh -n` · `dash -n` · `bash --posix -n` 통과. `kustomize build platform/dragonfly` sha256 `93350678…` 그대로(머리 주석 · README만 바뀜).
+- **실제 Dragonfly 동작 시험**(라이브 접근 0): 운영 digest Dragonfly `ghcr.io/dragonflydb/dragonfly:v1.40.1@sha256:ebf3c6c2…`(로컬 linux/amd64 변형) · 운영 args 9토큰 + `--proactor_threads=2`
+  (로컬 VM vCPU 16 — `--maxmemory=768mb` 스레드 조건 · gitops `platform/dragonfly/README.md` §4) · uid 999 · 읽기 전용 루트 · 운영 형식 aclfile(`USER default OFF +auth +hello` + admin ·
+  identity-admin · sample-pod · `#<sha256>` · 무작위 가짜 비밀번호) · 네트워크 별칭 `dragonfly-dev.data.svc`(ConfigMap 값 그대로). 렌더에서 뽑은 두 스크립트 원문을 검사 Job 이미지
+  `redis:8.8.2-alpine@sha256:96cb544f…`(redis-cli 8.8.2)에서 uid 65534 · 읽기 전용 루트 · `/tmp` tmpfs로 실행했다 — env = 렌더의 ConfigMap 29키 + 가짜 자격 5키 · 병합 절은 같은 이미지에서
+  가짜 `psql`(pg 6검사 PASS 모양)로 돌렸다.
+
+  | 경로 | Dragonfly 규칙 | 스크립트 | `acl-list` 결과 줄 | Job 로그 · 종료 코드 | 하네스 job-d-2 · data job-2 |
+  |---|---|---|---|---|---|
+  | ⓐ L6 뒤(B2로 기동) | B2 | 이 PR | `PASS acl-list identity-admin으로 ACL LIST -> NOPERM identity-admin has no ACL permissions` | **15줄** · `SUMMARY: pass=13 fail=0` · 0 | PASS · PASS |
+  | ⓑ L6 경로(옛 규칙으로 도는 인스턴스에 B2 파일 → admin `ACL LOAD` `OK` · 재시작 없음) | B2 | 이 PR | ⓐ와 같다 | ⓐ와 같다 | PASS · PASS |
+  | ⓒ B2 꼬리가 빠진 회귀(= 오늘 라이브 규칙 · 옛 판 재실행 꼴) | `+@all` | 이 PR | `FAIL acl-list identity-admin으로 ACL LIST가 NOPERM으로 거부되지 않음 — B2 꼬리 누락 의심(ACL 행은 싣지 않는다)` | 15줄 · `pass=12 fail=1` · 1 | FAIL(`acl-list: RESULT FAIL` — 근거 숨김) · FAIL |
+  | ⓓ L6 뒤 · GP-A 머지 전 | B2 | main `f920df6` | `FAIL acl-list user sample-pod 행에서 %R~revoked:*를 찾지 못함 — 응답 첫 줄: NOPERM identity-admin has no ACL permissions` | 17줄 · `pass=12 fail=1` · 1 | FAIL · FAIL |
+  | ⓔ 오늘(L6 · GP-A 전) | `+@all` | main `f920df6` | `PASS acl-list user sample-pod 행에 %R~revoked:*(읽기 전용 revoked 패턴)이 있다` + `EVIDENCE:` 5줄 | 20줄 · `pass=13 fail=0` · 0 | **FAIL**(`acl-list PASS evidence lacks 'NOPERM identity-admin '`) · PASS |
+
+  갈래 시험(ⓐ 서버 · 이 PR 스크립트 · 결과 파일): identity-admin 비밀번호 틀림 → `FAIL acl-list identity-admin으로 ACL LIST 인증 실패(AUTH failed) — NOPERM 판정 불가 · … -> AUTH failed: WRONGPASS
+  invalid username-password pair or user is disabled.` · `DRAGONFLY_URL`이 다른 사용자(sample-pod) → 중립 FAIL `FAIL acl-list identity-admin ACL LIST가 기대한 NOPERM이 아니다 -> NOPERM
+  sample-pod has no ACL permissions` · `DRAGONFLY_HOST` 없음 → FAIL 7
+  (`… 필수 값 없음(ExternalSecret assert-data-env · ConfigMap assert-config): DRAGONFLY_HOST` · redis-cli 호출 0). 서버 쪽 대조: admin `ACL DRYRUN identity-admin ACL LIST` = B2
+  `This user has no permissions to run the 'ACL LIST' command` · 옛 규칙 `OK`. 두 판 모두 기동 로그 aclfile 오류 문구 0 · 비인증 `PING` = `NOAUTH`.
+  모든 경로 누출 0(가짜 비밀번호 · 해시 앞 15자 · 비가림 `redis://` · `#` + hex 8자 이상) · 정리 뒤 시험 컨테이너 · 네트워크 0. ⓐ–ⓒ와 갈래 시험은 수정 라운드 1 스크립트로 다시 돌렸다.
+- **갈래 시험(가짜 redis-cli · 수정 라운드 1)**: GP-A 리뷰의 갈래 하네스 사본(가짜 redis-cli · `run-branches.sh` — 렌더 스크립트의 `out=`만 바꾼 사본 · 갈래 분류만 넷으로 고침)을
+  dash와 BusyBox ash(검사 Job 이미지 · `--network none` · uid 65534)로 돌렸다 — 21경우 전부 ok(`BAD=0`): PASS 4(`b2` · `crlf` · `warnfirst` · `quoted`) · AUTH 6(`wrongpass` ·
+  `noauthboot` · `authnoperm-default` · `authnoperm-ia` · `urlinauth` · `hashinauth`) · ACL 행 2(`tailmissing` · `rowname` — 응답 미출력) · 중립 8(`otheruser` · `prefix` · `nospace` ·
+  `lower` · `connrefused` · `timeout` · `empty` · `loading` — 응답 첫 줄 · 가림) · 필수 값 결손 1(FAIL 7 · 새 ES 이름 · redis-cli 호출 0). 경우마다 결과 8줄(RESULT 7 + NOTE 1) · id 순서
+  그대로 · 누출 0(가짜 비밀번호 · 해시 · `redis://` · ACL 행). 두 셸의 결과 파일은 `crlf` 하나만 다르다 — ash는 응답 끝 CR을 PASS 줄에 남기고 dash(MSYS)는 지운다(바뀌지 않은
+  PASS 갈래 · `show`의 성질 · 하네스 파서는 줄 끝을 지우므로 판정이 같다).
+- 하네스 판정 = 모노레포 `tests/platform/kafka.tests.ps1` job-d-2 · `tests/platform/data.tests.ps1` job-2의 **판정 코드 자체**(최상위 함수 · 상수 · `ClusterAssert` 본문을 AST로 읽어 실행 · 파일 수정 0 ·
+  `Get-ParsedJobLog` · `Invoke-Kubectl`만 로그로 바꿔 끼움 · `--tail=50` — T057 기록과 같은 방식 · 모노레포 작업 트리의 T075 판 — blob `af3c829b…` · `4803edd7…`).
+  ⓐ의 acl-list 근거는 모노레포 하네스 단위 시험의 픽스처 `$aclNopermText`와 바이트까지 같다.
+- **머지 순서**(모노레포 설계 `design/t075-design.md` D1 · D20): GP-A는 L6(dev · prod B2 재렌더 + admin `ACL LOAD` + O-6 사후 PASS) **뒤에** 머지한다 — 앞이면 ⓒ(새 `acl-list` FAIL),
+  L6과 머지 사이면 ⓓ(옛 Job FAIL)다. 머지 뒤에는 §재실행 모델 「Job 스펙을 바꾸는 PR」 ①–⑥대로 운영자가 완료된 `data-assert` Job을 지운다(`spec.template` immutable — T059 뒤 첫 Job 스펙
+  변경 PR · VD-3 첫 관찰) → 새 Job = ⓐ.
+- `bash tests/validate.sh`(저장소 루트 · 도구 전부 — helm 포함 · skip 모드 아님 · 1라운드 판): **PASS 39 · FAIL 0 · WARN 4 · SKIP 0 · 결과: PASS**(WARN 4는 기존 `platform/system-upgrade`
+  k3s-upgrade 이미지 4줄 그대로). 수정 라운드 1에서 바뀐 것은 initContainer 스크립트 문자열과 문서뿐이라 전체는 다시 돌리지 않았다 — 렌더(위) · 문법(위) · `gitleaks dir`(8.30.1 ·
+  validate 검사 8과 같은 명령): no leaks found.
+- 함께 바뀐 문서(렌더 불변): §로그 계약 줄 수(22 → 15) · 읽는 법(quickstart §US3 :74 그대로) · 검사 id 표 `acl-list` 행 · §자격 매핑(D7 문구 정정 완료 · `DRAGONFLY_ACL_PATTERN` 미사용) ·
+  `externalsecret-assert-data-env.yaml` 머리 주석 · gitops `platform/dragonfly/`(README §0 · §1 · §4 · §5 · §6 · `externalsecrets-acl.yaml` 머리 주석 — B2 규칙 줄 · T075 블록 · 채널 0 · 남는 위험).
