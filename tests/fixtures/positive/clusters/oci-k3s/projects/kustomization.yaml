@@ -1,0 +1,8 @@
+# 긍정 픽스처 — clusters/oci-k3s/projects(T075 · validate 13.7 통과 갈래): AppProject dev · prod(계약 §Application 규약 AppProject 행).
+#   이 부분 트리의 bootstrap/argocd는 resources: []라 AppProject를 base로 포함하지 않는다 — AppProject 렌더는 이 디렉터리 하나다.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: argocd
+resources:
+  - dev.yaml
+  - prod.yaml

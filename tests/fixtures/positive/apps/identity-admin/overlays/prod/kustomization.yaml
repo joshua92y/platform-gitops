@@ -1,34 +1,147 @@
-# 긍정 픽스처 — overlays/prod: namespace jt-prod + images[].digest + ExternalSecret store/key 패치(vault-prod · prod/).
-# 렌더링 결과에 대한 검사 ②가 이 패치를 본다(파일만 보면 overlay에는 ExternalSecret 문서가 없다).
+# 긍정 픽스처 — overlays/prod(T075): namespace jt-prod · images[].digest · ExternalSecret store/key(JSON6902 — 인덱스 replace마다 앞에
+#   op test로 secretKey를 확인한다: base 순번이 바뀌면 렌더가 실패한다 · 계약 §ExternalSecret 규약) · ConfigMap 값(키별 JSON6902) · m2m Ingress
+#   host · admin Ingress(ingress-admin.yaml) + stripPrefix Middleware(middleware-admin.yaml). 자리 값은 꼴만 맞는 저엔트로피 값(prod 1… · AUD_ADMIN 2…).
+#   경로 가둠(validate 14.8): 항목은 ../../base와 이 디렉터리의 파일뿐이다.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: jt-prod
 resources:
   - ../../base
+  - ingress-admin.yaml
+  - middleware-admin.yaml
 images:
   - name: ghcr.io/joshua92y/identity-admin
     newName: ghcr.io/joshua92y/identity-admin
-    digest: sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
 patches:
   - target: { kind: ExternalSecret, name: identity-admin-env }
     patch: |-
       - op: replace
         path: /spec/secretStoreRef/name
         value: vault-prod
+      - op: test
+        path: /spec/data/0/secretKey
+        value: db_username
       - op: replace
         path: /spec/data/0/remoteRef/key
         value: prod/db/identity_admin/app
+      - op: test
+        path: /spec/data/1/secretKey
+        value: db_password
       - op: replace
         path: /spec/data/1/remoteRef/key
-        value: prod/kafka/identity_admin
+        value: prod/db/identity_admin/app
+      - op: test
+        path: /spec/data/2/secretKey
+        value: kafka_password
       - op: replace
         path: /spec/data/2/remoteRef/key
+        value: prod/kafka/identity-admin
+      - op: test
+        path: /spec/data/3/secretKey
+        value: dragonfly_url
+      - op: replace
+        path: /spec/data/3/remoteRef/key
+        value: prod/dragonfly/identity-admin
+      - op: test
+        path: /spec/data/4/secretKey
+        value: authentik_issuer
+      - op: replace
+        path: /spec/data/4/remoteRef/key
+        value: prod/authentik/identity-admin
+      - op: test
+        path: /spec/data/5/secretKey
+        value: authentik_jwks_url
+      - op: replace
+        path: /spec/data/5/remoteRef/key
+        value: prod/authentik/identity-admin
+      - op: test
+        path: /spec/data/6/secretKey
+        value: sentry_dsn
+      - op: replace
+        path: /spec/data/6/remoteRef/key
+        value: prod/sentry/identity-admin
+      - op: test
+        path: /spec/data/7/secretKey
+        value: secret_key
+      - op: replace
+        path: /spec/data/7/remoteRef/key
+        value: prod/django/identity-admin
+      - op: test
+        path: /spec/data/8/secretKey
+        value: authentik_api_token
+      - op: replace
+        path: /spec/data/8/remoteRef/key
+        value: prod/authentik/identity-admin
+      - op: test
+        path: /spec/data/9/secretKey
+        value: authentik_webhook_secret
+      - op: replace
+        path: /spec/data/9/remoteRef/key
         value: prod/authentik/webhooks/identity-admin
+      - op: test
+        path: /spec/data/10/secretKey
+        value: openfga_store_id
+      - op: replace
+        path: /spec/data/10/remoteRef/key
+        value: prod/openfga/store_id
+      - op: test
+        path: /spec/data/11/secretKey
+        value: openfga_preshared_key
+      - op: replace
+        path: /spec/data/11/remoteRef/key
+        value: prod/openfga/preshared
   - target: { kind: ExternalSecret, name: identity-admin-migrate }
     patch: |-
       - op: replace
         path: /spec/secretStoreRef/name
         value: vault-prod
+      - op: test
+        path: /spec/data/0/secretKey
+        value: db_username
       - op: replace
         path: /spec/data/0/remoteRef/key
         value: prod/db/identity_admin/owner
+      - op: test
+        path: /spec/data/1/secretKey
+        value: db_password
+      - op: replace
+        path: /spec/data/1/remoteRef/key
+        value: prod/db/identity_admin/owner
+  - target: { kind: ConfigMap, name: identity-admin-config }
+    patch: |-
+      - op: replace
+        path: /data/ACCESS_AUD_ADMIN
+        value: "2222222222222222222222222222222222222222222222222222222222222222"
+      - op: replace
+        path: /data/ACCESS_AUD_M2M
+        value: "1111111111111111111111111111111111111111111111111111111111111111"
+      - op: replace
+        path: /data/ACCESS_EXPECTED_CN
+        value: "11111111111111111111111111111111.access"
+      - op: replace
+        path: /data/ADMIN_HOST
+        value: admin.joshuatech.dev
+      - op: replace
+        path: /data/ALLOWED_HOSTS
+        value: identity-admin.jt-prod.svc,identity-m2m-prod.joshuatech.dev,admin.joshuatech.dev
+      - op: replace
+        path: /data/AUTHENTIK_WRITES_ENABLED
+        value: "true"
+      - op: replace
+        path: /data/ENV
+        value: prod
+      - op: replace
+        path: /data/FORCE_SCRIPT_NAME
+        value: /identity-admin
+      - op: replace
+        path: /data/KAFKA_USERNAME
+        value: identity-admin
+      - op: add
+        path: /data/JT_PLACEHOLDER_EXEMPT
+        value: AUTHENTIK_API_TOKEN,OPENFGA_STORE_ID,OPENFGA_PRESHARED_KEY
+  - target: { kind: Ingress, name: identity-admin }
+    patch: |-
+      - op: replace
+        path: /spec/rules/0/host
+        value: identity-m2m-prod.joshuatech.dev

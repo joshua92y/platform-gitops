@@ -1,0 +1,43 @@
+# 긍정 픽스처 — AppProject prod(계약 §Application 규약 AppProject 행 · validate 13.7): dev와 같은 꼴이고 destination만 jt-prod다.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: prod
+  namespace: argocd
+spec:
+  sourceRepos:
+    - https://github.com/joshua92y/platform-gitops.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: jt-prod
+  clusterResourceWhitelist: []
+  namespaceResourceWhitelist:
+    - group: ""
+      kind: ConfigMap
+    - group: ""
+      kind: Service
+    - group: apps
+      kind: Deployment
+    - group: batch
+      kind: Job
+    - group: batch
+      kind: CronJob
+    - group: networking.k8s.io
+      kind: Ingress
+    - group: external-secrets.io
+      kind: ExternalSecret
+    - group: traefik.io
+      kind: Middleware
+  namespaceResourceBlacklist:
+    - group: networking.k8s.io
+      kind: NetworkPolicy
+    - group: ""
+      kind: ResourceQuota
+    - group: ""
+      kind: LimitRange
+    - group: ""
+      kind: ServiceAccount
+    - group: rbac.authorization.k8s.io
+      kind: Role
+    - group: rbac.authorization.k8s.io
+      kind: RoleBinding

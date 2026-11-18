@@ -362,7 +362,8 @@ Application `platform-cnpg-databases`는 `prune: false` + `Prune=confirm` + `Del
 - **T056(`platform/kafka-topics/` CA 미러)**: `pg-main-ca`의 `ca.crt`**만**(`dataFrom` 금지) → `identity` · `jt-dev` · `jt-prod`. 검사 Job `data-assert`(ns `jt-dev`)와 Authentik·OpenFGA의
   `verify-full`이 그 미러를 쓴다(이 디렉터리의 Job은 ns `data` 원본을 직접 마운트).
 - **T072(django-pod 템플릿)**: migrate Job **첫 단계** = `REVOKE CONNECT ON DATABASE <db> FROM PUBLIC; GRANT CONNECT ON DATABASE <db> TO <db>_app, <db>_owner;`(owner 자격 — owner는
-  자기 DB의 권한을 바꿀 수 있다 · 한 `-c` 문자열 = 한 트랜잭션) + app role 테이블 GRANT. 이 디렉터리의 PostSync Job ⓪이 같은 SQL을 **먼저** 내지만(C1) 첫 단계는 그대로 둔다 — **이중 멱등**
+  자기 DB의 권한을 바꿀 수 있다 · 한 `-c` 문자열 = 한 트랜잭션). app role 테이블 GRANT는 migrate Job이 아니라 pod 마이그레이션 `core/0001_app_role_grants`가 낸다
+  (T075 정정 — 이전 문구 「+ app role 테이블 GRANT」). 이 디렉터리의 PostSync Job ⓪이 같은 SQL을 **먼저** 내지만(C1) 첫 단계는 그대로 둔다 — **이중 멱등**
   (둘 중 하나가 빠져도 pod DB가 닫힌다). 세션 기본값은 이미 이 디렉터리의 PostSync Job ②가 맡는다(템플릿에서 다시 하지 않아도 된다).
   - **세션 기본값을 다시 낸다면**(app 자격으로만 된다 — migrate Job의 owner 자격으로는 다른 role의 기본값을 바꿀 수 없다: 일반 role은 자기 것만 · PostgreSQL ALTER ROLE 문서)
     **정확히 `'15s'` · `'30s'` 리터럴로 쓴다** — 검사(이 디렉터리 Job ② · data-assert `app-session-timeouts`)가 rolconfig **문자열**을 대조하고, PG는 값을
@@ -373,7 +374,9 @@ Application `platform-cnpg-databases`는 `prune: false` + `Prune=confirm` + `Del
     (`pg_auth_members.member` = 이 role) → `roles/runnable.go:422–436` getRolesToRevoke → `roles/postgres.go:271–275` `REVOKE <부모> FROM <이 role>`). **방향에 주의**: 이 role을
     남에게 준 `GRANT <이 role> TO <다른 role>`은 이 role의 재적용과 무관하고, 받는 쪽이 DatabaseRole이면 **그쪽** 재적용 때 회수된다(6개 모두 DatabaseRole이라 서로 간 멤버십은
     멤버 쪽 `inRoles`에 부모 이름을 적는다).
-- **T075(pod Deployment·`-env`/`-migrate` ES)**: `kv/{env}/db/<role 접두>/{app,owner}`의 `url`을 `vault-{env}`로 읽는다(P3에서 시드). `url`의 비밀번호 = kv `password`(앞뒤 공백 없음 — §4).
+- **T075(pod Deployment·`-env`/`-migrate` ES)**: `kv/{env}/db/<role 접두>/{app,owner}`의 `username` · `password`를 `vault-{env}`로 읽고 ES 템플릿이 `DATABASE_URL` ·
+  `DATABASE_OWNER_URL`을 조립한다(DB 이름은 role 이름에서 `trimSuffix` · `sslmode=verify-full` — 계약 §ExternalSecret 규약 · T072 보정. P3에서 시드). 비밀번호 = kv
+  `password`(앞뒤 공백 없음 — §4). (T075 정정 — 이전 문구 「`url`을 읽는다」: base는 kv `url`을 쓰지 않는다)
 - **T080(Authentik)**: DB `authentik` · role `authentik_owner` · 자격 `kv/platform/db/authentik/owner`(`vault-platform` · ns `identity`) · `AUTHENTIK_POSTGRESQL__SSLMODE=verify-full` ·
   `…__SSLROOTCERT`(T056 미러). `authentik` DB에는 이 디렉터리의 Job이 **owner에게만 CONNECT**를 남긴다 — 다른 role로 붙이지 않는다.
   role 멤버십이 필요하면 `inRoles`로 선언한다(이 role이 멤버인 멤버십은 재적용 때 회수된다 — 위 T072).

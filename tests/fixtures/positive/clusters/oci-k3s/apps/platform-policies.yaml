@@ -1,0 +1,14 @@
+# 긍정 픽스처 — 플랫폼 Application platform-policies(계약 §sync-wave 단일 표 그대로). 파일 하나에 문서 하나 · metadata.name = 파일 이름(validate 14.0 · T075).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-policies
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "-10" }
+spec:
+  project: platform
+  source: { repoURL: https://github.com/joshua92y/platform-gitops.git, targetRevision: main, path: platform/policies }
+  destination: { server: https://kubernetes.default.svc, namespace: kube-system }
+  syncPolicy:
+    automated: { prune: false, selfHeal: true }
+    syncOptions: [ServerSideApply=true, CreateNamespace=true, Prune=confirm, Delete=confirm, SkipDryRunOnMissingResource=true]
