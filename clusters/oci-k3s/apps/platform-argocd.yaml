@@ -13,8 +13,9 @@
 # source.path = `bootstrap/argocd`(`platform/argocd` 가 아니다):
 #   Argo CD 본체 매니페스트의 정본은 bootstrap 쪽 kustomization 하나뿐이다. `platform/argocd/` 에 같은 원격 base 를
 #   한 번 더 두면 install.yaml 을 이중으로 빌드하고 두 정의가 갈라질 수 있다.
-#   validate 검사 7.1 은 컴포넌트 `argocd` 에 한해 `platform/argocd` 와 `bootstrap/argocd` 를 모두 인정한다
-#   (tests/validate.sh 의 7.1 WAVE-path 분기). `platform/argocd/` 는 계약 §디렉터리의 자리표시로 남는다.
+#   validate 검사 7.1 은 이 Application 의 source.path 로 `bootstrap/argocd` 하나만 인정한다(T075 — 이전에는 `platform/argocd` 도
+#   받았다: 승인 관문 밖인 이 파일과 platform/argocd/** 만 바꿔 AppProject · Argo CD 본체를 승인 없이 바꾸는 길이었다).
+#   `platform/argocd/` 는 계약 §디렉터리의 자리표시로 남고 그 꼴은 검사 7.5 가 본다(계약 §validate.yml 6 「Argo CD 자기 관리 경로」).
 #
 # sync-wave: 값의 정본은 계약 contracts/gitops-repo.md §sync-wave 단일 표(코드 사본은 tests/validate.sh 의 WAVE_TABLE)다.
 #   아래 어노테이션 값은 그 표에서 기계적으로 읽어 넣었고, 이 저장소의 어떤 문서·주석에도 숫자를 다시 적지 않는다.

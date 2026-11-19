@@ -1,0 +1,11 @@
+# 긍정 픽스처 — admin Ingress의 stripPrefix Middleware `<pod>-strip`(traefik.io/v1alpha1 · 같은 ns — validate 14.3): prefixes = [/<pod>] 하나.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: identity-admin-strip
+  labels:
+    app.kubernetes.io/name: identity-admin
+spec:
+  stripPrefix:
+    prefixes:
+      - /identity-admin

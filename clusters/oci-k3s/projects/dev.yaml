@@ -1,16 +1,24 @@
-# AppProject `dev` — 앱 dev 배포(`<pod>-dev`, source `apps/<pod>/overlays/dev`) 전용 (T041 PR-A)
+# AppProject `dev` — 앱 dev 배포(`<pod>-dev`, source `apps/<pod>/overlays/dev`) 전용 (T041 PR-A · T075 허용 목록)
 #
 # 정본 계약: gitops-repo.md §Application 규약 AppProject 행
 #   "`dev`/`prod`: 자기 네임스페이스만, cluster 리소스 금지, `namespaceResourceBlacklist`: NetworkPolicy · ResourceQuota ·
-#    LimitRange · Role · RoleBinding · ServiceAccount(정책 객체는 `platform/policies/` 만 쓴다)".
+#    LimitRange · Role · RoleBinding · ServiceAccount(정책 객체는 `platform/policies/` 만 쓴다)" + (T075 보정 2026-11-17)
+#   `namespaceResourceWhitelist` = 정확히 ""/ConfigMap · ""/Service · apps/Deployment · batch/Job · batch/CronJob ·
+#   networking.k8s.io/Ingress · external-secrets.io/ExternalSecret · traefik.io/Middleware(group 까지 정확).
 #
-# 금지 목록의 group 은 정확히 일치해야 한다(모노레포 tests/platform/cluster.tests.ps1 argo-3 이 group 까지 대조한다):
+# 허용 목록(T075): 목록 밖 kind 는 sync 가 실패한다 — traefik.io TLSOption · TLSStore · IngressRoute · ServersTransport ·
+#   TraefikService · Secret · PVC 등. 관문 밖 dev overlay 가 TLSOption/TLSStore `default` 를 중복시키거나(AOP · sniStrict 소실)
+#   남의 호스트를 점유하는 경로를 닫는다. 금지 목록 6종은 둘째 겹으로 그대로 둔다(허용 목록에 와일드카드가 들어오는 실수도 막는다).
+# 금지 · 허용 목록의 group 은 정확히 일치해야 한다 — 모노레포 tests/platform/cluster.tests.ps1 argo-3 이 허용 목록 정확 일치(group 포함)와
+#   금지 목록 ⊇ 6종을 라이브에서 대조하고, validate 13.7(RBAC-appproject)이 이 정의를 렌더에서(이 디렉터리 · bootstrap/argocd),
+#   validate 14.7(APP-kinds)이 같은 허용 목록을 앱 overlay 렌더에서 본다. 금지 목록 6종:
 #   networking.k8s.io/NetworkPolicy · ""/ResourceQuota · ""/LimitRange · ""/ServiceAccount ·
 #   rbac.authorization.k8s.io/Role · rbac.authorization.k8s.io/RoleBinding.
 #   ServiceAccount 를 막는 이유는 pod 워크로드가 `automountServiceAccountToken: false` 로 API 를 쓰지 않기 때문이다(계약 §워크로드 강화).
 #
-# 이 프로젝트를 쓰는 Application(`identity-admin-dev` 등)은 T041 에서 만들지 않는다 — tasks.md T075 가
-#   "Argo Application `identity-admin-dev`·`identity-admin-prod`" 를 자기 산출물로 명시한다(설계 D8).
+# 이 프로젝트를 쓰는 Application(`identity-admin-dev` 등)은 T075 가 만든다(gitops PR GP-2 — clusters/oci-k3s/apps/<pod>-dev.yaml).
+#   반영 경로: 이 파일은 승인 관문(prod-approval) 대상이다(clusters/oci-k3s/projects/** — 계약 §validate.yml 8) → 머지 뒤 platform-argocd
+#   (bootstrap/argocd 가 이 디렉터리를 base 로 포함)가 SSA 로 갱신한다.
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
@@ -26,6 +34,23 @@ spec:
     - server: https://kubernetes.default.svc
       namespace: jt-dev
   clusterResourceWhitelist: []
+  namespaceResourceWhitelist:
+    - group: ""
+      kind: ConfigMap
+    - group: ""
+      kind: Service
+    - group: apps
+      kind: Deployment
+    - group: batch
+      kind: Job
+    - group: batch
+      kind: CronJob
+    - group: networking.k8s.io
+      kind: Ingress
+    - group: external-secrets.io
+      kind: ExternalSecret
+    - group: traefik.io
+      kind: Middleware
   namespaceResourceBlacklist:
     - group: networking.k8s.io
       kind: NetworkPolicy

@@ -12,8 +12,8 @@ required check `validate`가 부르는 검사 본체와 그 자기검사(무엇�
 | 2 | 경로 lint — `bash tests/validate.base.sh --only-author`(검사 6만) | PR만 | **main의 스크립트** — 러너가 가져온 `origin/main`의 끝에 있는 `tests/validate.sh`를 `git show`로 꺼낸 사본(`pull_request.base.sha`가 아니다 — PR이 말하는 base는 확인에만 쓴다: base ref가 `main`이 아니거나 base 커밋이 main의 이력 위에 없으면 실패). diff 기준도 `origin/main`의 끝이다. PR 쪽 코드가 한 줄도 돌기 전에, 러너에 원래 있는 git · bash · coreutils만으로 돈다 |
 | 2b | 자기검사 대상 판정 | PR · push | 워크플로 파일 안의 인라인 스크립트(git · bash만 · PR 쪽 코드를 실행하기 전). main push는 항상 돌리고, PR은 `origin/main`의 끝과 head의 merge-base ↔ head에서 `tests/` 또는 `.github/` 아래가 바뀐 경우에만 돌린다(출력 `selftest=run|skip` — 숫자로 읽히지 않는 낱말이다. 식에서 없는 출력은 0으로 읽히므로 `0`·`1`을 쓰면 출력이 없을 때 자기검사가 조용히 꺼진다). 판정에 실패하면(merge-base를 못 구함 · 둘 이상) 돌리는 쪽으로 넘어진다 |
 | 3 | 도구 설치 — kustomize v5.8.1 · yq v4.53.6 · gitleaks 8.30.1 · kubeconform v0.8.0 · helm v4.3.0(linux arm64) | PR · push | 워크플로 파일 안의 인라인 스크립트(저장소의 스크립트를 부르지 않는다). 받은 파일마다 sha256 대조, 설치 뒤 버전 대조 — 어긋나면 실패 |
-| 4 | 전체 검사 — `bash tests/validate.sh`(검사 0–13) | PR · push | PR 쪽 스크립트. PR 이벤트에서는 `PR_AUTHOR`·`PR_AUTHOR_ID`·`PR_SENDER`·`PR_SENDER_ID`·`VALIDATE_HEAD_SHA`를 넘기고, 기준 커밋 `VALIDATE_BASE_SHA`는 본문이 `origin/main`의 끝에서 정한다(스텝 2와 같은 기준 — 검사 6이 한 번 더 돈다 · 무해). push에서는 작성자와 발신자가 모두 비어 검사 6은 대상 없음이다 — push 이벤트에도 `sender`는 있지만 넘기지 않는다(작성자 없이 발신자만 가면 검사 6이 입력이 어긋났다고 보고 FAIL한다) |
-| 5 | 자기검사 — `bash tests/validate.tests.sh` | **main push는 항상 · PR은 2b가 고른 경우만** | PR 쪽 스크립트. 러너가 넣는 `CI=true`로 부분 실행을 거부하고 도구 누락(helm 포함)을 실패로 본다. 4 **뒤에** 둔다 — 자기검사가 픽스처 아래 `charts/`에 풀어 둔 차트를 4의 검사 8(gitleaks 파일 스캔)이 훑지 않게 |
+| 4 | 전체 검사 — `bash tests/validate.sh`(검사 0–14) | PR · push | PR 쪽 스크립트. PR 이벤트에서는 `PR_AUTHOR`·`PR_AUTHOR_ID`·`PR_SENDER`·`PR_SENDER_ID`·`VALIDATE_HEAD_SHA`를 넘기고, 기준 커밋 `VALIDATE_BASE_SHA`는 본문이 `origin/main`의 끝에서 정한다(스텝 2와 같은 기준 — 검사 6이 한 번 더 돈다 · 무해). push에서는 작성자와 발신자가 모두 비어 검사 6은 대상 없음이다 — push 이벤트에도 `sender`는 있지만 넘기지 않는다(작성자 없이 발신자만 가면 검사 6이 입력이 어긋났다고 보고 FAIL한다) |
+| 5 | 자기검사 — `bash tests/validate.tests.sh` | **main push는 항상 · PR은 2b가 고른 경우만** | PR 쪽 스크립트. 러너가 넣는 `CI=true`로 부분 실행을 거부하고 도구 누락(helm 포함)을 실패로 본다. 4 **뒤에** 둔다 — 자기검사가 픽스처 아래 `charts/`에 풀어 둔 차트를 4의 검사 8(gitleaks 파일 스캔)이 훑지 않게. (T075 보정 2026-11-18) 케이스가 약 300개로 늘어 job `validate`의 `timeout-minutes`를 15에서 30으로 올렸다(GP-1 리뷰 G1A-6 — 첫 CI에서 시간 초과로 한 바퀴를 버리지 않게 · 실측이 쌓이면 다시 줄인다) |
 | 6 | gitleaks 액션 — 커밋 히스토리 스캔 | PR · push | 액션(SHA 고정 — 액션이 자기 gitleaks를 받아 쓴다) |
 
 - **main 쪽 스크립트로 도는 것은 스텝 2 하나다.** 4·5는 PR 쪽 스크립트라 PR이 검사를 고치면 그 PR에서는 고친 검사가 돈다 — 사람 PR은 리뷰가, 봇 PR은 스텝 2가 막는다(봇이 `apps/*/overlays/dev/kustomization.yaml`의 digest 줄 밖을 건드리면 — `tests/`·`.github/` 포함 — main의 규칙으로 FAIL). 스텝 2가 첫 검사 스텝인 이유도 같다: PR 쪽 코드가 `.git`이나 작업 트리를 먼저 바꿀 수 없게.
@@ -49,21 +49,22 @@ required check `validate`가 부르는 검사 본체와 그 자기검사(무엇�
     - **비결정 렌더는 감지하지 않는다** — 차트가 렌더마다 난수 · 시각 · 새 인증서를 넣으면 파일이 그대로여도 그 디렉터리가 바뀐 것으로 나온다(오늘의 차트 넷은 결정적이다).
     - Secret 값은 어디에도 싣지 않으므로 값의 **내용**이 어떻게 바뀌었는지는 보이지 않는다(바뀌었다는 사실만). directory source는 `*.yaml` · `*.yml` · `*.json`만 본다(`.jsonnet`은 평가하지 않는다).
   - **실측**: 로컬(Windows · Git Bash) 렌더와 비교 스텝 약 40–70초(대상 30개 × 두 쪽 · helm 차트 네 개 내려받기 포함). 러너 실측(2026-09-30 · PR #38): `render-diff` 14초(렌더·비교 8초 — 로컬의 약 1/5) · `render-comment` 5초 · 코멘트 「렌더 변경 없음」(대상 30 · kustomization 29 · directory source 1).
-- **승인 관문 `prod-approval`(T047 G5 · 계약 §validate.yml 8 · 결정 D7) — 두 번째 required check.** 운영 overlay(`apps/<pod>/overlays/prod` 자체와 그 아래 — 경로 성분 단위: `<pod>`는 성분 하나, 그 아래는 어느 깊이든)를 건드린 PR은 운영자가 승인해야 머지된다. ruleset(main)은 승인 수 0 · bypass 없음이므로, Environment `production`(필수 검토자 = 운영자 · `prevent_self_review: false` · `can_admins_bypass: false`(관리자 우회 없음 — 운영자가 UI에서 끈다: 「Allow administrators to bypass configured protection rules」 해제. 2026-09-30 원격 값은 아직 기본값 `true`) · 배포 브랜치 정책 없음 · 시크릿 없음)의 승인이 봇(App) 토큰이 스스로 채울 수 없는 조건이다. 로직은 워크플로 파일 안의 인라인 스크립트다.
+- **승인 관문 `prod-approval`(T047 G5 · 계약 §validate.yml 8 · 결정 D7 · T075 넓힘 — 사용자 결정 UD-14 2026-11-17과 그 보완) — 두 번째 required check.** 운영 렌더를 건드린 PR은 운영자가 승인해야 머지된다. 경로 성분 단위로 다섯 갈래다(`<pod>` · `<이름>`은 성분 하나, 「자체와 그 아래」는 어느 깊이든): `apps/<pod>/overlays/prod` · `apps/<pod>/base`(자체와 그 아래) · `clusters/oci-k3s/apps/<이름>-prod.yaml`(`.yml` 포함 — 파일 이름 = Application 이름은 validate 14.0이 강제한다) · `clusters/oci-k3s/projects` · `bootstrap/argocd`(자체와 그 아래 — AppProject 정의와 그것을 base로 포함해 적용하는 Argo CD 부트스트랩). 보완(T075 보정 2026-11-18 — GP-1 리뷰 G1B-2): `clusters/oci-k3s/apps` 아래의 경로 가운데 바로 아래의 `*.yaml` · `*.yml` 파일도 `README.md`도 아닌 것(kustomization 파일 — 세 이름 · 대소문자 무관 · 다른 확장자 · 하위 디렉터리 — validate 11.6과 같은 집합)도 `need`다(그런 파일이 root의 directory source를 kustomize 렌더로 바꾸거나 `.json` Application으로 `*-prod.yaml` 판정을 비켜 간다). T075 이전에는 `apps/<pod>/overlays/prod` 하나였다. ruleset(main)은 승인 수 0 · bypass 없음이므로, Environment `production`(필수 검토자 = 운영자 · `prevent_self_review: false` · `can_admins_bypass: false`(관리자 우회 없음 — 운영자가 UI에서 끈다: 「Allow administrators to bypass configured protection rules」 해제. 2026-09-30 원격 값은 아직 기본값 `true`) · 배포 브랜치 정책 없음 · 시크릿 없음)의 승인이 봇(App) 토큰이 스스로 채울 수 없는 조건이다. 로직은 워크플로 파일 안의 인라인 스크립트다.
 
   | job | 조건 · 권한 | 하는 일 |
   |---|---|---|
-  | `classify` | PR 이벤트만 · job 권한 `contents: read`뿐 · 5분 | checkout(`fetch-depth: 0` · `persist-credentials: false`)만 하고 **PR 쪽 코드를 실행하지 않는다**(러너의 git · bash만). `origin/main`의 끝과 PR head의 merge-base ↔ head의 변경 경로(`git diff --name-only -z --no-renames --no-ext-diff --no-textconv --ignore-submodules=none` — `-z`라 경로 글자를 인용하지 않고 그대로 받는다)에 운영 overlay가 있으면 `need`, 없으면 `skip`. main 끝을 못 구하거나 · head가 체크아웃에 없거나 · merge-base가 정확히 하나가 아니거나(교차 이력) · diff가 실패하면 `need`(fail-closed). 판정 · 이유 · 걸린 경로(허용 글자 밖의 바이트는 `%XX` — 파일 이름은 PR이 고른 글자다)를 job 요약에 남긴다 |
+  | `classify` | PR 이벤트만 · job 권한 `contents: read`뿐 · 5분 | checkout(`fetch-depth: 0` · `persist-credentials: false`)만 하고 **PR 쪽 코드를 실행하지 않는다**(러너의 git · bash만). `origin/main`의 끝과 PR head의 merge-base ↔ head의 변경 경로(`git diff --name-only -z --no-renames --no-ext-diff --no-textconv --ignore-submodules=none` — `-z`라 경로 글자를 인용하지 않고 그대로 받는다)에 위 다섯 갈래 중 하나가 있으면 `need`, 없으면 `skip`(판정 함수 `is_gated` — 자기 시험은 `validate.tests.sh`의 `classify-*` 케이스가 이 스텝의 `run:` 글자를 yq로 꺼내 임시 git 저장소에서 그대로 돌린다). main 끝을 못 구하거나 · head가 체크아웃에 없거나 · merge-base가 정확히 하나가 아니거나(교차 이력) · diff가 실패하면 `need`(fail-closed). 판정 · 이유 · 걸린 경로(허용 글자 밖의 바이트는 `%XX` — 파일 이름은 PR이 고른 글자다)를 job 요약에 남긴다 |
   | `gate` | `needs: [validate, classify]` · `approval != 'skip'` · `environment: production` · 권한 없음 · 5분 | Environment의 검토자가 승인해야 시작되는 빈 job(`echo` 한 줄). `if`에 상태 함수가 없어 `validate`가 성공한 뒤에만 승인을 요청한다(`validate` · `classify`가 실패 · 취소되면 돌지 않는다). 출력이 비어도 `!= 'skip'`은 참이다(fail-closed) |
   | `prod-approval` | `needs: [validate, classify, gate]` · `always()` · PR 이벤트만 · 권한 없음 · 5분 | `validate`와 `classify`가 `success`이고, `need`면 `gate`가 `success`, `skip`이면 `gate`가 `skipped`일 때만 exit 0 — 그 밖(빈 값 · `failure` · `cancelled` · 알 수 없는 값)은 `::error::` 한 줄과 exit 1. 판정을 job 요약에 남긴다 |
 
   - **머지가 막히는 모양**: 승인 전에는 `gate`가 `waiting`이고 `prod-approval` job이 만들어지지 않아 check가 보고되지 않는다 → 머지가 막힌다. 거절하면 `gate`가 실패하고 `prod-approval`이 실패한다(2026-09-29 시험 워크플로 실측 PR #35–#37 — 거절 = 실패 · 승인 = 성공 · 운영 경로를 건드리지 않으면 승인 없이 성공. 시험 워크플로는 약 20초였고, 실제 배선에서는 `validate`가 끝난 뒤에 판정한다). 승인 · 거절은 실행 · 사람 · 코멘트와 함께 이력으로 남는다.
   - **push 이벤트(main)에서는 셋 다 돌지 않는다** — `classify` · `prod-approval`은 `if`가 PR 이벤트만 받고, `gate`는 `classify`가 건너뛰어 건너뛴다.
   - **`classify`를 `validate`와 나눈 이유**: `validate`는 PR 쪽 코드(`tests/validate.sh` · `validate.tests.sh`)를 실행한다 — 같은 job에서 판정하면 그 코드가 판정의 재료(`.git` · 작업 트리 · `GITHUB_ENV`로 뒤 스텝에 넘기는 환경 변수)를 바꿀 수 있다. `classify`는 PR 쪽 코드가 한 줄도 돌지 않는 러너에서 판정한다.
-  - **ruleset**: `.github/ruleset-main.json`의 required check에 `{context: prod-approval, integration_id: 15368}`을 더했다(선언은 PR, 적용은 운영자 — 적용 뒤 운영 overlay를 건드린 PR로 「승인 전 머지 거부 · 승인 뒤 머지」를 한 번 잰다).
+  - **ruleset**: `.github/ruleset-main.json`의 required check에 `{context: prod-approval, integration_id: 15368}`을 더했다(선언은 PR, 적용은 운영자 — 적용 뒤 운영 렌더를 건드린 PR로 「승인 전 머지 거부 · 승인 뒤 머지」를 한 번 잰다).
   - **에이전트 규칙**: 승인 API(`…/actions/runs/<id>/pending_deployments` · `…/actions/runs/<id>/approve`)는 `gh pr merge`와 같은 운영자 전용 명령이다.
   - **한계**
-    - 관문은 **운영 overlay 경로만** 본다 — 플랫폼 · 검사 · 문서 변경 PR은 관문 밖이다(사용자 결정 D7 — 그런 PR이 봇 토큰으로 머지될 수 있다는 것을 받아들인 위험). 경로로만 보므로 운영 렌더를 바꾸는 다음 PR도 관문 밖이다(사용자 결정 D7의 범위): overlay가 끌어오는 overlay 밖의 파일(`apps/<pod>/base/` 등) · prod가 가리키는 디렉터리 자체를 바꾸는 Application 매니페스트(`clusters/oci-k3s/apps/<pod>-prod.yaml`의 `source.path` — T074에서 생긴다. 그때 `source.path`가 소문자 `apps/<pod>/overlays/prod` 그대로인지 확인한다) · 대소문자 변형(`overlays/PROD` — 판정은 대소문자를 구분한다). 그 변화는 렌더링 diff 코멘트로 본다. 범위는 `classify`의 판정 규칙만 바꾸면 넓힐 수 있다.
+    - 관문 범위는 위 다섯 갈래와 보완 하나다(T075 — 사용자 결정 UD-14와 그 보완: base 사본 · prod Application이 운영 렌더를 바꾸고, `projects/kustomization.yaml`의 patch · 다른 프로젝트 파일 · `bootstrap/argocd`가 prod AppProject를 바꿀 수 있어 넓혔다 · 2026-11-18 GP-1 리뷰 G1B-2: `clusters/oci-k3s/apps`에 kustomization 파일 · 비-YAML 파일 · 하위 디렉터리를 더하는 PR이 `*-prod.yaml` 판정을 비켜 갈 수 있어 보완했다. 대가 = base 사본 · 프로젝트 · Argo CD 부트스트랩 PR마다 승인 한 번 · 봇 dev bump는 그대로 `skip`). **남는 관문 밖**(받아들인 위험 — 계약 §validate.yml 8과 같은 글): `platform/**` · `platform-*` Application · `tests/` · `.github/` · 문서 · dev overlay · dev Application 변경 PR(받아들인 위험). `platform/**` · `platform-*` Application은 admin 등가다(argocd ns · AppProject · ClusterRoleBinding · jt-prod) — D7로 관문 밖이다. 이 길을 좁히는 검사(7.1 · 7.5 · 13.7 · 14.0 파일 결합)는 PR 코드라, 같은 PR에서 검사 코드를 고치면 지나간다(`tests/` · `.github/` 관문 밖). 예: 14.0의 파일 결합을 끄고 prod Application을 `-prod`가 아닌 파일에 두는 PR · 7.1 · 7.5 · 13.7을 끄고 `platform-argocd`의 path를 `platform/argocd`로 돌리는 PR. 그 변화는 렌더링 diff 코멘트로 본다.
+    - 판정은 대소문자를 구분한다(`overlays/PROD` · `-PROD.yaml`은 관문 밖 — 단 `clusters/oci-k3s/apps`의 kustomization 파일 이름은 대소문자 무관으로 need) — 그런 경로가 운영 렌더가 되지 못하게 하는 것은 검사다: 앱 Application의 `source.path`는 7.1이 소문자 `apps/<pod>/overlays/<env>`로, 파일 이름은 14.0이 `metadata.name`(소문자 `<pod>-<env>`)과 같게 묶고, 14.0 끝(T075 보정 2026-11-18)이 project `dev` · `prod` Application의 이름을 `^(.+)-<project>$`로 묶는다(이름과 무관하게 — `evil.yaml`에 project prod · 이름 evil이면 FAIL). prod Application 파일은 T075가 만든다 — `clusters/oci-k3s/apps/<pod>-prod.yaml`.
     - App이 Environment의 검토자가 될 수 없어 승인할 수 없다는 것은 **문서 근거**다 — App 토큰으로 승인 API를 부르는 실측은 T115.
     - `gate`의 `permissions: {}` + `environment: production` 조합은 러너에서 아직 재지 않았다(2026-09-29 시험 워크플로는 권한 설정 없이 쟀다) — ruleset 적용 뒤 첫 측정(계약이 요구하는 「승인 전 머지 거부 · 승인 뒤 머지」)에서 함께 확인한다.
 - **prod 승격 `promote.yml`(T047 G5 · 계약 §이미지·승격 · 결정 D8)** — `workflow_dispatch`(입력 `pod`) · job `promote` 하나(`ubuntu-24.04-arm` · 10분 · job 권한 `contents: write` + `pull-requests: write`뿐 · 같은 pod의 실행은 한 번에 하나 — 뒤 실행은 기다린다(기다리는 실행은 하나까지 — 아래 「한계」)). 운영자가 main에서 실행한다(main이 아닌 ref에서 dispatch하면 스텝 3이 실패한다). 스텝: 1 checkout(`ref: main` · `fetch-depth: 0` · **`persist-credentials: true`** — push에 job 토큰을 쓴다. PR 쪽 코드를 실행하지 않는 job이다) → 2 yq 설치(`validate` 스텝 3과 같은 버전 · sha256 — 함께 바꾼다. 이 값은 `render-diff` 스텝 2b의 대조 밖이다) → 3 승격(인라인 스크립트):
@@ -87,9 +88,9 @@ required check `validate`가 부르는 검사 본체와 그 자기검사(무엇�
 
 | 파일 | 역할 |
 |---|---|
-| `validate.sh` | 검사 본체. 검사 순서·코드는 파일 머리 주석(tasks.md T033 문면 순서). sync-wave·네임스페이스·정책 세트·포트 각주·ClusterSecretStore 표 · 차트 저장소 허용 목록(`HELM_CHART_TABLE`) · 권한 경계 기준선(`RBAC_*`) · images 항목의 허용 키(`IMG_ENTRY_KEYS`)는 이 파일 안의 단일 사본이 유일한 정본 사본이다 |
-| `validate.tests.sh` | 자기검사. `fixtures/<case>/`마다 `validate.sh --root`를 돌려 기대 exit·메시지를 단언한다. 검사 6의 SHA 경로(merge-base ↔ HEAD · 교차 이력 · 이름 변경 · hunk 모양 · 제자리 교체 · submodule · textconv · git 밖 `--root`)와 도구 없는 PATH 케이스는 `tests/.tmp/`에 임시 git 저장소·심 디렉터리를 만들고 시작·종료 때 지운다(`.gitignore` 대상 — `--root`가 저장소 안이어야 해서 저장소 안에 둔다) |
-| `fixtures/positive/` | 계약을 만족하는 최소 완전 트리(exit 0) — 새 검사를 추가하면 이 트리도 통과해야 한다 |
+| `validate.sh` | 검사 본체. 검사 순서·코드는 파일 머리 주석(tasks.md T033 문면 순서). sync-wave·네임스페이스·정책 세트·포트 각주·ClusterSecretStore 표 · 차트 저장소 허용 목록(`HELM_CHART_TABLE`) · 권한 경계 기준선(`RBAC_*`) · images 항목의 허용 키(`IMG_ENTRY_KEYS`) · 앱 렌더 검사의 pod 표와 딸린 표 · 금지 env · AppProject 허용 · 금지 목록 · 앱 Application 꼴(`APP_*` — T075)은 이 파일 안의 단일 사본이 유일한 정본 사본이다 |
+| `validate.tests.sh` | 자기검사. `fixtures/<case>/`마다 `validate.sh --root`를 돌려 기대 exit·메시지를 단언한다. 검사 6의 SHA 경로(merge-base ↔ HEAD · 교차 이력 · 이름 변경 · hunk 모양 · 제자리 교체 · submodule · textconv · git 밖 `--root`)와 도구 없는 PATH 케이스는 `tests/.tmp/`에 임시 git 저장소·심 디렉터리를 만들고 시작·종료 때 지운다(`.gitignore` 대상 — `--root`가 저장소 안이어야 해서 저장소 안에 둔다). T075의 앱 렌더 · 7.1 · 7.5 · 13.7 케이스(부정 픽스처 이름 = 설계 D9 표의 이름)도 `tests/.tmp/<케이스>`에 positive의 부분 사본 + 변이(JSON6902 패치 하나 · `yq -i` · 파일 하나)로 만든다(아래 「검사 3.9 · 13.7 · 14」). 승인 관문 `classify`의 자기 시험(`classify-*`)은 워크플로의 `run:` 글자를 yq로 꺼내 `tests/.tmp/classify`의 임시 git 저장소에서 돌린다 |
+| `fixtures/positive/` | 계약을 만족하는 최소 완전 트리(exit 0) — 새 검사를 추가하면 이 트리도 통과해야 한다. (T075) `clusters/oci-k3s/apps`는 Application 파일마다 하나(파일 24개 · 이름 = 파일 이름 — 14.0) · `apps/identity-admin/base`는 모노레포 `apps/identity-admin/deploy/base` 9파일의 바이트 사본(pod 표 정확 일치 — 3.9 · 14.1–14.4)이고 overlays dev · prod는 꼴만 맞는 저엔트로피 자리 값(dev `0`… · prod `1`… · prod `ACCESS_AUD_ADMIN` `2`… — 14.4 dev ≠ prod)을 JSON6902로 넣는다 · `clusters/oci-k3s/projects`(AppProject dev · prod — 13.7 통과 갈래) |
 | `fixtures/<code>/` | 검사 항목별 부정 픽스처(각 항목이 실제로 FAIL 코드를 내는 최소 예시). 비밀처럼 보이는 값은 넣지 않는다(gitleaks 실패 케이스는 "대상 0개"로 만든다) |
 | `fixtures/author/*.diff` | 검사 6(봇 작성자 경로 lint) 입력 |
 
@@ -117,11 +118,11 @@ PR_AUTHOR='<login>' PR_AUTHOR_ID=<id> PR_SENDER='<login>' PR_SENDER_ID=<id> VALI
 ## 규칙
 
 - `validate.sh`는 `--root` 트리(와 명시적으로 넘긴 diff 파일) 밖을 읽거나 쓰지 않고(예외: 저장소 밖 임시 경로 둘 — kubeconform 스키마 캐시 · 검사 1의 CRD 파생 스키마 디렉터리 `${TMPDIR:-/tmp}/validate-crd-schemas.*`(실행 뒤 삭제)), 스크립트가 직접 임시 파일을 만들지 않으며(파이프·변수만 — 단, CRD 파생 스키마 파일은 그 임시 디렉터리에만 쓰고, 검사 1의 kustomize `--enable-helm` 인플레이트가 `<kustomization>/charts/` 아래에 차트를 풀어 둔다. 빌드 산출물이며 `.gitignore` 대상이다), 자격·비밀을 요구하지 않는다.
-- 검사를 추가·변경하면: 부정 픽스처 1개 + `validate.tests.sh` 단언 + `fixtures/positive/` 통과를 함께 갱신한다.
+- 검사를 추가·변경하면: 부정 픽스처 1개 + `validate.tests.sh` 단언 + `fixtures/positive/` 통과를 함께 갱신한다. **예외(T075)**: 검사 3.9 · 7.1 · 7.5 · 11.6 · 11.7 · 13.7 · 14.x(와 검사 1 「네트워크 없는 렌더」의 심 케이스)의 부정 사례는 커밋하는 픽스처 디렉터리 대신 `validate.tests.sh`가 `tests/.tmp/<케이스>`에 만든다(positive의 앱 부분 사본 · 빈 트리 + 변이 하나 — 결함이 변이 한두 줄이라 디렉터리 100개를 커밋하지 않는다). 케이스 이름 = 설계 D9 표의 부정 픽스처 이름 · 리뷰 재현 이름이고, 단언 규칙(고유 `+[FAIL]` · `-[PASS] <코드>` · 다른 새 코드의 `-[FAIL]` — `AP_ALL`)은 위와 같다.
 - **부분 트리 픽스처의 exit 1은 판정 근거가 아니다.** 부정 픽스처는 대개 최소 트리라 무관한 검사(5.1 POL-ns · 5.2 POL-set 등)도 FAIL해 결함이
   없어도 exit 1이다. 근거는 그 하위 검사에 **고유한** `+[FAIL] <코드> — …` 단언과, 그 그룹의 PASS 줄이 없다는 `-[PASS] <코드>` 음성 단언이다
   (검사 7.4·10의 픽스처는 모두 이 음성 단언을 건다 — 2026-09-28 검증 V-A7). 분기 하나를 지웠을 때 어떤 픽스처가 깨지는지로 단언의 고유성을 확인한다.
-- 계약 표(sync-wave·네임스페이스·정책 세트·포트·ClusterSecretStore·차트 저장소 허용 목록 `HELM_CHART_TABLE`·권한 경계 기준선 `RBAC_*`·images 항목의 허용 키 `IMG_ENTRY_KEYS`)를 바꾸면 `validate.sh`의 해당 표만 바꾼다 — 다른 곳에 중복 기재하지 않는다.
+- 계약 표(sync-wave·네임스페이스·정책 세트·포트·ClusterSecretStore·차트 저장소 허용 목록 `HELM_CHART_TABLE`·권한 경계 기준선 `RBAC_*`·images 항목의 허용 키 `IMG_ENTRY_KEYS`·(T075) 앱 렌더 검사의 pod 표와 딸린 표 · 금지 env · AppProject 허용 · 금지 목록 · 앱 Application 꼴 · 앱 kustomization 허용 키 `APP_*`)를 바꾸면 `validate.sh`의 해당 표만 바꾼다 — 다른 곳에 중복 기재하지 않는다. kustomization 필드 정본 철자 `KUST_FIELDS`와 경로를 받는 구조체 항목의 정본 필드 `KUST_NESTED`(11.7)는 계약 표가 아니라 kustomize 소스(그 판의 `api/types/kustomization.go` · `patch.go` · `replacement*.go` · `*args.go` · `kvpairsources.go` · `helmchartargs.go`)에서 정한다 — kustomize를 올리면 그 판의 소스로 다시 정한다.
 - 검사 9가 쓰는 상수(`CSS_TABLE`·`CSS_SA_NS`·`CSS_VAULT_*`·`CSS_K8S_REMOTE_NS`·`CSS_COND_TABLE`·`CSS_COND_PLATFORM_EXCLUDE`)는 5.6의 노드 주소와 **성격이 다르다.** 노드 주소는 재이미지·재조인으로 바뀌는 런타임 값이라 다섯 곳을 함께 고쳐야 하지만, 검사 9의 값은 **계약 문면**(§ClusterSecretStore 5개 표 · §이름·인증 규약)이라 계약을 고칠 때만 함께 바꾼다. 복제본은 `validate.sh`의 그 블록 하나뿐이다(store 매니페스트 자체는 검사 대상이지 사본이 아니다).
 - 검사 5.6이 쓰는 노드 A 주소 2개(private `/32` · flannel 터널 장치 `/32`)는 여러 곳에 복제돼 있다. 노드 재이미지·재조인으로 값이 바뀌면 **아래 다섯 곳을 한 PR에서 함께** 바꾼다 — 아무것도 고치지 않으면 검사는 통과하면서 정책만 조용히 무력해지고, 일부만 고치면 5.6·자기검사가 FAIL한다. 이 목록은 **검사 5.6 관련 복제본**이다(private IP는 그 밖에 `allow-kube-api` 10장과 `policies-external.yaml`의 노드 IP 규칙에도 있다 — 전체는 `platform/policies/README.md` 상수 표의 "쓰이는 곳" 열을 따른다): ① `platform/policies/policies-common.yaml`의 `allow-apiserver-webhook` 4장 ② `tests/validate.sh`의 상수 `NODE_A_PRIVATE_CIDR`·`NODE_A_FLANNEL_CIDR` ③ `tests/fixtures/positive/platform/policies/policies-common.yaml`의 webhook 4장 ④ `tests/fixtures/pol-webhook-src/**`의 정책 픽스처 ⑤ `tests/validate.tests.sh`의 5.6 단언 문자열(빠짐·여분 목록).
 - 계약 `network-policy.md`에는 값이 없다(자리표시자뿐) — 값이 바뀌어도 계약은 고칠 것이 없고, **메커니즘이 바뀔 때만** 모노레포에서 별도 커밋으로 고친다. 모노레포 쪽 리터럴은 private IP가 `infra/oci/instances.tf`·`infra/oci/network.tf`·`infra/bootstrap/k3s-*.sh`·`infra/cloudflare/variables.tf` 등에 있고(별도 저장소·별도 커밋 — **전수는 모노레포에서 grep**한다), flannel 값은 런북·빌드 노트의 실측 기록뿐이다(`np-set-5`는 노드 객체에서 유도하므로 바꿀 상수가 없다).
@@ -138,7 +139,7 @@ PR_AUTHOR='<login>' PR_AUTHOR_ID=<id> PR_SENDER='<login>' PR_SENDER_ID=<id> VALI
 ## 한계(명시)
 
 - 검사 1(kubeconform)의 datreeio 폴백은 **렌더에 없는 CRD에만** 쓰인다 — 카탈로그 사본이 오래됐을 수 있다(2026-10-13: ObjectStore 사본이 2025-06-17자여서 라이브 CRD가 받는 `lz4`를 거부한 거짓 음성 — 이 개정의 계기). 렌더에 있는 CRD는 라이브에 적용되는 차트 버전과 같은 스키마로 판정된다(T116 차트 bump 때 자동 추종). 보지 않는 것: 파생 스키마와 **라이브 CRD**가 같은지(최종 판정자는 API 서버 · admission) · 렌더에도 datreeio에도 없는 kind(`-ignore-missing-schemas`로 건너뛴다) · 같은 CRD를 두 렌더가 다르게 내놓는 경우의 어느 쪽이 맞는지(먼저 나온 렌더의 것을 쓰고 `[WARN] 1 KUST`로 드러낸다).
-- 검사 3(ES 규약)이 **보지 않는 것**: `target.creationPolicy`/`deletionPolicy` · `refreshInterval`/`refreshPolicy` · 어노테이션(`argocd.argoproj.io/sync-options` 포함) · `target.template` · `data[].secretKey`. 즉 인수형 ES가 `Orphan`에서 `Owner`로 뒤집혀도 검사 3은 PASS다 — 머지 전 방어선은 `platform/secrets/README.md` §2의 yq 렌더 체크, 라이브 방어선은 모노레포 하네스 `eso-4`(적용된 뒤에만 보인다)다.
+- 검사 3(ES 규약)이 **보지 않는 것**: `target.creationPolicy`/`deletionPolicy` · `refreshInterval`/`refreshPolicy` · 어노테이션(`argocd.argoproj.io/sync-options` 포함) · `target.template` · `data[].secretKey`. 즉 인수형 ES가 `Orphan`에서 `Owner`로 뒤집혀도 검사 3은 PASS다 — 머지 전 방어선은 `platform/secrets/README.md` §2의 yq 렌더 체크, 라이브 방어선은 모노레포 하네스 `eso-4`(적용된 뒤에만 보인다)다. (T075) `apps/**`의 ES는 3.9가 이 중 `creationPolicy` · `refreshInterval` · `refreshPolicy` · `target.template` · `data[]`를 본다(아래 「검사 3.9 · 13.7 · 14」) — `secrets/**` · `platform/**`의 ES는 그대로 이 문단의 범위다.
 - 검사 3.8(`CNPG-retain` — T054 · 계약 §validate.yml 3 하위 항목 「(2026-10-14 T054) CNPG 데이터 보존」)이 **보는 것**: 모든 원본 YAML과 kustomize 렌더에서 `apiVersion`이 `postgresql.cnpg.io/`로 시작하는 `Database`(`spec.ensure ≠ absent` — 생략은 present로 허용 · `spec.databaseReclaimPolicy: retain` **명시**)와 `DatabaseRole`(`spec.databaseRoleReclaimPolicy: retain` **명시**). 생략 · 다른 값(`delete` · `Retain` · null · 불리언 — 문자열 `retain`만) · `spec` 없음·맵 아님은 FAIL(fail-closed)이고, 문서는 `explode(.)`로 풀어 보므로 별칭(`ensure: *x`)·병합 키(`<<`)로 숨긴 값도 같다(픽스처 `cnpg-retain/alias` — 풀지 않으면 통과한다: 2026-10-15 실측). 렌더까지 보는 이유는 원본은 retain인데 `patches`가 렌더에서만 `delete`·`absent`로 바꾸는 경로다(픽스처 `cnpg-retain/render` — 렌더 라벨로만 FAIL). 대상 0이면 "대상 없음" PASS, 있으면 PASS 줄에 kind별 원본·렌더 수(2026-10-15 실측 — 실제 트리 = Database 8개(원본 4 · 렌더 4) · DatabaseRole 12개(원본 6 · 렌더 6); `platform/cnpg-databases`의 두 파일과 그 렌더 하나 — pod가 늘면 수가 바뀐다). 이유: CNPG 1.30의 `ensure: absent`는 reclaim과 무관하게 DROP DATABASE를 조정마다 재시도하고 reclaim `delete`는 CR 삭제 = DROP인데 Application이 automated + selfHeal이라 머지가 곧 삭제다 — **의도된 삭제는 계약 행과 이 검사를 같은 PR에서 고치는 것으로만** 연다. **보지 않는 것**: `DatabaseRole`의 `ensure`(CEL·인스턴스 매니저가 `absent`를 거부한다) · `extensions[].ensure`(DROP EXTENSION — 확장이지 데이터가 아니다) · 라이브에 적용된 값(라이브 대조는 모노레포 하네스 `data` 계열) · 두 필드 밖의 미지·오타 필드(검사 1의 파생 스키마 한계 — 계약 §validate.yml 1) · CR 삭제 자체(revert PR의 렌더 0은 `prune: false`가 막는다 — `platform/cnpg-databases/README.md` §5) · **원본 파일에서 `!!binary` 등 태그로 적은 값**(`ensure: !!binary YWJzZW50` = absent): 원본 라벨에서는 잡지 못하고(yq `tostring`이 base64 글자 그대로 `YWJzZW50`를 내므로 ≠ absent) **렌더 라벨에서 잡는다** — kustomize가 평문 `ensure: absent`로 직렬화한다(2026-10-15 실측 · r5 K1). CI는 kustomize 필수라 PR에서는 잡히지만 kustomize 없는 로컬 실행에서는 통과한다(따옴표 문자열 안의 유니코드 이스케이프 표기는 yq가 해석해 원본 수준에서 FAIL — 태그만 예외).
 - 검사 4a(kustomization `images`)가 **보는 것**: 모든 kustomization 파일(파일 열거와 같다 — `tests/`·`charts/`·`.git/` 제외)의 `images[]` 항목.
   계약 문장(§이미지·승격)은 `apps/<pod>/overlays/<env>`를 말하지만, 기존 `newTag` 금지가 처음부터 모든 kustomization에 걸려 있어 새 판정도 같은 범위로
@@ -169,11 +170,20 @@ PR_AUTHOR='<login>' PR_AUTHOR_ID=<id> PR_SENDER='<login>' PR_SENDER_ID=<id> VALI
 - 4b(platform 이미지 digest 경고)는 `image:` **스칼라 줄만** 검사한다 — helm values의 분리형 `image.repository` / `image.tag`는 보지 않는다(Renovate `pinDigests`와 컴포넌트 태스크의 수동 병기에 맡긴다).
 - 검사 5.6(`allow-apiserver-webhook`)이 **보는 것**: `platform/policies/` 아래 원본 YAML **과 그 디렉터리의 `kustomize build` 렌더 결과**, 출발 `ipBlock` cidr 집합(값 단위 정확 일치 · 중복 금지 · 형식 검사 · `except` 금지 · ipBlock 아닌 peer와 혼합 peer 금지), 계약 포트 집합(정확 일치 · 정수 · `endPort` 금지) · `protocol`(TCP만). 렌더 쪽은 세 가지를 더 본다: `patches`·merge key로 **넓어지는** 경우, 표 밖 ns에 같은 이름이 **나타나는** 경우(`kind: List` 풀림 · ns 변경 — 5.2의 EXCLUSIVE는 원본 파일만 본다), 표의 4개 ns에서 정책이 **사라지는** 경우(이름·ns 변경).
 - 검사 5.6이 **보지 않는 것**: 그 주소가 **오늘의 노드 실물과 같은지**(리스가 바뀌면 정책은 조용히 무력해진다 — 라이브 대조는 모노레포 하네스 `np-set-5`가 노드 객체 InternalIP · `.spec.podCIDR`에서 유도해 본다), `spec.policyTypes`·`spec.podSelector`(validate 전체가 어느 정책에서도 보지 않는다), 그리고 정책이 실제로 클러스터에 적용됐는지. kustomize가 없어 검사 1이 SKIP되면 **렌더 소스가 아예 없다** — 그 사실은 5.6 PASS 줄의 "webhook 정책을 담은 소스: 원본 N · 렌더 M"에서 `M = 0`으로 드러난다.
-- 7.1의 이름 ↔ 경로 대응 예외는 `platform-tests` ↔ `platform/policies/tests` 하나다(계약 §Application 규약 이름 행 · 2026-10-29 T059). (`platform-argocd`가
-  `platform/argocd`와 함께 `bootstrap/argocd`도 받는 것은 계약 §디렉터리의 자기 관리 배치다 — 7.1의 별도 분기.) 예외 경로는 7.1이 받지만 7.2는 `platform/*/`
+- 7.1의 이름 ↔ 경로 대응 예외는 `platform-tests` ↔ `platform/policies/tests` 하나다(계약 §Application 규약 이름 행 · 2026-10-29 T059). `platform-argocd`의
+  경로는 `bootstrap/argocd` **하나**다(T075 · 계약 §validate.yml 6 「Argo CD 자기 관리 경로」 — 7.1의 별도 분기이고 FAIL 코드는 `7.1 WAVE-path` 그대로. 이전에는
+  `platform/argocd`도 받았다: 승인 관문 밖인 `platform-argocd.yaml` · `platform/argocd/**`만 바꿔 `../../clusters/oci-k3s/projects`나 `bootstrap/argocd` + AppProject
+  patch를 끌어오면 검사 코드를 고치지 않고 AppProject · Argo CD 본체를 승인 없이 바꿀 수 있었다). 예외 경로는 7.1이 받지만 7.2는 `platform/*/`
   한 단계만 세므로 `platform/tests/` 디렉터리는 필요 없다. 7.2는 `platform/tests/` 디렉터리를 **금지**한다 — 표의 `tests` 행은 `platform/policies/tests`(검증 Job
   Application `platform-tests`)를 뜻하는데 그 키가 `WAVE_OF`에 있어, 실수로 만든 `platform/tests/`가 7.2를 통과하던 사각을 막는다(T059 리뷰 r1 A3 · C6).
-  픽스처: 음성 `wave-and-app`(경로 `platform/tests` → `7.1 WAVE-path` · 디렉터리 `platform/tests/` → `7.2 WAVE-dir`) · 양성 `positive`(올바른 경로 1문서).
+  픽스처: 음성 `wave-and-app`(경로 `platform/tests` → `7.1 WAVE-path` · 디렉터리 `platform/tests/` → `7.2 WAVE-dir`) · `argocd-path-platform`(`platform-argocd`의
+  경로 `platform/argocd` → `7.1 WAVE-path` — 임시 트리) · 양성 `positive`(올바른 경로 1문서).
+- 검사 7.5(`WAVE-argocd-placeholder` — T075 · 계약 §validate.yml 6 「Argo CD 자기 관리 경로」)가 **보는 것**: `platform/argocd`의 kustomization(`kustomization.yaml` ·
+  `.yml` · `Kustomization` 중 있는 것)이 자리표시인지 — 최상위 키 정확히 `{apiVersion, kind, resources}` · `resources: []`(별칭 · 병합 키는 풀어서 본다 ·
+  읽지 못하면 fail-closed). 파일이 없으면 대상 없음. 7.1(경로 하나)과 함께 관문 밖 두 파일로 AppProject를 바꾸는 길을 닫는다 — 이 디렉터리를 쓰려면 계약을
+  먼저 고친다. 그 디렉터리의 다른 파일은 보지 않는다(kustomization이 자리표시면 렌더되지 않는다). 픽스처(임시 트리): `argocd-placeholder-projects`(`resources:
+  [../../clusters/oci-k3s/projects]` — 렌더의 AppProject는 13.7에도 걸린다) · `argocd-placeholder-patch`(`resources: []` + `patches`).
+  `fmt/appset`의 `platform/argocd`(ApplicationSetList를 렌더하는 kustomization)도 7.5에 걸린다 — 그 케이스의 단언은 자기 코드(11.x)만 본다.
 - 검사 7.3(`WAVE-secrets-base`)이 **보는 것**(다섯 갈래):
   - ⓐ **base 참조**: 모든 `kustomization.yaml`의 `resources`·`bases`·`components` 항목을 경로로 정규화해 `secrets/` 아래를 가리키는 항목이 `platform/secrets/kustomization.yaml`에만 있는지 본다. YAML 별칭으로 적은 항목(`- *b`)도 풀어서 본다(kustomize 5.8.1은 풀어서 빌드한다 — 2026-09-30 G4 수정 · 픽스처 `secrets-base-owner`의 `platform/kafka`). 항목을 yq로 풀어 읽지 못하는 kustomization은 판정할 수 없어 FAIL이다(fail-closed). **배달자 자신(`platform/secrets`)을 base로 끌어가는 전이 참조도 위반**이다(소비자 렌더에 ES가 들어간다). `secrets/<ns>/kustomization.yaml`이 자기 디렉터리 안의 파일을 가리키는 것은 위반이 아니고, 다른 ns를 가리키면 위반이다. **절대 경로(`/…`)와 저장소 밖으로 나가는 상대 경로는 위치 판정 불가로 FAIL**한다(fail-closed — 로컬에서만 렌더되고 Argo repo-server의 체크아웃 경로에서는 실패한다).
   - ⓑ **소유자 대조(렌더 기준)**: `secrets/**` **파일**의 ExternalSecret과 **같은 이름**이 배달자 밖 소스(파일·렌더)에도 있으면 FAIL — 파일 복사본 · 전이 base · helm 렌더로 두 Application이 같은 ES를 각자 적용하는 경로를 잡는다. 이름으로 맞추는 이유는 `secrets/<ns>/kustomization.yaml`의 `namespace:` 변환기가 원본에 없던 ns를 렌더에서 채울 수 있어서다(그래서 **같은 이름을 다른 ns에 두는 트리는 구분하지 못한다**).
@@ -217,7 +227,7 @@ PR_AUTHOR='<login>' PR_AUTHOR_ID=<id> PR_SENDER='<login>' PR_SENDER_ID=<id> VALI
   - 저장소 내용·설정으로 diff 모양 바꾸기: `--no-ext-diff`(외부 diff) · `--no-textconv`(`.gitattributes` + textconv) · `--no-renames` · `--ignore-submodules=none`(`.gitmodules`의 `ignore = all`이 gitlink 변경을 숨김) · `--no-color`
 - 검사 6이 **여전히 보지 않는 것**: digest 값의 진위·서명(attestation) · 교체된 digest가 어떤 이미지인지(형식이 맞는 다른 이미지의 digest로 바꿔도 PASS) · images 항목에 digest가 아예 없는 경우 — 이것은 트리 검사 4a의 몫이다(T047 G4c부터 `4a IMG-digest`가 항목마다 digest를 요구한다 — 위 「검사 4a」. 그 전의 4a는 digest가 있을 때 형식만 봤고, `name`이 빈 항목은 통째로 건너뛰었다). 보증은 이 줄 검사와 **트리 검사(4a·kustomize build·②)의 결합**이며(CI에서는 base 스크립트의 `--only-author` 실행과 head 스크립트의 전체 실행 — 봇 PR이 `tests/validate.sh`를 고치면 base 실행이 FAIL하므로, 통과한 봇 PR에서는 두 실행의 규칙이 같다), 위 base ref 실행 조건이 함께 있어야 성립한다.
 - 발신자 판정이 **여전히 막지 못하는 것**(검사 6은 이벤트 하나의 발신자만 본다 — 브랜치에 쌓인 커밋을 누가 넣었는지는 모른다):
-  - **PR이 열리기 전에** 봇이 그 브랜치에 넣은 커밋 — 사람이 나중에 PR을 열면 그 이벤트(`opened`)의 발신자는 사람이라 제한 없이 통과한다. 이것은 저장소의 **브랜치 쓰기 제한 ruleset**(선언 `.github/ruleset-branches.json` — main과 `bump/**` 밖의 브랜치는 관리자만 만들고 고칠 수 있다. main은 ruleset(main)이 따로 맡는다)이 막는다. 계약이 이 빈틈을 그 ruleset에 맡긴다. App 토큰의 push가 실제로 거부되는지는 계약 「실측 범위」대로 T074·T115에서 실측한다(그때까지 "설정으로 확인 · 거부는 미실측").
+  - **PR이 열리기 전에** 봇이 그 브랜치에 넣은 커밋 — 사람이 나중에 PR을 열면 그 이벤트(`opened`)의 발신자는 사람이라 제한 없이 통과한다. 이것은 저장소의 **브랜치 쓰기 제한 ruleset**(선언 `.github/ruleset-branches.json` — main과 `bump/**` · `promote/**` 밖의 브랜치는 관리자만 만들고 고칠 수 있다. main은 ruleset(main)이 따로 맡는다)이 막는다. 계약이 이 빈틈을 그 ruleset에 맡긴다. App 토큰의 push가 실제로 거부되는지는 계약 「실측 범위」대로 T115(승격 실연)에서 실측한다 — T074의 첫 dev bump는 발신자 값만 보았다(그때까지 "설정으로 확인 · 거부는 미실측").
   - 봇이 push한 **뒤에** 사람이 그 위에 다시 push하면 새 이벤트(`synchronize`)의 발신자는 사람이다 — 사람이 봇의 커밋을 받아서 자기 이름으로 올린 것으로 본다(그 커밋을 검토하는 책임은 사람에게 있다). 사람의 작업 브랜치(`bump/**` 밖)에서는 같은 브랜치 쓰기 제한이 봇의 첫 push부터 막는다.
 - 검사 9(ClusterSecretStore)가 **보는 것**: 원본 YAML과 `kustomize build` 렌더 결과 양쪽의 **선언된 값**.
   - 9.1 위치(`platform/secret-stores/`) · `metadata.namespace` 금지 · 이름/provider 집합 = 계약 표 5개
@@ -413,3 +423,141 @@ PR_AUTHOR='<login>' PR_AUTHOR_ID=<id> PR_SENDER='<login>' PR_SENDER_ID=<id> VALI
   - 차트가 **런타임에** 만드는 RBAC(렌더에 없다) · 클러스터에 손으로 만든 객체.
   - 네임스페이스가 없는 Role·RoleBinding의 ns — 렌더의 글자(`-`)로 맞춘다(Argo는 둘 다 Application의 destination ns에 만든다). 실제 트리의 RBAC는 모두
     ns를 적는다.
+- 검사 3.9 · 13.7 · 14(T075 · 계약 §validate.yml 3 「(T075 보정 2026-11-17) 앱 렌더 검사 — 3.9 · 14.0–14.8」 · §validate.yml 4 「AppProject」 — 검사 번호 · 이름 ·
+  FAIL 조건의 정본은 설계 `design/t075-design.md` D9와 그 계약 줄이다. `validate.sh`의 `APP_*` 표가 pod 표 · 딸린 표(ConfigMap 키 · 값 · ExternalSecret `data[]` ·
+  컨테이너 `env[]`) · 금지 env · AppProject 허용 · 금지 목록 · 앱 Application 꼴의 유일한 코드 사본이다)가 **보는 것** — 관문 밖 dev overlay와 관문 안 prod overlay ·
+  base의 렌더가 pod 표를 벗어나지 못하게 하고, 앱 Application · AppProject의 꼴로 dev/prod 경계를 묶는다. "overlay 렌더" = `apps/<pod>/overlays/<env>`의 kustomize 렌더:
+  - 3.9 `ES-app` — `apps/**`의 ExternalSecret(원본 + 렌더): `dataFrom` · `templateFrom`(어느 자리든) 금지 · `target.template` 필수 · `mergePolicy: Merge` 금지 ·
+    `refreshInterval` `5m` · `refreshPolicy` `Periodic` · `creationPolicy` `Owner`(명시 — 생략도 FAIL). overlay 렌더의 ES마다 pod 표: 이름 ∈ {`<pod>-env`,
+    `<pod>-migrate`} · `secretStoreRef` = {ClusterSecretStore, `vault-<env>`} · `data[]` = 표(순서 · 개수 · secretKey · key · property — `<env>/dragonfly/admin` ·
+    다른 pod 경로 · 순번 바꿔치기) · 항목 키 = {secretKey, remoteRef}(항목별 `sourceRef` 금지) · remoteRef 키 = {key, property} · `target.template` = 같은 트리
+    `apps/<pod>/base` 렌더의 같은 이름 ES의 것(sort_keys JSON 글자 그대로 — 호스트 · `sslmode` · 키를 바꾸는 dev 패치).
+  - 13.7 `RBAC-appproject` — kind AppProject(argoproj.io/…)는 `clusters/oci-k3s/projects` · `bootstrap/argocd`의 렌더와 그 두 디렉터리의 원본 파일에만(파일 + 렌더 —
+    11.x의 문서 행을 쓴다). 그 두 렌더의 `dev` · `prod` = 허용 목록 정확히 8종(group 포함 · 순서 무관 · 중복 금지) · 금지 목록 ⊇ 6종 · `destinations` 정확히 하나
+    {server, namespace `jt-<env>`}(`name` 금지 — sort_keys JSON) · `clusterResourceWhitelist: []`. 부분 트리에서도 그대로 본다(13의 완전성 예외 — 계약 S-2).
+    렌더가 빠진 kustomization이 있으면(13.0) 13.7 그룹 PASS 줄을 찍지 않는다.
+  - 14.0 `APP-app` — `clusters/oci-k3s/apps/` 바로 아래 `*.yaml` · `*.yml`마다 문서 정확히 1개(빈 문서 제외) · kind Application · `metadata.name` = 파일 이름. 이름
+    `^(.+)-(dev|prod)$` Application(literal — `platform-x-prod`도 앱 꼴을 받는다): `metadata.namespace` argocd · project = env · destination = {server, `jt-<env>`} ·
+    `destination.name` 금지 · spec 키 넷 · syncPolicy = 앱 꼴(sort_keys JSON 정확 일치 — `managedNamespaceMetadata` · `CreateNamespace` · `retry`는 따로 짚는다) ·
+    finalizers = `[resources-finalizer.argocd.argoproj.io]` · `source.path` 렌더의 namespaced 객체 ns = `jt-<env>` · cluster 범위 객체 0(kind 표 = 내장 목록
+    `APP_CLUSTER_KINDS` + 렌더 CRD의 `spec.scope: Cluster`). `source.path`가 트리에 없으면(부분 트리) 렌더 판정은 건너뛰고 PASS 줄에 센다. (T075 보정 2026-11-18 —
+    GP-1 리뷰 G1B-2) 이름과 무관하게 모든 Application 문서: `spec.project` ∈ {`dev`, `prod`}이면 이름 = `^(.+)-<project>$` — dev/prod 프로젝트는 `<pod>-<env>` 꼴
+    이름(= 파일 이름 · 관문이 `*-prod.yaml`로 알아본다)만 쓸 수 있다.
+  - 14.1 `APP-env` — overlay 렌더의 pod 템플릿 컨테이너(init 포함): ① 실효 env 이름(env[] ∪ envFrom 접두 + ConfigMap data 키 · ES target 키(template.data — Merge거나
+    template이 없으면 data[].secretKey도)) 금지 목록 ② envFrom · valueFrom이 같은 렌더 밖 ConfigMap · Secret(그 밖의 valueFrom 키도 금지) ③ Secret `<pod>-migrate`
+    참조(envFrom · secretKeyRef · volumes secret · projected)가 PreSync hook Job `<pod>-migrate` 밖(kind 무관 — 3.5는 projected · Pod를 보지 않는다) ④ (pod 표)
+    envFrom 항목 JSON 목록 정확 일치 · env[] 이름 ⊆ 표(표에 없는 (워크로드, 컨테이너)는 ∅) · env[] 이름 ∩ ConfigMap · ES template.data 키 = ∅ · ConfigMap 키 ∩
+    ES(`<pod>-env`) template.data 키 = ∅.
+  - 14.2 `APP-cm` · 14.4 `APP-values` — **대상 없음 규칙은 이 둘에만**: 그 overlay 렌더에 pod 템플릿 객체(Deployment · Job · CronJob · Pod · StatefulSet · DaemonSet)가 0개면
+    대상 0(PASS 줄의 「대상 없음 N개(대상 0)」). 하나라도 있으면 ConfigMap `<pod>-config` 하나 · 키 집합(data + binaryData) · 값 꼴 · env별 값(`=` 글자 · `~aud` ·
+    `~cn` · `@` 원소 집합) · 면제 상한 · dev = prod 복사(두 overlay가 모두 대상일 때). 14.4는 ConfigMap이 없으면 fail-closed로 함께 FAIL한다. **표에 없는 pod(또는
+    dev · prod 밖의 env)의 overlay 렌더가 객체를 하나라도 가지면 14.2 FAIL** — 계약은 이 문장의 코드를 정하지 않았고 그 항(「대상 없음 — 14.2 · 14.4에만」)의 첫
+    검사에 둔다(그 렌더의 3.9 표 부분 · 14.1 ④ · 14.3 · 14.4는 돌지 않는다 — 14.1 ①–③ · 14.6 · 14.7은 돈다).
+  - 14.3 `APP-ingress` · 14.6 `APP-image` · 14.7 `APP-kinds` — 있는 객체마다(대상 0은 그 객체가 0개일 때뿐): Ingress 이름 분류 · 공통 조건 · m2m · admin · Middleware /
+    image = `ghcr.io/joshua92y/<pod>@sha256:<64 hex>` / kind ∈ 허용 목록 8종 · Secret 0 · Service ClusterIP(externalIPs · loadBalancerIP · nodePort 0). pod 템플릿
+    객체 없이 Ingress만 있는 overlay(base를 뺀 dev)도 14.3을 받는다 — host는 ConfigMap이 없어 대조할 수 없으면 FAIL(fail-closed).
+  - 14.5 `APP-hook` — `apps/**` · `platform/policies/tests/**`(원본 + 렌더): `helm.sh/hook`으로 시작하는 키 금지 · `argocd.argoproj.io/hook` 쉼표 토큰(공백 제거)
+    집합 = 정확히 {PreSync}(빈 토큰 · 끝 쉼표 · 다른 값 · 대소문자 변형 FAIL) · PreSync는 ExternalSecret · Job `<pod>-migrate`만 · tests 경로의 hook은 0.
+  - 14.8 `APP-remote` — `apps/**` · `platform/policies/tests/**`의 kustomization(원본) 경로 항목(`resources` · `components` · `bases` · `crds` · `generators` ·
+    `transformers` · `validators` · `configurations` · `patchesStrategicMerge` · `patches[].path` · `patchesJson6902[].path` · `replacements[].path` ·
+    `configMapGenerator`/`secretGenerator`의 `files` · `envs` · `env` · `openapi.path`). (T075 보정 2026-11-18 — GP-1 리뷰 G1A-1 · G1A-2 · G1B-3) FAIL: ① kustomize
+    5.8.1이 원격으로 읽는 꼴(소스 `api/internal/git/repospec.go` · `loader/fileloader.go` — 대소문자 무시 `git::` 접두 · `ssh/https/http/file://` · `<user>@`(scp 꼴) ·
+    `github.com/` · `github.com:`) · `://` · `git@` · 절대 경로 · `:` 이나 `@`가 든 항목 ② 역슬래시 · 제어 문자 · 따옴표(JSON 이스케이프 — 역슬래시는 Windows에서
+    경로 구분자다: `'../dev/x\n'`이 Windows 렌더에서 `overlays/dev/x/n`이 됐다) ③ **저장소 안의 실재 경로가 아님**(원격 꼴 열거에 기대지 않는다 — kustomize는
+    파일로 읽지 못한 항목을 원격 ref로 다시 읽어 `git fetch`한다) ④ **인라인** `generators` · `transformers` · `validators` 항목(항목 문자열을 YAML로 읽어
+    스칼라가 아니면 — 줄바꿈 여부로 가르지 않는다: 인라인 PatchTransformer의 `path: http://…`가 원격 내용을 끌어온다). 인라인 `patchesStrategicMerge`(맵)는
+    경로가 아니라 건너뛴다 · generator `files`의 `key=`는 떼고 본다. `apps/**`는 경로 가둠: `apps/<pod>/` 밖 · overlay 항목이 같은 디렉터리의 파일도 정확히
+    `../../base`도 아님 · base 항목이 같은 디렉터리의 파일이 아님(둘 다 하위 디렉터리 금지 — 중첩 kustomization · Component가 관문 밖 `overlays/dev/**`를 끌어오는
+    길) · `helmCharts` · `secretGenerator` FAIL. kustomize의 기본 load restrictor(RootOnly — root 밖 파일 금지)는 **로컬 경로만** 막는다: http(s) URL은
+    restrictor보다 먼저 내려받는다(kustomize 5.8.1 `api/internal/loader/fileloader.go`의 `Load` — `IsRemoteFile`이면 GET · 리뷰 A G1A-7 · 리뷰 B 실측: overlay
+    `patches: [{Path: <URL>}]`의 내용이 렌더에 들어갔다). 그래서 이 검사가 렌더 전에 항목을 보고, 디렉터리 항목까지 본다. 읽는 키는 소문자 정본 철자뿐이다 —
+    `Components:` · `patches[].Path` 같은 철자 변형(최상위 · 중첩)은 11.7이 건다. (T075 보정 2026-11-18 — 재검토 G1A-8) `platform/policies/tests/**`는 최상위
+    키 ⊆ {`apiVersion`, `kind`, `namespace`, `resources`} · `resources[]` 문자열 · 그 밖 자리의 맵 · 목록 FAIL(같은 디렉터리 transformer 설정 **파일** 안의
+    `path: https://…` · `helmCharts[].valuesFile` · 중첩 철자 변형이 원격을 끌어왔다 — 항목 판정으로 닫히지 않는 자리를 없앤다 · 새 키는 계약 14.8 줄을 먼저
+    고친다) · (마지막 재검토 G1B-6) 항목 = 그 kustomization과 **같은 디렉터리의 파일**뿐(apps base와 같은 판정 — 하위 디렉터리 · 디렉터리 항목 · 그 밖으로
+    풀리는 항목 FAIL: `-e`만 보던 판정은 디렉터리 항목을 통과시켜, 키 검사가 열지 않는 루트 `tests/` 아래 kustomization을 tests 렌더가 끌어올 수 있었다).
+    없는 항목은 「저장소 안의 실재 경로가 아니다」로 먼저 드러난다. PASS 줄의 「helmCharts · secretGenerator 0」은 `apps/**`의 말이다 — tests 범위는 키
+    집합이 helmCharts를 막는다. 픽스처: `tests-res-{subdir,roottests,parent}`.
+  - 14.9 `APP-kust-keys`(T075 보정 2026-11-18 — 계약 「표 밖 새 검사 셋」) — `apps/<pod>/base`의 kustomization(세 이름) 최상위 키 = 정확히 {`apiVersion`, `kind`,
+    `resources`} · `apps/<pod>/overlays/<env>`의 것 ⊆ {`apiVersion`, `kind`, `namespace`, `resources`, `images`, `patches`}(키 글자 그대로). (재검토 G1B-4) **모든
+    깊이**: `resources[]` 항목 = 문자열 · `images[]` 항목 키 ⊆ {`name`, `newName`, `digest`} · `patches[]` 항목 키 ⊆ {`target`, `patch`}(인라인 패치만 — 패치 파일
+    `path`와 `options`는 없다: 앱에서 경로를 받는 중첩 자리를 아예 없앤다) · `patches[].target` 키 ⊆ {`group`, `version`, `kind`, `name`, `namespace`,
+    `labelSelector`, `annotationSelector`}(철자 정확히) · 그 밖 자리의 맵 · 목록 · 같은 맵의 중복 키 FAIL. 새 키는 계약 14.9 줄을 먼저 고친다.
+- 검사 1 **네트워크 없는 렌더**(T075 보정 2026-11-18 — 계약 「표 밖 새 검사 셋」 · 재검토 G1B-4 · 방어 겹): `apps/**` · `platform/policies/tests/**`(경로 성분
+  단위 — `platform/policies/testsx`는 밖)의 `kustomize build`는 그 서브셸에서만 HTTP(S) · ALL 프록시(대문자 · 소문자) = 닫힌 로컬 포트 `127.0.0.1:9` · `NO_PROXY`
+  비움 · `GIT_ALLOW_PROTOCOL=none`(git 전송 전부 금지 — kustomize의 원격 ref는 `git fetch`이고 이 렌더는 git이 필요 없다. `file`로 두면 `file://` 로컬
+  저장소의 다른 ref가 렌더됐다 — 마지막 재검토 G1B-5 실측 · `none`이면 `transport 'file' not allowed`) · `GIT_SSH_COMMAND=false` · 묻지 않음
+  (`GIT_TERMINAL_PROMPT=0` · `GCM_INTERACTIVE=never`)으로 돈다. 원격을 끌어오는 항목이 키 검사(11.7 · 14.8 · 14.9)를 어떻게든 지나가도 렌더 실패(1 KUST)로
+  떨어진다. `platform/**` 렌더(helmCharts 차트 pull)와 kubeconform(스키마 내려받기)에는 걸지 않는다. **한계**: Go net/http는 루프백(`127.0.0.1` ·
+  `localhost`) 주소를 프록시하지 않는다 — 러너 안의 로컬 HTTP 서버는 이 겹이 막지 못한다(외부 네트워크만 막는다 · 그 길은 키 검사가 닫는다). 그래서 자기검사
+  (`nonet-render-env`)는 로컬 서버가 아니라 kustomize 심으로 렌더 프로세스의 env를 본다(심이 build마다 env를 한 줄로 찍고 실패한다 — 앱 · tests 렌더 = 차단
+  값 · `platform/vault` · `platform/policies/testsx` = 바깥의 감시 값 그대로). PASS 줄 끝에 `네트워크 없는 렌더 N개`를 적는다.
+- 검사 11.7 `FMT-kust-keys`(T075 보정 2026-11-18 — 계약 「표 밖 새 검사 셋」 · GP-1 리뷰 G1B-1 · 번호 정정: 처음 적은 11.5는 기존 `11.5 FMT-symlink`와 겹쳤다)가
+  **보는 것**: 모든 kustomization 파일(세 이름 · `KUST_FILES`)의 최상위 키. kustomize 5.8.1은 이 파일을 `sigs.k8s.io/yaml` → `encoding/json`
+  (`DisallowUnknownFields`)으로 읽는다 — 필드 이름을 대소문자 무시 · 유니코드 단순 접기(`ſ` → `s` · 켈빈 `K` → `k`)로 맞추고 같은 필드가 둘이면 뒤의 것이 이긴다.
+  그래서 `Components:` · `RESOURCES:` · `reſources:`는 kustomize에는 정본 필드인데 소문자 키만 골라 읽는 검사(7.3 · 12.x · 14.8)에는 보이지 않았다(리뷰 B 재현 —
+  prod overlay의 `Components:`가 관문 밖 `overlays/dev/**` Component로 prod Deployment에 인자를 넣었고 1 KUST · 14.0–14.8이 모두 PASS였다). FAIL: ① 키에 ASCII 밖
+  글자 ② ASCII 소문자로 접으면 정본(`KUST_FIELDS` — kustomize 5.8.1 `api/types/kustomization.go` JSON 태그 32 + TypeMeta 2)과 같은데 철자가 다름 ③ 정본 밖
+  ④ 같은 문서 안의 중복 키 · 앵커 · 별칭 · 병합 키(`<<`) · 명시 태그(문서 어디든 — 키 노드 포함) · 맵이 아닌 문서(빈 문서는 건너뛴다). yq v4.53.6은 중복 키를
+  둘 다 열거하고(`keys`) 값은 뒤의 것을 준다(실측) — 그래서 키를 `keys[]`로 열거해 센다(`to_entries`는 별칭 키를 풀어 버린다). 픽스처: `kust-keys-{case,fold,
+  unknown,dup,anchor,merge,tag}`(case = 리뷰 B cik-comp · fold = `reſources`).
+  - (재검토 G1B-4) **중첩**: 경로를 받는 구조체 항목(`KUST_NESTED` — `patches[]` · `patchesJson6902[]`(Patch) · `replacements[]`(ReplacementField) ·
+    `configMapGenerator[]`(ConfigMapArgs) · `secretGenerator[]`(SecretArgs) · `helmCharts[]`(HelmChart) · `helmGlobals`(HelmGlobals) · `openapi`)의 **직속 키**도
+    ① ASCII 밖 글자 ② 그 구조체 정본 필드(5.8.1 소스 JSON 태그 — `json:",inline"` 끼운 구조체는 펼친다)와 대소문자만 다름 ③ 같은 항목 안의 중복(접기 전 —
+    같은 키 둘 · 접은 뒤 — `path`와 `Path`: encoding/json은 마지막 값을 쓴다) FAIL. kustomize는 중첩 구조체 필드도 대소문자 무시 · 유니코드 접기로 받는다(리뷰 B ·
+    리뷰 A 실측: overlay `patches: [{Path: <URL>}]`를 가져와 렌더에 넣었고, 소문자 `path`만 보던 14.8은 PASS였다). 최상위 키를 ASCII 소문자로 접어 자리를
+    고른다(철자 변형 최상위 키 아래도 본다). 보지 않는 것: 임의 키 맵(`commonLabels` · `labels[].pairs` · `*.options.labels` · `generatorOptions` ·
+    `helmCharts[].valuesInline`)과 하위 구조체(`target` · `options` · `source` · `targets`)의 키 — 경로를 받지 않는다(앱은 14.9가 모든 깊이를 본다).
+    정본 밖 중첩 키는 FAIL하지 않는다 — kustomize가 `DisallowUnknownFields`로 거부해 렌더가 실패한다(1 KUST). PASS 줄은 본 항목 수와 직속 키 수를 적는다.
+    픽스처: `nested-path-{url,case,local,tests}`(url = 리뷰 B nested-path-url(dev) · case = 리뷰 A probe-nested-path(prod) — 둘 다 `AP_NONET` · local = 같은
+    디렉터리 파일 · tests = tests 범위(14.8 키 집합도)) · `nested-patch-target-case` · `nested-fold-nonascii`(`fileſ` — 앱 · tests 밖) · `nested-dup`.
+- 검사 11.6 `FMT-dirsource-files`(T075 보정 2026-11-18 · GP-1 리뷰 G1B-2)가 **보는 것**: `clusters/oci-k3s/apps/`(root Application의 directory source) 바로 아래 항목 =
+  `*.yaml` · `*.yml` 파일과 `README.md`만 — kustomization 파일(세 이름 · 대소문자 무관) · 다른 확장자(`.json` · `.jsonnet` · `.txt` …) · 하위 디렉터리 · 링크 ·
+  일반 파일이 아닌 항목 FAIL. 까닭: kustomization 파일이 하나 생기면 Argo가 이 디렉터리를 kustomize로 렌더하고(앱 종류 자동 판별), 그 렌더가 끌어오는 아무
+  파일(예: `evil.txt` — project prod · 이름 evil)의 Application이 파일 기반 검사(7.1 · 14.0)와 관문(`*-prod.yaml`)을 모두 비켜 간다(리뷰 B kz-root 재현). 11.3은
+  directory source로 판정된 경로만 보므로(kustomization 파일이 있으면 directory source가 아니다) 11.6은 이 디렉터리를 늘 본다. 승인 관문 `classify`가 같은 집합을
+  PR 쪽 코드 없이 경로로 `need`로 본다. 픽스처: `dirsrc-{kustomization,json,subdir}` · 14.0 끝 `app-project-prod-name`.
+  - PASS 줄은 대상 수를 적는다 — 실제 트리(T075 GP-1 · 2026-11-17)는 앱 overlay가 뼈대(렌더 0객체)라 3.9 · 14.1 · 14.3 · 14.6 · 14.7이 「— 대상 0」, 14.2 · 14.4가
+    「대상 없음 2개(대상 0)」, 14.0이 「앱 Application 0개(대상 0)」를 적는다.
+  - 픽스처(임시 트리 — `validate.tests.sh` 「T075」 절 · 이름 = 설계 D9 표): 기준 `app-base-ok`(positive 앱 부분 — 새 코드 전부 PASS) · `app-skeleton`(대상 0 줄) ·
+    `app-unknown-pod` · 3.9 `es-app-{datafrom,merge,refresh,admin-key,other-pod,extra-es,template-host,item-sourceref}` · 14.0 `app-{project-platform,dest-crossenv,
+    overlay-clusterkind,file-name-mismatch,file-two-docs,ns-not-argocd}` · 14.1 `env-{forbidden,proxy,outside-ref,literal-override,sidecar-extra}` · `migrate-ref-
+    {projected,pod}` · `envfrom-extra-cm` · `es-template-overrides-cm` · 14.2 `cm-{missing,placeholder,aud-form,cn-form,extra-key,second-configmap}` · 14.3 `ing-
+    {host-alias,extra-path,admin-in-dev,priority,third-name,admin-entrypoint-web,only-foreign-host}` · `mw-extra-prefix` · 14.4 `val-{writes-prod-false,hosts-domain,
+    exempt-extra,env-same,team-domain,kafka-bootstrap}` · 14.5 `hook-{presync-postdelete,x-helm-postdelete,helm-predelete,tests-path}` · 14.6 `img-{no-entry,foreign,
+    cronjob-no-deploy}` · 14.7 `kind-{tlsoption,secret}` · `svc-nodeport` · 14.8 `remote-{resource-https,git-ssh}` · `overlay-extra-dir` · `prod-{patch,cmgen}-from-dev` ·
+    `base-component-outside` · `app-helmcharts` · `prod-nested-component-from-dev` · `base-nested-from-overlay` · 7.1 · 7.5 · 13.7 `argocd-path-platform` ·
+    `argocd-placeholder-{projects,patch}` · `proj-in-platform` · `proj-prod-{whitelist-extra,dest-two,blacklist-short}`. (T075 보정 2026-11-18 — GP-1 리뷰) 11.7
+    `kust-keys-*` · 14.9 `app-kust-{base,overlay}-extra` · 11.6 `dirsrc-*` · 14.0 `app-project-prod-name` · 14.8 `remote-tests-{forms,missing}`(tests 범위 —
+    `remote-tests-forms`는 kustomize가 `git fetch`하므로 프록시를 `127.0.0.1:9`로 막은 환경으로 돌린다 · 네트워크에 나가지 않는다) · `inline-transformer`(리뷰 A
+    probe-inline — URL은 `example.invalid`: 고정 포트에 기대지 않는다 · G1A-11) · `xform-backslash`(리뷰 B bsn-xform) · 사례 공백(G1A-5) `proj-file-only`(13.7 원본
+    파일만) · `argocd-placeholder-{yml,kust}`(7.5 이름 변형). (재검토 G1B-4 · G1A-7 · G1A-8 · G1A-10) 11.7 중첩 `nested-*`(위 11.7) · 14.9 모든 깊이
+    `nested-image-newname-case` · `app-kust-deep-extra`(`target.Kind`) · `app-patch-options` · `app-patch-path-local`(소문자 `path` · 같은 디렉터리 파일 — 14.8은
+    받고 14.9가 막는다) · `app-image-newtag`(14.6에도) · `app-kust-base-missing`(빠짐 — `apiVersion` 없음: kustomize가 기본값을 채워 렌더는 같다) · 14.8 tests 키
+    집합 `tests-{xform-file,helm-values,key-extra}`(리뷰 A probe-tests-xfile (a) · (b) · 키 여분) · `remote-configurations`(tests 범위 `configurations` 원격 ·
+    비실재) · 검사 1 `nonet-render-env`(kustomize 심 — 위 「네트워크 없는 렌더」). (마지막 재검토 G1B-6) 14.8 tests 항목 = 같은 디렉터리 파일
+    `tests-res-{subdir,roottests,parent}`(하위 디렉터리 kustomization · 루트 `tests/`의 디렉터리 · 상위 디렉터리 파일).
+    단언 = 그 코드의 `+[FAIL] …` · `-[PASS] <코드>` · 다른 새 코드의 `-[FAIL]`(`AP_ALL` — 결함이 여러 코드에 걸리는 것이 정답이면 그 코드를 함께 준다 — 케이스 머리
+    주석. 앱 kustomization의 허용 키 밖을 쓰는 14.8 변이 넷(`prod-cmgen-from-dev` · `base-component-outside` · `app-helmcharts` · `prod-nested-component-from-dev`)과
+    `prod-patch-from-dev`(`patches[].path` — 재검토 G1B-4로 앱 `patches[]` 키가 {target, patch}가 됐다)는 14.9에도 걸린다).
+  - 승인 관문 `classify`의 자기 시험(`classify-*` — 위 「CI 배선 상태」): need 다섯 갈래 + 깊은 경로 · `.yml` · 판정 실패(HEAD가 체크아웃에 없음) · (T075 보정
+    2026-11-18) `clusters/oci-k3s/apps`의 `Kustomization` · `kustomization.yaml` · `evil.txt` · `x.json` · `sub/a.yaml` = need / skip = dev overlay · `<pod>-dev.yaml` ·
+    `platform-*.yaml` · `platform/**` · `tests/**` · `.github/**` · 문서 · 성분이 다른 이름(`projects-x` · `argocd-x` · `prod-x` · `base-x`) · `clusters/oci-k3s/apps`의
+    `platform-foo.yaml` · `x-dev.yaml` · `README.md`.
+- 검사 3.9 · 13.7 · 14가 **보지 않는 것**:
+  - probe · securityContext · command · args · 볼륨(③의 `<pod>-migrate` 참조 밖) — base는 모노레포 바이트 사본이고 그 모양은 모노레포(템플릿 렌더 단언 ·
+    kubeconform-deploy · ia 시험)가 지킨다. overlay 패치로 바뀌는 command · args · 볼륨 · securityContext도 검사 밖이다 — prod overlay는 관문 안(운영자 승인),
+    관문 밖 dev overlay는 dev 자격 범위의 임의 실행이라 받아들인 위험이다(jt-dev · jt-prod의 PSA enforce restricted가 securityContext 일부를 막는다).
+  - env[] 의 **값**(이름만 본다 — `POD_NAMESPACE`를 리터럴로 바꾸는 것 등) · dev ↔ prod 값 맞바꿈(꼴이 같다 — 라이브 양성 탐침 `/session/check` 200이 잡는다 · T075 O-5c).
+  - 렌더가 빠진 kustomization(검사 1이 FAIL한다 — 3.9 · 14.x의 PASS 줄은 렌더된 것만 센다 · 13.7은 PASS 줄을 찍지 않는다).
+  - 저장소 루트의 AppProject 완전성(dev · prod가 **있어야** 한다는 것 — D9의 FAIL 조건에 없다. AppProject가 없는 트리는 대상 0이다 · 기존 `rbac-root-ok`의 `-[FAIL] 13.`
+    단언과도 맞다). 그 둘을 지우는 PR은 승인 관문(`clusters/oci-k3s/projects/**`) 안이고, `platform-argocd`는 `prune: false`다.
+  - 금지 env 목록과 템플릿 `_render.py`의 목록이 갈라진다(`FORWARDED_ALLOW_IPS` · `SCRIPT_NAME`은 이 검사에만 — 템플릿 쪽은 T116 후보 · 계약 C4).
+  - 대소문자 변형 경로(`overlays/PROD`)와 directory source 경로의 하위 디렉터리 — 앞쪽은 7.1이 앱 Application의 경로를 소문자로 묶고, 뒤쪽은 11.3 · 11.6이 금지한다.
+  - (T075 보정 2026-11-18 — 재검토 G1B-4 · G1A-7로 고침: 이 줄은 「11.5(→ 11.7)는 최상위 키만 본다 · 하위 필드가 가리키는 것은 파일이라 load restrictor가
+    root 밖을 막는다」였다 — http(s) URL에는 틀린 전제였다: restrictor는 로컬 경로만 막고 원격 파일은 그 전에 내려받는다(fileloader.go `Load`)) `platform/**` 등
+    앱 · tests 밖 kustomization의 **하위 구조체 키**(`patches[].target.Kind` · `replacements[].source` · `*.options` 같은 경로를 받지 않는 자리)의 철자 변형 —
+    11.7 중첩은 경로를 받는 구조체 항목의 직속 키까지만 본다(앱은 14.9가 모든 깊이 · tests는 14.8이 최상위 키 집합으로 막는다). `platform/**`는 관문 밖
+    admin 등가다(D7).
+  - Application 문서가 `clusters/oci-k3s/apps` 밖(플랫폼 렌더 등)에 있는 경우 — 14.0 끝(project dev/prod 이름)은 그 디렉터리의 파일만 본다. `platform/**`의 렌더가
+    Application을 만드는 길은 「남는 관문 밖」(admin 등가 — D7)이다.

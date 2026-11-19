@@ -1,13 +1,14 @@
-# AppProject `prod` — 앱 prod 배포(`<pod>-prod`, source `apps/<pod>/overlays/prod`) 전용 (T041 PR-A)
+# AppProject `prod` — 앱 prod 배포(`<pod>-prod`, source `apps/<pod>/overlays/prod`) 전용 (T041 PR-A · T075 허용 목록)
 #
 # 정본 계약: gitops-repo.md §Application 규약 AppProject 행 — dev 와 같은 형태이며 destination 만 `jt-prod` 다.
-#   dev 와의 차이는 프로젝트가 아니라 Application 의 syncPolicy 에 있다("prod 앱: automated 이되 변경은 PR 로만").
+#   dev 와의 차이는 프로젝트가 아니라 Application 의 syncPolicy 에 있다(dev prune true · prod prune false — 앱 Application 의 정확한 꼴).
 #
-# 금지 목록의 group 은 정확히 일치해야 한다(모노레포 tests/platform/cluster.tests.ps1 argo-3 이 group 까지 대조한다):
-#   networking.k8s.io/NetworkPolicy · ""/ResourceQuota · ""/LimitRange · ""/ServiceAccount ·
-#   rbac.authorization.k8s.io/Role · rbac.authorization.k8s.io/RoleBinding.
+# 허용 목록(T075 보정 2026-11-17)과 금지 목록 6종의 뜻 · group 정확 일치 · 대조하는 곳(모노레포 하네스 argo-3 · validate 13.7 · 14.7)은
+#   dev.yaml 머리 주석과 같다. 허용 목록 = 정확히 ""/ConfigMap · ""/Service · apps/Deployment · batch/Job · batch/CronJob ·
+#   networking.k8s.io/Ingress · external-secrets.io/ExternalSecret · traefik.io/Middleware(admin Ingress 의 stripPrefix — 같은 ns).
 #
-# 이 프로젝트를 쓰는 Application 은 T041 에서 만들지 않는다 — tasks.md T075 의 산출물이다(설계 D8).
+# 이 프로젝트를 쓰는 Application(`identity-admin-prod` 등)은 T075 가 만든다(gitops PR GP-2 — 빈 prod overlay 를 가리키는 꼴로 먼저).
+#   이 파일은 승인 관문(prod-approval) 대상이다(clusters/oci-k3s/projects/** — 계약 §validate.yml 8).
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
@@ -23,6 +24,23 @@ spec:
     - server: https://kubernetes.default.svc
       namespace: jt-prod
   clusterResourceWhitelist: []
+  namespaceResourceWhitelist:
+    - group: ""
+      kind: ConfigMap
+    - group: ""
+      kind: Service
+    - group: apps
+      kind: Deployment
+    - group: batch
+      kind: Job
+    - group: batch
+      kind: CronJob
+    - group: networking.k8s.io
+      kind: Ingress
+    - group: external-secrets.io
+      kind: ExternalSecret
+    - group: traefik.io
+      kind: Middleware
   namespaceResourceBlacklist:
     - group: networking.k8s.io
       kind: NetworkPolicy

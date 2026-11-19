@@ -6,12 +6,15 @@
 #     한 번 더 두면 렌더를 이중으로 돌리게 되고 두 정의가 갈라질 수 있다.
 #   - PR-A 이후 `bootstrap/argocd` 는 `../../clusters/oci-k3s/projects` 도 base 로 포함하므로, 그 소스를 그대로 인수해야
 #     Argo CD 본체와 AppProject 5종의 소유자가 하나로 모인다.
-#   - validate 검사 7.1 은 컴포넌트 `argocd` 에 한해 source.path 로 `platform/argocd` 와 `bootstrap/argocd` 를 모두
-#     인정한다(tests/validate.sh 의 7.1 WAVE-path 분기). 그래서 이 자리표시를 지우지 않아도 검사 7.2(§sync-wave 단일 표에
-#     없는 platform/<component>/ 금지)와 계약 §디렉터리를 동시에 만족한다.
+#   - validate 검사 7.1 은 `platform-argocd` 의 source.path 로 `bootstrap/argocd` 하나만 인정하고(T075 — 이전에는
+#     `platform/argocd` 도 받았다), 검사 7.5 가 이 파일이 자리표시인지 본다 — 최상위 키 정확히 {apiVersion, kind, resources} ·
+#     `resources: []`(계약 §validate.yml 6 「Argo CD 자기 관리 경로」). 자리표시라서 검사 7.2(§sync-wave 단일 표에 없는
+#     platform/<component>/ 금지)와 계약 §디렉터리를 동시에 만족한다.
 #
 # sync-wave 값의 정본은 계약 §sync-wave 단일 표뿐이다 — 이 파일에도, 다른 어떤 문서에도 숫자를 적지 않는다.
-# 이 디렉터리를 실제로 쓰게 되는 경우(예: Argo CD 부가 리소스 분리)에는 `platform-argocd` 의 source 를 함께 옮겨야 한다.
+# 이 디렉터리를 실제로 쓰게 되는 경우(예: Argo CD 부가 리소스 분리)에는 계약(§validate.yml 6)을 먼저 고친다 — 7.1 · 7.5 와
+#   `platform-argocd` 의 source 를 함께 바꾸는 계약 변경이다. 이 파일과 platform-argocd.yaml 은 승인 관문 밖이라(계약 §validate.yml 8),
+#   이 둘을 묶는 검사가 없으면 `../../clusters/oci-k3s/projects` 나 AppProject patch 로 dev/prod 경계를 승인 없이 바꾸는 길이 된다.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources: []

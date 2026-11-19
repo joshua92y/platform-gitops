@@ -1,0 +1,17 @@
+# 긍정 픽스처 — 앱 Application <pod>-prod(T075 · 계약 §Application 규약 syncPolicy 행 「앱 Application의 정확한 꼴」 · validate 14.0):
+#   dev와 같은 꼴이고 project = prod · destination jt-prod · automated {prune: false, selfHeal: true}만 다르다.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: identity-admin-prod
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "100" }
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: prod
+  source: { repoURL: https://github.com/joshua92y/platform-gitops.git, targetRevision: main, path: apps/identity-admin/overlays/prod }
+  destination: { server: https://kubernetes.default.svc, namespace: jt-prod }
+  syncPolicy:
+    automated: { prune: false, selfHeal: true }
+    syncOptions: [ServerSideApply=true]
