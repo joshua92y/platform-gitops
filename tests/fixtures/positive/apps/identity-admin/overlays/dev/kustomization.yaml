@@ -1,4 +1,7 @@
-# 긍정 픽스처 — overlays/dev: namespace jt-dev + images[].digest(태그 금지). base가 이미 vault-dev·dev/ 이므로 패치 없음.
+# 긍정 픽스처 — overlays/dev(T075): namespace jt-dev · images[].digest(태그 금지) · ConfigMap 값(키별 JSON6902 — 계약 §ExternalSecret 규약
+#   「overlay의 ConfigMap 값」: op replace · JT_PLACEHOLDER_EXEMPT만 op add) · m2m Ingress host. base(모노레포 deploy/base 바이트 사본)가 dev 값
+#   (store vault-dev · dev/ 키)이라 ES 패치는 없다. 자리 값은 꼴만 맞는 저엔트로피 값이다 — dev 0… · prod 1…(14.4 dev ≠ prod).
+#   경로 가둠(validate 14.8): 항목은 ../../base 하나뿐이다.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: jt-dev
@@ -7,4 +10,24 @@ resources:
 images:
   - name: ghcr.io/joshua92y/identity-admin
     newName: ghcr.io/joshua92y/identity-admin
-    digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+patches:
+  - target: { kind: ConfigMap, name: identity-admin-config }
+    patch: |-
+      - op: replace
+        path: /data/ACCESS_AUD_M2M
+        value: "0000000000000000000000000000000000000000000000000000000000000000"
+      - op: replace
+        path: /data/ACCESS_EXPECTED_CN
+        value: "00000000000000000000000000000000.access"
+      - op: replace
+        path: /data/ALLOWED_HOSTS
+        value: identity-admin.jt-dev.svc,identity-m2m-dev.joshuatech.dev
+      - op: add
+        path: /data/JT_PLACEHOLDER_EXEMPT
+        value: AUTHENTIK_API_TOKEN,OPENFGA_STORE_ID,OPENFGA_PRESHARED_KEY
+  - target: { kind: Ingress, name: identity-admin }
+    patch: |-
+      - op: replace
+        path: /spec/rules/0/host
+        value: identity-m2m-dev.joshuatech.dev

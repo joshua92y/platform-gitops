@@ -14,6 +14,10 @@
 #   0    TOOL / YAML        도구 존재(fail-closed) · YAML 파싱
 #   1    KUST               모든 kustomization.yaml `kustomize build` + `kubeconform -strict -ignore-missing-schemas` — CRD 스키마 = 저장소 렌더 CRD 파생
 #                           1순위 · datreeio 카탈로그 폴백(T053 · 계약 §validate.yml 1: 렌더의 CustomResourceDefinition → <임시 디렉터리>/<group>/<kind 소문자>_<version>.json)
+#                           (T075 보정 2026-11-18 — 계약 「네트워크 없는 렌더」 · 재검토 G1B-4) apps/** · platform/policies/tests/**의 렌더는 외부 네트워크
+#                           없이 돈다(NONET_*: HTTP(S) 프록시 = 닫힌 로컬 포트 · NO_PROXY 비움 · git 전송 전부 금지(GIT_ALLOW_PROTOCOL=none) · ssh 막음 —
+#                           그 렌더의 서브셸에만).
+#                           원격을 끌어오는 항목이 키 검사를 지나가도 렌더 실패로 떨어진다. platform/** 렌더(helmCharts 차트 pull)에는 걸지 않는다
 #   1b   KUST-plain         (보강) kustomization 밖 매니페스트(clusters/**, bootstrap/root-app.yaml)도 kubeconform(같은 스키마 순서 — 검사 1 뒤에 돈다)
 #   2    APP-SSA            Application마다 syncOptions에 ServerSideApply=true
 #   3.0  ES-apiVersion/store/dataFrom/sourceRef   ExternalSecret 규약 보강(계약 §이름·인증 규약)
@@ -33,6 +37,12 @@
 #                           DROP — Application이 automated + selfHeal이라 그런 PR의 머지가 곧 데이터 삭제다(CRD 기본값도 retain이지만 생략을 허용하면 기본값
 #                           변경·오타가 조용히 통과한다). 대상 0이면 PASS(대상 없음). PASS 줄에 kind별 원본·렌더 수. 의도된 삭제는 계약 행과 이 검사를
 #                           같은 PR에서 고치는 것으로만(리뷰에 드러나게)
+#   3.9  ES-app             (T075 · 계약 §validate.yml 3 「(T075 보정 2026-11-17) 앱 렌더 검사」 — 검사 번호 · 이름의 정본은 설계 design/t075-design.md D9)
+#                           apps/** 의 ExternalSecret(원본 + 렌더): dataFrom · templateFrom(어느 자리든) 금지 · target.template 필수 · mergePolicy Merge 금지 ·
+#                           refreshInterval "5m" · refreshPolicy "Periodic" · target.creationPolicy "Owner"(명시) / overlay 렌더(apps/<pod>/overlays/<env>)의
+#                           ExternalSecret마다 pod 표(APP_ES_TABLE): 이름 ∈ {<pod>-env, <pod>-migrate} · secretStoreRef = {ClusterSecretStore, vault-<env>} ·
+#                           data[] = 표(순서 · 개수 · secretKey · remoteRef.key · property) · 항목 키 = {secretKey, remoteRef} · remoteRef 키 = {key, property} ·
+#                           target.template = 같은 트리 apps/<pod>/base 렌더의 같은 이름 ES의 것(키 · 값 글자 그대로 — base에 없으면 FAIL). 표에 없는 pod는 14.2가 건다
 #   4a   IMG-newTag         kustomization images[].newTag 금지(digest 형식도 검사)
 #   4a   IMG-name           (T047 · 계약 §이미지·승격 「항목마다 name과 digest」) images 항목마다 name — 없음 · 빈 값 · 문자열이 아님이면 FAIL
 #   4a   IMG-digest         images 항목마다 digest — 없음 · 빈 값(null · "")이면 FAIL. 형식 오류는 IMG-newTag가 찍으므로 다시 찍지 않는다 —
@@ -74,6 +84,8 @@
 #                           ruleset — .github/ruleset-branches.json — 이 막는다). 봇이 push한 뒤 사람이 그 위에 다시 push하면 새 이벤트의
 #                           발신자는 사람이다(사람이 봇의 커밋을 받아서 올린 것으로 본다)
 #   7.1  WAVE               Application sync-wave = §sync-wave 단일 표(이름·경로 규약 포함) · 예외 platform-tests ↔ platform/policies/tests(T059)
+#                           · platform-argocd의 source.path = bootstrap/argocd 하나(T075 · 계약 §validate.yml 6 「Argo CD 자기 관리 경로」 — 이전에는
+#                           platform/argocd도 받았다: 관문 밖 두 파일만 바꿔 AppProject · Argo CD 본체를 바꾸는 길)
 #   7.2  WAVE-dir           표에 없는 platform/<component>/ 디렉터리 금지 · platform/tests/ 금지(표의 tests 행 = platform/policies/tests · T059 r1)
 #   7.3  WAVE-secrets-base  secrets/<ns>의 단일 소유·배달: (a) `secrets/` 아래와 배달자 자신(platform/secrets)을 base로
 #                           가질 수 있는 kustomization은 platform/secrets/kustomization.yaml 하나뿐(절대·저장소 밖 경로는
@@ -90,6 +102,9 @@
 #                           · --root 트리(tests/·charts/ 제외)에
 #                           `.argocd-source.yaml`·`.argocd-source-*.yaml` 파일 금지(7.4 APP-source-file).
 #                           대상 = 7.1과 같은 파일 열거(clusters/**·bootstrap/root-app.yaml 등 모든 Application) + kustomize 렌더
+#   7.5  WAVE-argocd-placeholder  (T075 · 계약 §validate.yml 6 「Argo CD 자기 관리 경로」) platform/argocd의 kustomization = 자리표시: 최상위 키 정확히
+#                           {apiVersion, kind, resources} · resources = []. 파일이 없으면 대상 없음. 7.1과 함께 platform-argocd · platform/argocd(둘 다
+#                           승인 관문 밖)만 바꿔 AppProject · Argo CD 본체를 바꾸는 길을 닫는다(같은 PR에서 검사 코드를 고치는 길은 남는다 — 계약 §validate.yml 8)
 #   8    LEAK               gitleaks 파일 스캔 — 스캔 대상 0개(빈 트리)면 FAIL
 #   9.1  CSS-set            ClusterSecretStore 이름 집합 = 계약 5개 · 위치 platform/secret-stores/ · metadata.namespace 금지
 #   9.2  CSS-auth           vault provider: serviceAccountRef.namespace(referent auth 금지)·audiences·mountPath·server/path/version
@@ -138,6 +153,19 @@
 #                           렌더된다): ① 작업 트리의 링크(find -type l — 파일 · 디렉터리 · 깨진 링크)마다 FAIL(트리를 다 훑지 못하면 fail-closed)
 #                           ② --root가 git 작업 트리 안이면 인덱스(git ls-files -s)의 모드 120000마다 FAIL(Windows 체크아웃 core.symlinks=false는 링크를
 #                           일반 파일로 푼다). git이 없거나 작업 트리가 아니거나 읽지 못하면 그 사실을 한 줄로 적고 ①로만 판정(①은 항상 돈다 · yq 없이 돈다)
+#   11.6 FMT-dirsource-files (T075 보정 2026-11-18) clusters/oci-k3s/apps/(root Application의 directory source — APP_APPS_DIR) 바로 아래 항목 =
+#                           *.yaml · *.yml 파일과 README.md만: kustomization 파일(세 이름 · 대소문자 무관 — 하나라도 있으면 Argo가 이 디렉터리를
+#                           kustomize로 렌더한다) · 다른 확장자(.json · .jsonnet · .txt …) · 하위 디렉터리 · 일반 파일이 아닌 항목 FAIL(11.3이
+#                           directory source로 판정하지 않아도 늘 본다)
+#   11.7 FMT-kust-keys      (T075 보정 2026-11-18 · 계약 §validate.yml 3 「표 밖 새 검사 셋」 — 번호 정정: 처음 적은 11.5는 위 FMT-symlink와 겹쳤다)
+#                           모든 kustomization 파일(세 이름 — KUST_FILES)의 최상위 키: ① ASCII 밖 글자 ② ASCII 소문자로 접으면 정본(KUST_FIELDS)과
+#                           같은데 철자가 다름(Components · RESOURCES) ③ 정본 밖 ④ 중복 키 · 앵커 · 별칭 · 병합 키(<<) · 명시 태그(문서 어디든) · 맵이
+#                           아닌 문서 FAIL. kustomize 5.8.1은 이 파일을 sigs.k8s.io/yaml → encoding/json(DisallowUnknownFields)으로 읽어 필드 이름을
+#                           대소문자 무시 · 유니코드 단순 접기(ſ → s · 켈빈 K → k)로 맞추고 중복 키는 뒤의 것이 이긴다 — 소문자 필드만 골라 읽는
+#                           검사(7.3 · 12.x · 14.8)를 비켜 가는 길을 키 열거로 닫는다. (재검토 G1B-4) 중첩: 경로를 받는 구조체 항목(KUST_NESTED —
+#                           patches[] · patchesJson6902[] · replacements[] · configMapGenerator[] · secretGenerator[] · helmCharts[] · helmGlobals · openapi)의
+#                           직속 키도 ① ASCII 밖 글자 ② 그 구조체 정본 필드(5.8.1 소스)와 대소문자만 다름 ③ 같은 항목 안의 중복(접기 전 · 뒤) FAIL —
+#                           kustomize는 중첩 구조체 필드도 같은 방식으로 접어 받는다(patches: [{Path: <URL>}]가 원격 내용을 렌더에 넣었다)
 #   12   HELM              (T047 · 계약 §validate.yml 4 「(T047) 차트 저장소 허용 목록」·「charts/」·「--enable-helm」)
 #   12.1 HELM-repo          helmCharts[] 항목마다 (name, repo) = HELM_CHART_TABLE의 한 행(글자 단위 정확 일치 — 대소문자·끝의 '/' 포함) ·
 #                           name·repo 필수(repo 없는 로컬 차트 금지). 대상 = 모든 kustomization + 그것들이 base로 끌어오는 로컬
@@ -172,6 +200,61 @@
 #   13.0 RBAC-render        fail-closed: yq 추출 실패 · 추출 행의 모양 이상 · 렌더가 없는 kustomization(빌드 실패·건너뜀 — 합친 집합이 불완전) — 그룹 PASS
 #                           줄을 찍지 않는다. "기준선의 것이 있는가"(완전성)는 --root가 저장소 루트일 때만 보고(13.0이 나면 보지 않는다), 부분 트리에
 #                           RBAC 객체가 없으면 대상 없음
+#   13.7 RBAC-appproject    (T075 · 계약 §validate.yml 4 「AppProject」) kind AppProject(argoproj.io/…)는 clusters/oci-k3s/projects 렌더와 그것을 base로
+#                           포함하는 bootstrap/argocd 렌더(와 그 두 디렉터리의 원본 파일)에만 — 그 밖의 파일 · 렌더는 FAIL. 그 두 렌더의 dev · prod =
+#                           namespaceResourceWhitelist 정확히 APP_KIND_WHITELIST 8종(group 포함 · 순서 무관 · 중복 금지) · namespaceResourceBlacklist ⊇
+#                           APP_PROJ_BLACKLIST 6종 · destinations 정확히 하나 {server, namespace jt-<env>}(name 금지) · clusterResourceWhitelist []. 부분 트리에서도
+#                           그대로 본다(13의 「완전성은 저장소 루트에서만」의 예외 — 계약 S-2). AppProject가 없으면 대상 없음. 렌더가 빠진 kustomization이
+#                           있으면(13.0) 그룹 PASS 줄을 찍지 않는다
+#   14   APP                (T075 · 계약 §validate.yml 3 「(T075 보정 2026-11-17) 앱 렌더 검사 — 3.9 · 14.0–14.8」 — pod 표 = APP_POD_TABLE과 딸린 표들.
+#                           검사 번호 · 이름 · FAIL 조건의 정본은 설계 D9와 그 계약 줄이고 아래는 요약이다). overlay 렌더 = apps/<pod>/overlays/<env>의
+#                           kustomize 렌더. 대상 없음 규칙은 14.2 · 14.4에만 — 그 overlay 렌더에 pod 템플릿 객체(Deployment · Job · CronJob · Pod ·
+#                           StatefulSet · DaemonSet)가 0개면 대상 0 PASS(PASS 줄에 적는다). 나머지는 있는 객체에 늘 적용한다
+#   14.0 APP-app            clusters/oci-k3s/apps/ 바로 아래 *.yaml · *.yml 파일마다 문서 정확히 1개(빈 문서 제외) · kind Application · metadata.name = 파일
+#                           이름(승인 관문이 파일 이름으로 prod Application을 알아본다) / 이름 ^(.+)-(dev|prod)$ Application: metadata.namespace argocd · project =
+#                           env · destination = {server, namespace jt-<env>}(name 금지) · spec 키 = {destination, project, source, syncPolicy} · syncPolicy =
+#                           APP_SYNC_<ENV>(그 밖의 키 · managedNamespaceMetadata · CreateNamespace · retry 금지) · finalizers = APP_FINALIZERS · source.path 렌더의
+#                           namespaced 객체 ns = jt-<env> · cluster 범위 객체 0(kind 표 = APP_CLUSTER_KINDS + 저장소 렌더 CRD의 spec.scope: Cluster — ns로 판정하지 않는다)
+#                           / (T075 보정 2026-11-18) 이름과 무관하게 모든 Application 문서: spec.project ∈ {dev, prod}이면 이름 = ^(.+)-<project>$
+#   14.1 APP-env            overlay 렌더의 모든 pod 템플릿 컨테이너(init 포함): ① 실효 env 이름(env[] ∪ envFrom 접두 + ConfigMap · ES target 키)이 금지 목록
+#                           (APP_ENV_FORBIDDEN · 접두 PG · 접미 _PROXY · 대소문자 무시) ② envFrom · valueFrom이 같은 렌더 밖 ConfigMap · Secret(fieldRef ·
+#                           resourceFieldRef 예외 · 그 밖의 valueFrom 금지) ③ Secret <pod>-migrate 참조(envFrom · secretKeyRef · volumes secret · projected)가
+#                           PreSync hook Job <pod>-migrate 밖 ④ (pod 표) envFrom ≠ 표(Job <pod>-migrate 안 = [Secret <pod>-migrate] · 밖 = [ConfigMap <pod>-config,
+#                           Secret <pod>-env]) · env[] 이름 ∉ APP_ENV_TABLE(표에 없는 (워크로드, 컨테이너)는 ∅) · env[] 이름이 ConfigMap · ES template.data 키와
+#                           겹침 · ConfigMap 키가 ES template.data 키와 겹침
+#   14.2 APP-cm             (대상 없음 규칙) ConfigMap = 정확히 <pod>-config 하나 · 키 집합 = APP_CM_TABLE · 값에 PLACEHOLDER- · ENV ≠ env · ALLOWED_HOSTS
+#                           원소에 * · .로 시작 · <pod>.jt-<env>.svc 없음 · KAFKA_USERNAME ≠ (dev-)<pod> · dev의 ADMIN_HOST · FORCE_SCRIPT_NAME 빈 값 아님 ·
+#                           ACCESS_AUD_* ∉ ^$|^[0-9a-f]{64}$ · ACCESS_EXPECTED_CN ∉ ^[0-9a-f]{32}\.access$ · 문자열 아닌 값. 표에 없는 pod(또는 env)의 overlay
+#                           렌더가 객체를 하나라도 가지면 FAIL(새 pod는 계약 pod 표에 행을 더하는 계약 변경으로 시작한다)
+#   14.3 APP-ingress        overlay 렌더의 Ingress · Middleware: 이름 분류(m2m <pod> · admin <pod>-admin — prod · has_admin만) · ingressClassName traefik ·
+#                           router.entrypoints websecure · router.tls "true" · backend = Service <pod> 포트 http · host 없는 rule · spec.defaultBackend · spec.tls ·
+#                           router.tls.options · router.priority 금지 · host ⊆ ConfigMap ALLOWED_HOSTS / m2m host = <별칭>-m2m-<env>.joshuatech.dev · 경로 집합 =
+#                           APP_M2M_PATHS / admin host admin.joshuatech.dev · 경로 ⊆ {/<pod>/admin, /<pod>/static}(Prefix) · router.middlewares =
+#                           jt-prod-<pod>-strip@kubernetescrd · 같은 렌더의 Middleware <pod>-strip / Middleware 이름 <pod>-strip · prod만 · 하나 · spec 키
+#                           {stripPrefix} · prefixes [/<pod>]
+#   14.4 APP-values         (대상 없음 규칙) ConfigMap 값 = APP_CM_TABLE의 env별 값(`=` 글자 그대로 · `~aud` · `~cn` 꼴 · `@` 원소 집합) · JT_PLACEHOLDER_EXEMPT
+#                           원소 ⊆ APP_EXEMPT_MAX · 두 overlay가 모두 렌더될 때 ACCESS_AUD_M2M · ACCESS_EXPECTED_CN의 dev = prod(같은 값 복사) FAIL
+#   14.5 APP-hook           apps/** · platform/policies/tests/**(원본 + 렌더): helm.sh/hook으로 시작하는 어노테이션 키 금지 · argocd.argoproj.io/hook의 쉼표
+#                           토큰(공백 제거) 집합 = 정확히 {PreSync} · PreSync는 ExternalSecret · Job <pod>-migrate만 · tests 경로의 hook 금지(허용 0)
+#   14.6 APP-image          overlay 렌더의 모든 pod 템플릿 컨테이너(init 포함) image = 정확히 ghcr.io/joshua92y/<pod>@sha256:<64 hex>
+#   14.7 APP-kinds          overlay 렌더의 객체 kind(group 포함) ∈ APP_KIND_WHITELIST · kind Secret 금지 · Service type ClusterIP(빈 값 포함)만 · externalIPs ·
+#                           loadBalancerIP · nodePort 금지
+#   14.8 APP-remote         apps/** · platform/policies/tests/**의 모든 kustomization(원본) 경로 항목(resources · components · bases · crds · generators ·
+#                           transformers · validators · configurations · patchesStrategicMerge · patches/patchesJson6902/replacements[].path ·
+#                           configMapGenerator/secretGenerator[].files · .envs · .env · openapi.path): ① kustomize 5.8.1이 원격으로 읽는 꼴(git:: · ssh/https/
+#                           http/file:// · <user>@ · github.com/ · github.com: — 대소문자 무시 — 와 :// · git@ · 절대 경로) ② 역슬래시 · 제어 문자 ③ 저장소
+#                           안의 실재 경로가 아님(원격 꼴 열거에 기대지 않는다 — T075 보정 2026-11-18) ④ 인라인 generator · transformer · validator
+#                           (항목 문자열을 YAML로 읽어 스칼라가 아니면 — 줄바꿈 여부로 가르지 않는다) FAIL. 인라인 patchesStrategicMerge(맵)는 경로가
+#                           아니다 / apps/** — 경로 가둠: apps/<pod>/ 밖 금지 · overlay(apps/<pod>/overlays/<env>) 항목 = 같은 디렉터리의 파일 또는 정확히
+#                           ../../base · base 항목 = 같은 디렉터리의 파일(둘 다 하위 디렉터리 금지) · helmCharts · secretGenerator 금지 /
+#                           platform/policies/tests/** — (T075 보정 2026-11-18 · 재검토 G1A-8) 최상위 키 ⊆ APP_TESTS_KUST_KEYS · resources[] 문자열 ·
+#                           그 밖 자리의 맵 · 목록 금지(같은 디렉터리 transformer 설정 파일 안의 path · helmCharts[].valuesFile · 중첩 철자 변형이 원격을
+#                           끌어왔다 — 그 자리를 없앤다) · (마지막 재검토 G1B-6) 항목 = 같은 디렉터리의 파일(하위 디렉터리 · 디렉터리 항목 · 그 밖으로
+#                           풀리는 항목 FAIL — 디렉터리 항목은 KUST_FILES가 열지 않는 루트 tests/ 아래 kustomization을 끌어올 수 있었다)
+#   14.9 APP-kust-keys      (T075 보정 2026-11-18) apps/<pod>/base의 kustomization 최상위 키 = 정확히 APP_KUST_BASE_KEYS · apps/<pod>/overlays/<env>의 것 ⊆
+#                           APP_KUST_OVERLAY_KEYS(dev 뼈대는 images만일 수 있다 — 세 이름 모두 · 키 글자 그대로 비교) · (재검토 G1B-4) 모든 깊이:
+#                           resources[] 문자열 · images[] 키 ⊆ APP_KUST_IMAGE_KEYS · patches[] 키 ⊆ APP_KUST_PATCH_KEYS(인라인 패치만 — 경로를 받는
+#                           중첩 자리를 앱에서 없앤다) · patches[].target 키 ⊆ APP_KUST_TARGET_KEYS · 그 밖 자리의 맵 · 목록 · 같은 맵의 중복 키 FAIL
 #
 # 입력(환경변수 또는 인자):
 #   --root <dir>            | VALIDATE_ROOT        검사 대상 트리(기본: 저장소 루트). 저장소 밖은 거부
@@ -538,6 +621,156 @@ external-secrets-view
 #   계약이 정본, 이 줄이 유일한 코드 사본이다(메시지의 목록도 여기서 만든다). yq가 env()로 읽으므로 JSON 목록으로 export한다(YQ_IMAGES의 E 행)
 export IMG_ENTRY_KEYS='["name","newName","digest"]'
 
+# 검사 3.9 · 7.5 · 13.7 · 14(T075) — 계약 §validate.yml 3 「(T075 보정 2026-11-17) 앱 렌더 검사 — 3.9 · 14.0–14.8」의 pod 표와 딸린 세 표 · 금지 env
+#   목록, §Application 규약 AppProject 행(dev/prod 허용 · 금지 목록)과 syncPolicy 행(앱 Application의 정확한 꼴), §validate.yml 6 「Argo CD 자기 관리
+#   경로」의 코드 사본이다. 계약이 정본이고 이 블록이 유일한 코드 사본이다(README · 주석의 목록은 설명이지 대조 기준이 아니다). 검사 번호 · 이름의
+#   정본은 설계 design/t075-design.md D9다. 새 pod는 계약 pod 표에 행을 더하는 계약 변경으로 시작하고 아래 표들에 같은 행을 더한다(표에 없는 pod의
+#   overlay 렌더는 객체가 하나라도 있으면 14.2 FAIL).
+# pod 표: <pod> <별칭 — m2m 호스트 <별칭>-m2m-<env>.joshuatech.dev> <has_admin(yes|no)>
+APP_POD_TABLE='
+identity-admin identity yes
+'
+# m2m Ingress 경로(14.3 — 경로 · pathType 집합 정확 일치): <pod> <경로> <pathType>
+APP_M2M_PATHS='
+identity-admin /health Exact
+identity-admin /api Prefix
+identity-admin /session Prefix
+identity-admin /sessions Prefix
+identity-admin /tenants Prefix
+'
+# 면제 상한(14.4 — ConfigMap JT_PLACEHOLDER_EXEMPT의 원소 ⊆ 이 집합 · 코드 상수): <pod> <쉼표 목록>
+APP_EXEMPT_MAX='
+identity-admin AUTHENTIK_API_TOKEN,OPENFGA_STORE_ID,OPENFGA_PRESHARED_KEY
+'
+# ConfigMap <pod>-config(14.2 키 집합 정확 일치 · 14.4 env별 값): <pod> <키> <dev 값> <prod 값>. 값 표기 — `=<글자>`: 글자 그대로(`=`만이면 빈 값) ·
+#   `~aud`: 빈 값 아님 + ^[0-9a-f]{64}$ · `~cn`: 빈 값 아님 + ^[0-9a-f]{32}\.access$ · `@<쉼표 목록>`: 원소 집합(쉼표로 나눈다 — ALLOWED_HOSTS)
+APP_CM_TABLE='
+identity-admin ACCESS_AUD_ADMIN = ~aud
+identity-admin ACCESS_AUD_M2M ~aud ~aud
+identity-admin ACCESS_EXPECTED_CN ~cn ~cn
+identity-admin ACCESS_TEAM_DOMAIN =joshua-tech.cloudflareaccess.com =joshua-tech.cloudflareaccess.com
+identity-admin ADMIN_HOST = =admin.joshuatech.dev
+identity-admin ALLOWED_HOSTS @identity-admin.jt-dev.svc,identity-m2m-dev.joshuatech.dev @identity-admin.jt-prod.svc,identity-m2m-prod.joshuatech.dev,admin.joshuatech.dev
+identity-admin AUTH_ACTOR_SUB = =
+identity-admin AUTHENTIK_AUDIENCE =identity-admin =identity-admin
+identity-admin AUTHENTIK_WRITES_ENABLED =false =true
+identity-admin ENV =dev =prod
+identity-admin FORCE_SCRIPT_NAME = =/identity-admin
+identity-admin JT_PLACEHOLDER_EXEMPT =AUTHENTIK_API_TOKEN,OPENFGA_STORE_ID,OPENFGA_PRESHARED_KEY =AUTHENTIK_API_TOKEN,OPENFGA_STORE_ID,OPENFGA_PRESHARED_KEY
+identity-admin KAFKA_BOOTSTRAP =jt-kafka-kafka-bootstrap.data.svc:9093 =jt-kafka-kafka-bootstrap.data.svc:9093
+identity-admin KAFKA_USERNAME =dev-identity-admin =identity-admin
+identity-admin OTEL_EXPORTER_OTLP_ENDPOINT = =
+identity-admin OTEL_TRACES_SAMPLER =parentbased_traceidratio =parentbased_traceidratio
+identity-admin OTEL_TRACES_SAMPLER_ARG =0.1 =0.1
+'
+# ExternalSecret data[](3.9 — 순서 · 개수 · secretKey · remoteRef.key · property 정확 일치): <pod> <ES 접미(env|migrate)> <secretKey> <dev key> <prod key>
+#   <property>. 같은 ES 안에서 행 순서가 data[] 순번이다(새 항목은 끝에만 — base의 순번이 overlay 인덱스 패치의 인터페이스다)
+APP_ES_TABLE='
+identity-admin env db_username dev/db/dev_identity_admin/app prod/db/identity_admin/app username
+identity-admin env db_password dev/db/dev_identity_admin/app prod/db/identity_admin/app password
+identity-admin env kafka_password dev/kafka/identity-admin prod/kafka/identity-admin password
+identity-admin env dragonfly_url dev/dragonfly/identity-admin prod/dragonfly/identity-admin url
+identity-admin env authentik_issuer dev/authentik/identity-admin prod/authentik/identity-admin issuer
+identity-admin env authentik_jwks_url dev/authentik/identity-admin prod/authentik/identity-admin jwks_url
+identity-admin env sentry_dsn dev/sentry/identity-admin prod/sentry/identity-admin dsn
+identity-admin env secret_key dev/django/identity-admin prod/django/identity-admin secret_key
+identity-admin env authentik_api_token dev/authentik/identity-admin prod/authentik/identity-admin api_token
+identity-admin env authentik_webhook_secret dev/authentik/webhooks/identity-admin prod/authentik/webhooks/identity-admin secret
+identity-admin env openfga_store_id dev/openfga/store_id prod/openfga/store_id store_id
+identity-admin env openfga_preshared_key dev/openfga/preshared prod/openfga/preshared key
+identity-admin migrate db_username dev/db/dev_identity_admin/owner prod/db/identity_admin/owner username
+identity-admin migrate db_password dev/db/dev_identity_admin/owner prod/db/identity_admin/owner password
+'
+# 컨테이너 env[] 이름(14.1 ④ — 이름 ⊆ 이 집합): <pod> <워크로드 kind> <워크로드 이름> <컨테이너> <이름 쉼표 목록>. 표에 없는 (워크로드, 컨테이너)의
+#   집합은 ∅이다(사이드카 · 새 CronJob · migrate Job 안의 다른 컨테이너가 env[]를 가지면 FAIL). envFrom 표는 규칙이라 코드에 둔다(check_14_1_env)
+APP_ENV_TABLE='
+identity-admin Deployment identity-admin startup-check POD_NAMESPACE
+identity-admin Deployment identity-admin web POD_IP,POD_NAMESPACE
+identity-admin Deployment identity-admin relay POD_NAMESPACE
+identity-admin Deployment identity-admin-celery celery POD_NAMESPACE
+identity-admin Job identity-admin-migrate migrate JT_SETTINGS_PROFILE
+'
+# 금지 env(14.1 ① — 대소문자 무시): 템플릿 templates/django-pod/tests/_render.py의 FORBIDDEN_ENV_NAMES(+ 접두 PG · 접미 _PROXY) + FORWARDED_ALLOW_IPS ·
+#   SCRIPT_NAME(두 목록이 갈라진다 — 템플릿 쪽에 두 이름을 더하는 것은 T116 후보 · 계약 C4)
+APP_ENV_FORBIDDEN='NETRC SSLKEYLOGFILE HTTP_PROXY HTTPS_PROXY ALL_PROXY CLIENT_CERT_FILE CLIENT_KEY_FILE SSL_CERT_FILE SSL_CERT_DIR REQUESTS_CA_BUNDLE
+CURL_CA_BUNDLE SENTRY_PRINT_ENVELOPES PYTHONOPTIMIZE PYTHONINSPECT PYTHONSTARTUP PYTHONPATH PROMETHEUS_MULTIPROC_DIR CELERY_BROKER_URL
+CELERY_BROKER_READ_URL CELERY_BROKER_WRITE_URL CELERY_RESULT_BACKEND GUNICORN_CMD_ARGS FORWARDED_ALLOW_IPS SCRIPT_NAME'
+APP_ENV_FORBIDDEN_PREFIX='PG'
+APP_ENV_FORBIDDEN_SUFFIX='_PROXY'
+# AppProject dev/prod(13.7) · 앱 렌더 kind(14.7): namespaceResourceWhitelist = 정확히 이 8종(<group>/<kind> — core group은 빈 글자) ·
+#   namespaceResourceBlacklist ⊇ 이 6종(계약 §Application 규약 AppProject 행)
+APP_KIND_WHITELIST='/ConfigMap /Service apps/Deployment batch/Job batch/CronJob networking.k8s.io/Ingress external-secrets.io/ExternalSecret traefik.io/Middleware'
+APP_PROJ_BLACKLIST='networking.k8s.io/NetworkPolicy /ResourceQuota /LimitRange /ServiceAccount rbac.authorization.k8s.io/Role rbac.authorization.k8s.io/RoleBinding'
+APP_PROJ_DIRS='clusters/oci-k3s/projects bootstrap/argocd'   # 13.7 — AppProject가 나와도 되는 렌더(와 그 원본 디렉터리)
+APP_DEST_SERVER='https://kubernetes.default.svc'
+# 앱 Application(14.0 — 계약 §Application 규약 syncPolicy 행 「앱 Application의 정확한 꼴」): 파일 자리 · spec 키(정렬) · finalizers · syncPolicy(env별 —
+#   yq sort_keys(..) | to_json(0)의 모양)
+APP_APPS_DIR='clusters/oci-k3s/apps'
+APP_SPEC_KEYS='destination,project,source,syncPolicy'
+APP_FINALIZERS='["resources-finalizer.argocd.argoproj.io"]'
+APP_SYNC_DEV='{"automated":{"prune":true,"selfHeal":true},"syncOptions":["ServerSideApply=true"]}'
+APP_SYNC_PROD='{"automated":{"prune":false,"selfHeal":true},"syncOptions":["ServerSideApply=true"]}'
+# 14.0 — cluster 범위 내장 kind(<group>/<kind>). 저장소 렌더 CRD의 spec.scope: Cluster는 실행 때 더한다(ap_ckinds). ns로는 판정하지 않는다 —
+#   kustomize namespace 변환이 모르는 kind에도 metadata.namespace를 찍는다(계약 14.0 행)
+APP_CLUSTER_KINDS='/Namespace /Node /PersistentVolume /ComponentStatus apiextensions.k8s.io/CustomResourceDefinition apiregistration.k8s.io/APIService
+admissionregistration.k8s.io/MutatingWebhookConfiguration admissionregistration.k8s.io/ValidatingWebhookConfiguration
+admissionregistration.k8s.io/ValidatingAdmissionPolicy admissionregistration.k8s.io/ValidatingAdmissionPolicyBinding
+admissionregistration.k8s.io/MutatingAdmissionPolicy admissionregistration.k8s.io/MutatingAdmissionPolicyBinding
+rbac.authorization.k8s.io/ClusterRole rbac.authorization.k8s.io/ClusterRoleBinding storage.k8s.io/StorageClass storage.k8s.io/CSIDriver
+storage.k8s.io/CSINode storage.k8s.io/VolumeAttachment storage.k8s.io/VolumeAttributesClass scheduling.k8s.io/PriorityClass node.k8s.io/RuntimeClass
+networking.k8s.io/IngressClass networking.k8s.io/IPAddress networking.k8s.io/ServiceCIDR certificates.k8s.io/CertificateSigningRequest
+certificates.k8s.io/ClusterTrustBundle flowcontrol.apiserver.k8s.io/FlowSchema flowcontrol.apiserver.k8s.io/PriorityLevelConfiguration
+authentication.k8s.io/TokenReview authentication.k8s.io/SelfSubjectReview authorization.k8s.io/SubjectAccessReview
+authorization.k8s.io/SelfSubjectAccessReview authorization.k8s.io/SelfSubjectRulesReview internal.apiserver.k8s.io/StorageVersion
+storagemigration.k8s.io/StorageVersionMigration resource.k8s.io/DeviceClass resource.k8s.io/ResourceSlice policy/PodSecurityPolicy'
+# 7.1 · 7.5 — Argo CD 자기 관리 경로: platform-argocd의 source.path · 자리표시 디렉터리(계약 §validate.yml 6)
+ARGOCD_SELF_PATH='bootstrap/argocd'
+ARGOCD_PLACEHOLDER_DIR='platform/argocd'
+# 14.2 · 14.4 · 14.6 값 꼴(yq to_json(0)이 낸 JSON 문자열과 대조한다 — 따옴표 포함)
+RE_AP_AUD='^"([0-9a-f]{64})?"$'
+RE_AP_AUD_SET='^"[0-9a-f]{64}"$'
+RE_AP_CN='^"[0-9a-f]{32}\.access"$'
+RE_AP_IMG='^"ghcr\.io/joshua92y/([a-z0-9][a-z0-9.-]*)@sha256:[0-9a-f]{64}"$'
+
+# 11.7 FMT-kust-keys — kustomization 최상위 키의 정본 철자(kustomize 5.8.1 api/types/kustomization.go의 Kustomization 구조체 JSON 태그 + 인라인
+#   TypeMeta(api/types/typemeta.go)의 kind · apiVersion). 출처: https://raw.githubusercontent.com/kubernetes-sigs/kustomize/kustomize/v5.8.1/api/types/
+#   kustomization.go · typemeta.go(2026-11-18 GET으로 읽음 — 필드 32 + TypeMeta 2). Unmarshal은 sigs.k8s.io/yaml.YAMLToJSON → encoding/json
+#   (DisallowUnknownFields)이다: 필드 이름을 대소문자 무시 · 유니코드 단순 접기로 맞추고, 같은 이름(접어서 같은 것 포함)이 둘이면 뒤의 것이 이긴다.
+#   kustomize를 올리면 이 목록을 그 판의 소스로 다시 정한다(새 필드는 정본 밖 FAIL로 드러난다).
+KUST_FIELDS='apiVersion kind metadata openapi namePrefix nameSuffix namespace commonLabels labels commonAnnotations patchesStrategicMerge
+patchesJson6902 patches images imageTags replacements replicas vars sortOptions resources components crds bases configMapGenerator secretGenerator
+helmGlobals helmCharts helmChartInflationGenerator generatorOptions configurations generators transformers validators buildMetadata'
+# 11.7 중첩(재검토 G1B-4 · 계약 11.7 끝 「중첩」) — 경로를 받는 구조체 항목의 정본 필드(직속 키). 출처: 위 v5.8.1 api/types/의 JSON 태그(2026-11-18 GET) —
+#   json:",inline"인 끼운 구조체는 encoding/json이 필드를 펼쳐 받는다(그래서 펼친 이름을 적는다):
+#   patch.go            Patch{path, patch, target, options}                                → patches[] · patchesJson6902[](둘 다 []Patch — kustomization.go)
+#   replacementfield.go ReplacementField{inline Replacement, path} · replacement.go Replacement{source, targets, sourceValue} → replacements[]
+#   configmapargs.go    ConfigMapArgs{inline GeneratorArgs} · generatorargs.go GeneratorArgs{namespace, name, behavior, inline KvPairSources, options}
+#                       · kvpairsources.go KvPairSources{literals, files, envs, env}                        → configMapGenerator[]
+#   secretargs.go       SecretArgs{inline GeneratorArgs, type}                                              → secretGenerator[]
+#   helmchartargs.go    HelmChart{name, version, repo, releaseName, namespace, additionalValuesFiles, valuesFile, valuesInline, valuesMerge,
+#                       includeCRDs, skipHooks, apiVersions, kubeVersion, nameTemplate, skipTests, debug, devel} → helmCharts[] ·
+#                       HelmGlobals{chartHome, configHome} → helmGlobals
+#   kustomization.go    OpenAPI map[string]string — 임의 키 맵이지만 kustomize가 읽는 키는 path 하나다(internal/target/kusttarget.go OpenAPI["path"] —
+#                       글자 그대로 찾는다) → openapi(계약이 고른 자리 — 철자 변형 · 비ASCII · 중복을 같은 규칙으로 막는다)
+#   임의 키 맵(commonLabels · commonAnnotations · labels[].pairs · *.options.labels/annotations · generatorOptions · helmCharts[].valuesInline)과
+#   하위 구조체(target = Selector · options = PatchArgs · GeneratorOptions)의 키는 보지 않는다 — 직속 키만(계약). kustomize를 올리면 다시 정한다
+KUST_NESTED_PATCH='path patch target options'
+KUST_NESTED_GEN='namespace name behavior literals files envs env options'
+declare -A KUST_NESTED=([patches]=$KUST_NESTED_PATCH [patchesjson6902]=$KUST_NESTED_PATCH [replacements]='path source targets sourceValue'
+  [configmapgenerator]=$KUST_NESTED_GEN [secretgenerator]="$KUST_NESTED_GEN type"
+  [helmcharts]='name version repo releaseName namespace additionalValuesFiles valuesFile valuesInline valuesMerge includeCRDs skipHooks apiVersions kubeVersion nameTemplate skipTests debug devel'
+  [helmglobals]='chartHome configHome' [openapi]='path')
+declare -A KUST_NESTED_TYPE=([patches]=Patch [patchesjson6902]=Patch [replacements]=ReplacementField [configmapgenerator]=ConfigMapArgs
+  [secretgenerator]=SecretArgs [helmcharts]=HelmChart [helmglobals]=HelmGlobals [openapi]=openapi)
+# 14.9 APP-kust-keys — 앱 kustomization 키(계약 §validate.yml 3 「표 밖 새 검사 셋」 14.9 — 새 키는 그 줄을 먼저 고친다 · 철자 정확히)
+APP_KUST_BASE_KEYS='apiVersion kind resources'                            # base = 정확히 이 셋
+APP_KUST_OVERLAY_KEYS='apiVersion kind namespace resources images patches'  # overlay ⊆ 이 여섯
+APP_KUST_IMAGE_KEYS='name newName digest'                                 # images[] 항목 ⊆(재검토 G1B-4 — 4a IMG-entry와 같은 집합 · newTag 없음)
+APP_KUST_PATCH_KEYS='target patch'                                        # patches[] 항목 ⊆(인라인 패치만 — path · options 없음)
+APP_KUST_TARGET_KEYS='group version kind name namespace labelSelector annotationSelector'   # patches[].target ⊆(Selector — selector.go · resid)
+# 14.8 APP-remote(tests 범위 — 재검토 G1A-8 · 계약 14.8 행 tests 문장): platform/policies/tests/** kustomization 최상위 키 ⊆ 이 넷 · resources[] 문자열
+APP_TESTS_KUST_KEYS='apiVersion kind namespace resources'
+
 # ExternalSecret 규약 정규식(계약 §validate.yml ExternalSecret 검사)
 RE_KEY='^(platform|dev|prod)/[a-z0-9_./-]+$'
 RE_WORKERS='^(dev|prod)/(access|web)/'
@@ -813,6 +1046,73 @@ YQ_RBAC_TOKEN_RULE='((((((.apiGroups | select(kind == "seq")) // []) | map(. // 
 #   출발한다. has()는 그 키를 traverse하기 전에 바인딩한다(없는 경로를 traverse하면 키가 생긴다 — YQ_CSS 주석).
 # shellcheck disable=SC2016  # $kk·$k·$ns·$n·$ar·$al·$rules·$ti·$hrn·$st·$rr·$si 는 yq 변수다
 YQ_RBAC='select(kind == "map") | select(((.apiVersion // "") | tostring | test("^rbac\\.authorization\\.k8s\\.io/")) and (((.kind // "") | tostring) as $kk | ($kk == "Role" or $kk == "ClusterRole" or $kk == "RoleBinding" or $kk == "ClusterRoleBinding"))) | (.kind | tostring) as $k | (((.metadata | select(kind == "map") | .namespace | select(kind == "scalar")) // "-") | tostring) as $ns | (((.metadata | select(kind == "map") | .name | select(kind == "scalar")) // "-") | tostring) as $n | ( ( select($k == "Role" or $k == "ClusterRole") | (has("aggregationRule") | tostring) as $ar | ([ ((.metadata | select(kind == "map") | .labels | select(kind == "map") | keys) // [])[] | tostring | select(test("^rbac\\.authorization\\.k8s\\.io/aggregate-to-")) ] | to_json(0)) as $al | ((.rules | select(kind == "seq")) // []) as $rules | ( ([ "R", $k, $ns, $n, ($rules | length | tostring), $ar, $al, ($rules | map(select(kind == "map") | select('"$YQ_RBAC_TOKEN_RULE"')) | length | tostring) ] | join(strenv(YQ_SEP))), (.rules | select(kind == "seq") | to_entries[] | select(.value | kind == "map") | select(.value | '"$YQ_RBAC_TOKEN_RULE"') | .key as $ti | .value | (has("resourceNames") | tostring) as $hrn | [ "T", $k, $ns, $n, (($ti + 1) | tostring), (((.apiGroups | select(kind == "seq")) // []) | to_json(0)), (((.resources | select(kind == "seq")) // []) | to_json(0)), (((.verbs | select(kind == "seq")) // []) | to_json(0)), $hrn, (((.resourceNames | select(kind == "seq")) // []) | map(tostring) | sort | unique | to_json(0)) ] | join(strenv(YQ_SEP))) ) ), ( select($k == "RoleBinding" or $k == "ClusterRoleBinding") | ((select(has("subjects")) | .subjects | tag) // "none") as $st | ((.roleRef | select(kind == "map")) // {}) as $rr | ( ([ "B", $k, $ns, $n, (($rr.kind // "-") | tostring), (($rr.name // "-") | tostring), $st, (((.subjects | select(kind == "seq")) // []) | length | tostring) ] | join(strenv(YQ_SEP))), (.subjects | select(kind == "seq") | to_entries[] | .key as $si | .value | [ "S", $k, $ns, $n, (($si + 1) | tostring), kind, (((select(kind == "map") | .kind) // "-") | tostring), (((select(kind == "map") | .name) // "") | tostring), (((select(kind == "map") | .namespace) // "") | tostring) ] | join(strenv(YQ_SEP))) ) ) )'
+
+# 검사 3.9 · 13.7 · 14(T075) — 행 하나 = 객체(또는 그 부분) 하나. 첫 필드가 종류이고, 셸(ap_extract)이 종류마다 구분자 수를 확인한다(아니면 fail-closed —
+#   값에 줄바꿈 · 구분 문자가 든 이름 등). 자유 글자(이미지 · 값 · host · 경로 · 어노테이션 값 · 템플릿)는 to_json(0)으로 낸다(제어 문자가 이스케이프되어
+#   한 줄이 된다 — 셸은 JSON 글자 그대로 대조하거나 ap_unjson으로 푼다). 비교에 쓰는 맵은 sort_keys(..)로 키를 정렬한 JSON이다(kustomize 출력의 키 순서에
+#   기대지 않는다). ⚠ has() · keys는 그 노드를 traverse하기 **전에** 바인딩한다(YQ_CSS 주석 — 없는 경로를 traverse하면 키가 생긴다) · 가지(`,`)는 괄호로
+#   감싸 바인딩한 문서에서 돌게 한다(YQ_HELM_SCAN 주석). 원본 파일에도 쓰는 식(ES · hook · Application · kustomization)은 explode(.)로 푼 뒤 본다.
+# O 객체: kind · apiVersion · ns(없으면 -) · 이름
+YQ_AP_OBJ='select(kind == "map") | [ "O", ((.kind // "-") | tostring), ((.apiVersion // "-") | tostring), (((.metadata | select(kind == "map") | .namespace) // "-") | tostring), (((.metadata | select(kind == "map") | .name) // "-") | tostring) ] | join(strenv(YQ_SEP))'
+# S Service: 이름 · type(없으면 빈 값) · externalIPs 유무 · loadBalancerIP 유무 · nodePort를 가진 포트 수
+# shellcheck disable=SC2016  # $s·$he·$hl·$t·$np 는 yq 변수다
+YQ_AP_SVC='select(kind == "map") | select(((.kind // "") | tostring) == "Service") | ((.spec | select(kind == "map")) // {}) as $s | (($s | has("externalIPs")) | tostring) as $he | (($s | has("loadBalancerIP")) | tostring) as $hl | ((($s | select(has("type")) | .type) // "") | tostring) as $t | ((($s | select(has("ports")) | .ports | select(kind == "seq")) // []) | map(select(kind == "map") | select(has("nodePort"))) | length | tostring) as $np | [ "S", (((.metadata | select(kind == "map") | .name) // "-") | tostring), $t, $he, $hl, $np ] | join(strenv(YQ_SEP))'
+# pod 템플릿 객체(Deployment · StatefulSet · DaemonSet · Job · CronJob · Pod): P 객체(kind · 이름 · hook 어노테이션 JSON) · C 컨테이너(kind · 이름 ·
+#   init|main · 컨테이너 이름 · image JSON) · V 볼륨의 Secret(kind · 이름 · secret|projected · Secret 이름)
+# shellcheck disable=SC2016  # $k·$n·$h·$ps 는 yq 변수다
+YQ_AP_POD='select(kind == "map") | ((.kind // "") | tostring) as $k | select($k == "Deployment" or $k == "StatefulSet" or $k == "DaemonSet" or $k == "Job" or $k == "CronJob" or $k == "Pod") | (((.metadata | select(kind == "map") | .name) // "-") | tostring) as $n | (((.metadata | select(kind == "map") | .annotations | select(kind == "map") | .["argocd.argoproj.io/hook"]) // null) | to_json(0)) as $h | ((select($k == "CronJob") | .spec.jobTemplate.spec.template.spec) // (select($k == "Pod") | .spec) // .spec.template.spec // {}) as $ps | ( ( [ "P", $k, $n, $h ] | join(strenv(YQ_SEP)) ), ( (($ps | select(kind == "map") | .initContainers | select(kind == "seq")) // []) | .[] | select(kind == "map") | [ "C", $k, $n, "init", ((.name // "-") | tostring), ((.image // null) | to_json(0)) ] | join(strenv(YQ_SEP)) ), ( (($ps | select(kind == "map") | .containers | select(kind == "seq")) // []) | .[] | select(kind == "map") | [ "C", $k, $n, "main", ((.name // "-") | tostring), ((.image // null) | to_json(0)) ] | join(strenv(YQ_SEP)) ), ( (($ps | select(kind == "map") | .volumes | select(kind == "seq")) // []) | .[] | select(kind == "map") | ( ( select(has("secret")) | [ "V", $k, $n, "secret", (((.secret | select(kind == "map") | .secretName) // "-") | tostring) ] | join(strenv(YQ_SEP)) ), ( select(has("projected")) | ((.projected | select(kind == "map") | .sources | select(kind == "seq")) // []) | .[] | select(kind == "map") | select(has("secret")) | [ "V", $k, $n, "projected", (((.secret | select(kind == "map") | .name) // "-") | tostring) ] | join(strenv(YQ_SEP)) ) ) ) )'
+# 같은 객체의 컨테이너(init 포함): E env 항목(kind · 이름 · 컨테이너 · env 이름 · valueFrom 키(정렬 · 쉼표) · configMapKeyRef 이름 · secretKeyRef 이름) ·
+#   F envFrom 항목(kind · 이름 · 컨테이너 · 순번 · 항목 JSON(sort_keys) · configMapRef 이름 · secretRef 이름 · prefix)
+# shellcheck disable=SC2016  # $k·$n·$ps·$c·$vf·$i·$j 는 yq 변수다
+YQ_AP_ENV='select(kind == "map") | ((.kind // "") | tostring) as $k | select($k == "Deployment" or $k == "StatefulSet" or $k == "DaemonSet" or $k == "Job" or $k == "CronJob" or $k == "Pod") | (((.metadata | select(kind == "map") | .name) // "-") | tostring) as $n | ((select($k == "CronJob") | .spec.jobTemplate.spec.template.spec) // (select($k == "Pod") | .spec) // .spec.template.spec // {}) as $ps | ((($ps | select(kind == "map") | .initContainers | select(kind == "seq")) // []) + (($ps | select(kind == "map") | .containers | select(kind == "seq")) // [])) | .[] | select(kind == "map") | ((.name // "-") | tostring) as $c | ( ( ((.env | select(kind == "seq")) // []) | .[] | select(kind == "map") | (((.valueFrom | select(kind == "map") | keys | map(tostring) | sort) // []) | join(",")) as $vf | [ "E", $k, $n, $c, ((.name // "-") | tostring), $vf, (((.valueFrom | select(kind == "map") | .configMapKeyRef | select(kind == "map") | .name) // "-") | tostring), (((.valueFrom | select(kind == "map") | .secretKeyRef | select(kind == "map") | .name) // "-") | tostring) ] | join(strenv(YQ_SEP)) ), ( ((.envFrom | select(kind == "seq")) // []) | to_entries | .[] | .key as $i | .value | (sort_keys(..) | to_json(0)) as $j | [ "F", $k, $n, $c, ($i | tostring), $j, (((select(kind == "map") | .configMapRef | select(kind == "map") | .name) // "-") | tostring), (((select(kind == "map") | .secretRef | select(kind == "map") | .name) // "-") | tostring), (((select(kind == "map") | .prefix) // "") | tostring) ] | join(strenv(YQ_SEP)) ) )'
+# ConfigMap: M(이름 · binaryData 키 쉼표 목록) · K data 항목(ConfigMap 이름 · 키 · 값 JSON · 값 태그)
+# shellcheck disable=SC2016  # $n·$bk 는 yq 변수다
+YQ_AP_CM='select(kind == "map") | select(((.kind // "") | tostring) == "ConfigMap") | (((.metadata | select(kind == "map") | .name) // "-") | tostring) as $n | (((select(has("binaryData")) | .binaryData | select(kind == "map") | keys | map(tostring)) // []) | join(",")) as $bk | ( ( [ "M", $n, $bk ] | join(strenv(YQ_SEP)) ), ( ((.data | select(kind == "map")) // {}) | to_entries | .[] | [ "K", $n, (.key | tostring), (.value | to_json(0)), (.value | tag) ] | join(strenv(YQ_SEP)) ) )'
+# ExternalSecret: X(이름 · ns · target 이름(없으면 -) · target.template 유무 · mergePolicy(없으면 -) · template JSON(sort_keys · 없으면 null) ·
+#   secretStoreRef JSON(sort_keys) · refreshInterval JSON · refreshPolicy JSON · target.creationPolicy JSON · dataFrom 유무 · templateFrom을 가진 맵 수(어느 자리든)) ·
+#   D data 항목(ES 이름 · 순번 · 항목 키(정렬 · 쉼표) · secretKey · remoteRef 키(정렬 · 쉼표) · remoteRef.key · property) · T template.data 키(ES 이름 · 키)
+# shellcheck disable=SC2016  # $ntf·$n·$ns·$sp·$hdf·$ssr·$ri·$rp·$tg·$ht·$tn·$cp·$tj·$mp·$i·$ik·$rk 는 yq 변수다
+YQ_AP_ES='explode(.) | select(kind == "map") | select(((.kind // "") | tostring) == "ExternalSecret") | ([.. | select(kind == "map") | select(has("templateFrom"))] | length | tostring) as $ntf | (((.metadata | select(kind == "map") | .name) // "-") | tostring) as $n | (((.metadata | select(kind == "map") | .namespace) // "-") | tostring) as $ns | ((.spec | select(kind == "map")) // {}) as $sp | (($sp | has("dataFrom")) | tostring) as $hdf | (($sp | select(has("secretStoreRef")) | .secretStoreRef | sort_keys(..) | to_json(0)) // "null") as $ssr | (($sp | select(has("refreshInterval")) | .refreshInterval | to_json(0)) // "null") as $ri | (($sp | select(has("refreshPolicy")) | .refreshPolicy | to_json(0)) // "null") as $rp | (($sp | select(has("target")) | .target | select(kind == "map")) // {}) as $tg | (($tg | has("template")) | tostring) as $ht | ((($tg | select(has("name")) | .name) // "-") | tostring) as $tn | (($tg | select(has("creationPolicy")) | .creationPolicy | to_json(0)) // "null") as $cp | ((($tg | select(has("template")) | .template | select(kind == "map") | select(has("mergePolicy")) | .mergePolicy) // "-") | tostring) as $mp | (($tg | select(has("template")) | .template | sort_keys(..) | to_json(0)) // "null") as $tj | ( ( [ "X", $n, $ns, $tn, $ht, $mp, $tj, $ssr, $ri, $rp, $cp, $hdf, $ntf ] | join(strenv(YQ_SEP)) ), ( (($sp | select(has("data")) | .data | select(kind == "seq")) // []) | to_entries | .[] | .key as $i | .value | (((select(kind == "map") | keys | map(tostring) | sort) // []) | join(",")) as $ik | (((select(kind == "map") | select(has("remoteRef")) | .remoteRef | select(kind == "map") | keys | map(tostring) | sort) // []) | join(",")) as $rk | [ "D", $n, ($i | tostring), $ik, (((select(kind == "map") | .secretKey) // "-") | tostring), $rk, (((select(kind == "map") | .remoteRef | select(kind == "map") | .key) // "-") | tostring), (((select(kind == "map") | .remoteRef | select(kind == "map") | .property) // "-") | tostring) ] | join(strenv(YQ_SEP)) ), ( (($tg | select(has("template")) | .template | select(kind == "map") | select(has("data")) | .data | select(kind == "map") | keys | map(tostring)) // []) | .[] | [ "T", $n, . ] | join(strenv(YQ_SEP)) ) )'
+# Ingress: I(이름 · ingressClassName JSON · router.entrypoints · router.tls · router.middlewares 어노테이션 JSON · router.tls.options 유무 · router.priority 유무 ·
+#   spec.tls 유무 · spec.defaultBackend 유무 · rules 수) · R rule(이름 · 순번 · host 유무 · host JSON) · H 경로(이름 · rule 순번 · path JSON · pathType JSON ·
+#   backend Service 이름 · 포트 이름 · 포트 번호 유무 · backend.resource 유무)
+# shellcheck disable=SC2016  # $n·$a·$hto·$hpr·$ep·$tls·$mw·$s·$htls·$hdb·$ic·$rules·$ri·$hr·$hn 는 yq 변수다
+YQ_AP_ING='select(kind == "map") | select(((.kind // "") | tostring) == "Ingress") | (((.metadata | select(kind == "map") | .name) // "-") | tostring) as $n | ((.metadata | select(kind == "map") | .annotations | select(kind == "map")) // {}) as $a | (($a | has("traefik.ingress.kubernetes.io/router.tls.options")) | tostring) as $hto | (($a | has("traefik.ingress.kubernetes.io/router.priority")) | tostring) as $hpr | (($a | select(has("traefik.ingress.kubernetes.io/router.entrypoints")) | .["traefik.ingress.kubernetes.io/router.entrypoints"] | to_json(0)) // "null") as $ep | (($a | select(has("traefik.ingress.kubernetes.io/router.tls")) | .["traefik.ingress.kubernetes.io/router.tls"] | to_json(0)) // "null") as $tls | (($a | select(has("traefik.ingress.kubernetes.io/router.middlewares")) | .["traefik.ingress.kubernetes.io/router.middlewares"] | to_json(0)) // "null") as $mw | ((.spec | select(kind == "map")) // {}) as $s | (($s | has("tls")) | tostring) as $htls | (($s | has("defaultBackend")) | tostring) as $hdb | (($s | select(has("ingressClassName")) | .ingressClassName | to_json(0)) // "null") as $ic | (($s | select(has("rules")) | .rules | select(kind == "seq")) // []) as $rules | ( ( [ "I", $n, $ic, $ep, $tls, $mw, $hto, $hpr, $htls, $hdb, ($rules | length | tostring) ] | join(strenv(YQ_SEP)) ), ( $rules | to_entries | .[] | .key as $ri | .value | [ "R", $n, ($ri | tostring), (((select(kind == "map") | has("host")) // false) | tostring), (((select(kind == "map") | .host) // null) | to_json(0)) ] | join(strenv(YQ_SEP)) ), ( $rules | to_entries | .[] | .key as $ri | .value | ((select(kind == "map") | .http | select(kind == "map") | .paths | select(kind == "seq")) // []) | .[] | select(kind == "map") | (((.backend | select(kind == "map") | has("resource")) // false) | tostring) as $hr | (((.backend | select(kind == "map") | .service | select(kind == "map") | .port | select(kind == "map") | has("number")) // false) | tostring) as $hn | [ "H", $n, ($ri | tostring), ((.path // null) | to_json(0)), ((.pathType // null) | to_json(0)), (((.backend | select(kind == "map") | .service | select(kind == "map") | .name) // "-") | tostring), (((.backend | select(kind == "map") | .service | select(kind == "map") | .port | select(kind == "map") | .name) // "-") | tostring), $hn, $hr ] | join(strenv(YQ_SEP)) ) )'
+# Middleware: W(이름 · apiVersion · spec 키(정렬 · 쉼표) · stripPrefix.prefixes JSON)
+# shellcheck disable=SC2016  # $s·$sk·$pf 는 yq 변수다
+YQ_AP_MW='select(kind == "map") | select(((.kind // "") | tostring) == "Middleware") | ((.spec | select(kind == "map")) // {}) as $s | (($s | keys | map(tostring) | sort) | join(",")) as $sk | (($s | select(has("stripPrefix")) | .stripPrefix | select(kind == "map") | select(has("prefixes")) | .prefixes | to_json(0)) // "null") as $pf | [ "W", (((.metadata | select(kind == "map") | .name) // "-") | tostring), ((.apiVersion // "-") | tostring), $sk, $pf ] | join(strenv(YQ_SEP))'
+# 14.5 — A 객체(kind · 이름 · argocd.argoproj.io/hook 유무 · 그 값 JSON · helm.sh/hook으로 시작하는 어노테이션 키 JSON 목록)
+# shellcheck disable=SC2016  # $a·$hk·$hh·$hv 는 yq 변수다
+YQ_AP_HOOK='explode(.) | select(kind == "map") | ((.metadata | select(kind == "map") | .annotations | select(kind == "map")) // {}) as $a | (($a | keys | map(tostring)) | map(select(test("^helm\\.sh/hook"))) | to_json(0)) as $hk | (($a | has("argocd.argoproj.io/hook")) | tostring) as $hh | (($a | select(has("argocd.argoproj.io/hook")) | .["argocd.argoproj.io/hook"] | to_json(0)) // "null") as $hv | [ "A", ((.kind // "-") | tostring), (((.metadata | select(kind == "map") | .name) // "-") | tostring), $hh, $hv, $hk ] | join(strenv(YQ_SEP))'
+# 14.0 — 앱 Application의 꼴: P(이름 · metadata.namespace · finalizers JSON · spec 키(정렬 · 쉼표) · project · source.path · destination JSON(sort_keys) ·
+#   destination.name 유무 · syncPolicy JSON(sort_keys) · managedNamespaceMetadata 유무 · retry 유무 · syncOptions JSON)
+# shellcheck disable=SC2016  # $m·$s·$sk·$fz·$dn·$ds·$mn·$rt·$so·$sp 는 yq 변수다
+YQ_AP_APP='explode(.) | select(kind == "map") | select(((.kind // "") | tostring) == "Application") | ((.metadata | select(kind == "map")) // {}) as $m | ((.spec | select(kind == "map")) // {}) as $s | (($s | keys | map(tostring) | sort) | join(",")) as $sk | (($m | select(has("finalizers")) | .finalizers | to_json(0)) // "null") as $fz | ((($s | select(has("destination")) | .destination | select(kind == "map") | has("name")) // false) | tostring) as $dn | (($s | select(has("destination")) | .destination | sort_keys(..) | to_json(0)) // "null") as $ds | ((($s | select(has("syncPolicy")) | .syncPolicy | select(kind == "map") | has("managedNamespaceMetadata")) // false) | tostring) as $mn | ((($s | select(has("syncPolicy")) | .syncPolicy | select(kind == "map") | has("retry")) // false) | tostring) as $rt | (($s | select(has("syncPolicy")) | .syncPolicy | select(kind == "map") | select(has("syncOptions")) | .syncOptions | to_json(0)) // "null") as $so | (($s | select(has("syncPolicy")) | .syncPolicy | sort_keys(..) | to_json(0)) // "null") as $sp | [ "P", ((($m | select(has("name")) | .name) // "-") | tostring), ((($m | select(has("namespace")) | .namespace) // "-") | tostring), $fz, $sk, ((($s | select(has("project")) | .project) // "-") | tostring), ((($s | select(has("source")) | .source | select(kind == "map") | select(has("path")) | .path) // "-") | tostring), $ds, $dn, $sp, $mn, $rt, $so ] | join(strenv(YQ_SEP))'
+# 14.0 — 렌더의 CustomResourceDefinition: R(group · kind · scope)
+YQ_AP_CRD='select(kind == "map") | select(((.kind // "") | tostring) == "CustomResourceDefinition") | [ "R", (((.spec | select(kind == "map") | .group) // "-") | tostring), (((.spec | select(kind == "map") | .names | select(kind == "map") | .kind) // "-") | tostring), (((.spec | select(kind == "map") | .scope) // "-") | tostring) ] | join(strenv(YQ_SEP))'
+# 13.7 — AppProject(argoproj.io/…): Q(이름 · ns · destinations JSON(sort_keys) · clusterResourceWhitelist JSON · 허용 목록 키 유무 · 금지 목록 키 유무) ·
+#   G 목록 항목(이름 · white|black · group(없으면 빈 글자) · kind)
+# shellcheck disable=SC2016  # $n·$ns·$s·$hw·$hb·$ds·$cw 는 yq 변수다
+YQ_AP_PROJ='select(kind == "map") | select(((.kind // "") | tostring) == "AppProject") | select(((.apiVersion // "") | tostring) | test("^argoproj\\.io/")) | (((.metadata | select(kind == "map") | .name) // "-") | tostring) as $n | (((.metadata | select(kind == "map") | .namespace) // "-") | tostring) as $ns | ((.spec | select(kind == "map")) // {}) as $s | (($s | has("namespaceResourceWhitelist")) | tostring) as $hw | (($s | has("namespaceResourceBlacklist")) | tostring) as $hb | (($s | select(has("destinations")) | .destinations | sort_keys(..) | to_json(0)) // "null") as $ds | (($s | select(has("clusterResourceWhitelist")) | .clusterResourceWhitelist | to_json(0)) // "null") as $cw | ( ( [ "Q", $n, $ns, $ds, $cw, $hw, $hb ] | join(strenv(YQ_SEP)) ), ( (($s | select(has("namespaceResourceWhitelist")) | .namespaceResourceWhitelist | select(kind == "seq")) // []) | .[] | [ "G", $n, "white", (((select(kind == "map") | .group) // "") | tostring), (((select(kind == "map") | .kind) // "-") | tostring) ] | join(strenv(YQ_SEP)) ), ( (($s | select(has("namespaceResourceBlacklist")) | .namespaceResourceBlacklist | select(kind == "seq")) // []) | .[] | [ "G", $n, "black", (((select(kind == "map") | .group) // "") | tostring), (((select(kind == "map") | .kind) // "-") | tostring) ] | join(strenv(YQ_SEP)) ) )'
+# 14.8 — kustomization 1개: K(helmCharts 유무 · secretGenerator 유무) · N 목록 필드가 목록이 아님(필드 · 태그 — null은 빈 목록과 같다) · L 경로 항목(필드 ·
+#   항목 JSON · 구조 — generators · transformers · validators · patchesStrategicMerge의 항목은 문자열을 YAML로 읽은 노드 종류(scalar · map · seq),
+#   문자열이 아니면 그 항목의 종류, 그 밖의 필드는 -: kustomize 5.8.1은 이 항목을 리소스 YAML로 읽어 되면 인라인 설정으로 쓴다(kusttarget.go
+#   configureExternalTransformers — 줄바꿈 여부로 가르지 않는다). has()를 쓰는 가지(K · N · openapi)를 traverse하는 가지(L)보다 앞에 둔다
+# shellcheck disable=SC2016  # $hh·$hs·$ho·$f·$g 는 yq 변수다
+YQ_AP_KPATHS='explode(.) | select(kind == "map") | (has("helmCharts") | tostring) as $hh | (has("secretGenerator") | tostring) as $hs | (has("openapi") | tostring) as $ho | ( ( [ "K", $hh, $hs ] | join(strenv(YQ_SEP)) ), ( ["resources", "components", "bases", "crds", "generators", "transformers", "validators", "patchesStrategicMerge", "configurations"][] as $f | select(has($f)) | .[$f] | select(kind != "seq" and tag != "!!null") | [ "N", $f, tag ] | join(strenv(YQ_SEP)) ), ( select($ho == "true") | .openapi | select(kind == "map") | select(has("path")) | [ "L", "openapi.path", (.path | to_json(0)), "-" ] | join(strenv(YQ_SEP)) ), ( ["resources", "components", "bases", "crds", "generators", "transformers", "validators", "patchesStrategicMerge", "configurations"][] as $f | ((.[$f] | select(kind == "seq")) // []) | .[] | [ "L", $f, to_json(0), ((select($f == "generators" or $f == "transformers" or $f == "validators" or $f == "patchesStrategicMerge") | ((select(tag == "!!str") | from_yaml | kind) // kind)) // "-") ] | join(strenv(YQ_SEP)) ), ( ["patches", "patchesJson6902", "replacements"][] as $f | ((.[$f] | select(kind == "seq")) // []) | .[] | select(kind == "map") | select(has("path")) | [ "L", ($f + ".path"), (.path | to_json(0)), "-" ] | join(strenv(YQ_SEP)) ), ( ["configMapGenerator", "secretGenerator"][] as $g | ((.[$g] | select(kind == "seq")) // []) | .[] | select(kind == "map") | ( ( ((.files | select(kind == "seq")) // []) | .[] | [ "L", ($g + ".files"), to_json(0), "-" ] | join(strenv(YQ_SEP)) ), ( ((.envs | select(kind == "seq")) // []) | .[] | [ "L", ($g + ".envs"), to_json(0), "-" ] | join(strenv(YQ_SEP)) ), ( select(has("env")) | [ "L", ($g + ".env"), (.env | to_json(0)), "-" ] | join(strenv(YQ_SEP)) ) ) ) )'
+# 11.7 — kustomization 1개(explode 없이 — 앵커 · 별칭을 본다): 문서마다 D(문서 번호 · 노드 종류 · 태그) · 최상위 키마다 K(문서 번호 · 키 JSON ·
+#   키 태그 — keys[]는 키 노드를 그대로 준다: to_entries는 별칭 키를 풀어 버린다) · F(문서 번호 · 앵커 수 · 별칭 수 · 명시 태그 수 · 사용자 태그 수 ·
+#   병합 키 수 — 값 노드(..)와 모든 맵의 키 노드를 함께 센다) · N(재검토 G1B-4 — 문서 번호 · 최상위 키 JSON · 항목 번호(맵이면 -) · 직속 키 JSON ·
+#   키 태그: 최상위 값이 맵이면 그 키, 맵의 목록이면 항목마다 그 키 — 어느 자리가 구조체인지는 셸이 KUST_NESTED로 고른다). 최상위 키는 keys | unique로
+#   한 번씩 — 같은 키가 둘이면 yq는 뒤의 값을 준다(kustomize와 같다 · 중복은 K 행이 FAIL로 센다). document_index 바인딩은 괄호로 네 가지 모두를
+#   감싼다(`,`가 `|`보다 느슨하다)
+# shellcheck disable=SC2016  # $d·$k·$kj·$v·$i 는 yq 변수다
+YQ_KUST_KEYS='document_index as $d | ( ( [ "D", ($d | tostring), kind, tag ] | join(strenv(YQ_SEP)) ), ( select(kind == "map") | keys[] | [ "K", ($d | tostring), to_json(0), tag ] | join(strenv(YQ_SEP)) ), ( [ "F", ($d | tostring), ([ (.. | select(anchor != "")), (.. | select(kind == "map") | keys[] | select(anchor != "")) ] | length | tostring), ([ (.. | select(kind == "alias")), (.. | select(kind == "map") | keys[] | select(kind == "alias")) ] | length | tostring), ([ (.. | select(style == "tagged")), (.. | select(kind == "map") | keys[] | select(style == "tagged")) ] | length | tostring), ([ (.. | select(kind != "alias" and tag != "" and (tag | test("^!!") | not))), (.. | select(kind == "map") | keys[] | select(kind != "alias" and tag != "" and (tag | test("^!!") | not))) ] | length | tostring), ([ .. | select(kind == "map") | keys[] | select(tag == "!!merge") ] | length | tostring) ] | join(strenv(YQ_SEP)) ), ( select(kind == "map") | (keys | unique | .[]) as $k | ($k | to_json(0)) as $kj | .[$k] as $v | ( ( $v | select(kind == "map") | keys[] | [ "N", ($d | tostring), $kj, "-", to_json(0), tag ] | join(strenv(YQ_SEP)) ), ( $v | select(kind == "seq") | to_entries[] | .key as $i | .value | select(kind == "map") | keys[] | [ "N", ($d | tostring), $kj, ($i | tostring), to_json(0), tag ] | join(strenv(YQ_SEP)) ) ) ) )'
+# 14.8(tests 범위) · 14.9 — kustomization 1개의 모양(explode 없이): 모든 노드마다 C(문서 번호 · 경로 JSON(path | to_json — 키는 JSON 이스케이프) · 노드
+#   종류 · 태그 — 뿌리는 경로 []) · 모든 맵의 키마다 Y(문서 번호 · 그 맵의 경로 JSON · 키 JSON · 키 태그). 같은 키가 둘이면 ..는 뒤의 값만 내려간다
+#   (kustomize와 같다 — 중복은 11.7이 FAIL로 센다). 어느 자리에 맵 · 목록이 올 수 있는지 · 그 자리의 키 집합은 셸이 판정한다(ap_kust_shape)
+# shellcheck disable=SC2016  # $d·$p 는 yq 변수다
+YQ_KUST_TREE='document_index as $d | ( ( .. | [ "C", ($d | tostring), (path | to_json(0)), kind, tag ] | join(strenv(YQ_SEP)) ), ( .. | select(kind == "map") | (path | to_json(0)) as $p | keys[] | [ "Y", ($d | tostring), $p, to_json(0), tag ] | join(strenv(YQ_SEP)) ) )'
 
 yq_lines() { # <expr> <file> — 빈 줄 제거·CR 제거. 실패 시 비영 상태
   yq -N "$1" "$2" | tr -d '\r' | sed '/^[[:space:]]*$/d'
@@ -1140,10 +1440,27 @@ derive_crd_schemas() { # <SRC 인덱스>... — 패스 1.5. 요약 한 줄을 �
     "$ncrd" "$nfile" "${#seen_group[@]}" "$extra"
 }
 
+# 검사 1 — 네트워크 없는 렌더(T075 보정 2026-11-18 — 계약 §validate.yml 3 「표 밖 새 검사 셋」 「네트워크 없는 렌더」 · 재검토 G1B-4): apps/** ·
+#   platform/policies/tests/**의 kustomize 렌더는 외부 네트워크 없이 돈다 — 원격을 끌어오는 항목이 키 검사(11.7 · 14.8 · 14.9)를 어떻게든 지나가도
+#   렌더 실패(1 KUST)로 떨어진다(방어 겹). HTTP(S) 프록시 = 닫힌 로컬 포트(Go net/http · git · helm이 읽는다 — 대문자 · 소문자 둘 다 · ALL_PROXY는
+#   git · curl) · NO_PROXY 비움 · git 전송 전부 금지(GIT_ALLOW_PROTOCOL=none — 실재 프로토콜이 없는 값: kustomize의 원격 ref는 git fetch이고 이
+#   렌더는 git이 필요 없다. file로 두면 file:// 로컬 저장소의 다른 ref가 렌더됐다 — 마지막 재검토 G1B-5 실측 · none이면 「transport 'file' not
+#   allowed」) · ssh 막음(GIT_SSH_COMMAND=false) · 묻지 않음(GIT_TERMINAL_PROMPT · GCM_INTERACTIVE). 렌더 명령의 서브셸에서만 내보낸다(kubeconform ·
+#   다른 렌더로 새지 않는다). platform/** 렌더(helmCharts의 차트 pull)에는 걸지 않는다. 한계: Go net/http는 루프백(127.0.0.1 · localhost) 주소를
+#   프록시하지 않는다 — 러너 안의 로컬 서버는 이 겹이 막지 못한다(외부 네트워크만 · 그 길은 키 검사가 닫는다)
+NONET_PROXY='http://127.0.0.1:9'
+nonet_scope() { # <ROOT 기준 디렉터리> — 네트워크 없는 렌더 범위면 0(경로 성분 단위 — platform/policies/testsx는 범위 밖)
+  [[ $1 == apps || $1 == apps/* || $1 == platform/policies/tests || $1 == platform/policies/tests/* ]]
+}
+nonet_env() { # 렌더 명령의 서브셸 안에서만 부른다
+  export HTTPS_PROXY=$NONET_PROXY https_proxy=$NONET_PROXY HTTP_PROXY=$NONET_PROXY http_proxy=$NONET_PROXY ALL_PROXY=$NONET_PROXY all_proxy=$NONET_PROXY
+  export NO_PROXY='' no_proxy='' GIT_ALLOW_PROTOCOL=none GIT_SSH_COMMAND=false GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never
+}
+
 check_1_kustomize() {
   header 1 "kustomize build(모든 kustomization) + kubeconform -strict -ignore-missing-schemas"
   need_tool "1 KUST" kustomize || return 0
-  local fails_before=$N_FAIL n=0 kfile dir rdir rendered has_helm out i
+  local fails_before=$N_FAIL n=0 nnonet=0 nonet kfile dir rdir rendered has_helm out i
   local -a flags ridx=()
   # 패스 1 — 렌더만 모은다(kubeconform은 패스 2: 파생 스키마가 모든 렌더의 CRD를 본 뒤에 돌아야 한다)
   for kfile in "${KUST_FILES[@]}"; do
@@ -1161,8 +1478,10 @@ check_1_kustomize() {
       need_tool "1 KUST" helm || continue
       flags+=(--enable-helm)
     fi
+    nonet=0
+    if nonet_scope "$rdir"; then nonet=1; nnonet=$((nnonet + 1)); fi
     # shellcheck disable=SC2086  # KUSTOMIZE_FLAGS는 의도적으로 단어 분리
-    if ! rendered=$(kustomize build "$dir" "${flags[@]}" $KUSTOMIZE_FLAGS 2>&1); then
+    if ! rendered=$(if [[ $nonet == 1 ]]; then nonet_env; fi; kustomize build "$dir" "${flags[@]}" $KUSTOMIZE_FLAGS 2>&1); then
       fail "1 KUST" "kustomize build 실패: $rdir — $(printf '%s' "$rendered" | tail -n 3 | tr '\n' ' ')"
       continue
     fi
@@ -1182,7 +1501,7 @@ check_1_kustomize() {
   else
     need_tool "1 KUST" kubeconform || true
   fi
-  finish_group "1 KUST" "kustomization ${n}개 빌드·스키마 검증(CRD 파생 스키마 우선 · 렌더링 결과는 검사 3에도 포함)" "$fails_before"
+  finish_group "1 KUST" "kustomization ${n}개 빌드·스키마 검증(CRD 파생 스키마 우선 · 렌더링 결과는 검사 3에도 포함) · 네트워크 없는 렌더 ${nnonet}개(apps/** · platform/policies/tests/**)" "$fails_before"
 }
 
 # 1b(보강) — 어떤 kustomization에도 속하지 않는 매니페스트(clusters/**, bootstrap/root-app.yaml 등 Argo가 디렉터리로 읽는 것)도 kubeconform.
@@ -2089,7 +2408,10 @@ check_7_sync_wave() {
         expected=${WAVE_OF[$comp]}
         want_path="platform/$comp"
         if [[ $comp == argocd ]]; then
-          [[ $path == platform/argocd || $path == bootstrap/argocd ]] || fail "7.1 WAVE-path" "$x: source.path '$path' ≠ platform/argocd|bootstrap/argocd"
+          # (T075 보정 2026-11-17 · 계약 §validate.yml 6 「Argo CD 자기 관리 경로」) bootstrap/argocd 하나 — 이전에는 platform/argocd도 받았다(관문 밖
+          #   platform-argocd.yaml · platform/argocd/**만 바꿔 AppProject · Argo CD 본체를 승인 없이 바꾸는 길). platform/argocd는 자리표시다(7.5)
+          want_path=$ARGOCD_SELF_PATH
+          [[ $path == "$want_path" ]] || fail "7.1 WAVE-path" "$x: source.path '$path' ≠ $want_path"
         elif [[ $comp == tests ]]; then
           # 예외 1(계약 §Application 규약 이름 행 · 2026-10-29 T059): 검증 Job Application platform-tests ↔ platform/policies/tests
           want_path=platform/policies/tests
@@ -3372,6 +3694,1365 @@ check_13_rbac() {
 }
 
 # -----------------------------------------------------------------------------
+# 검사 11.6 FMT-dirsource-files · 11.7 FMT-kust-keys(T075 보정 2026-11-18 — 계약 §validate.yml 3 「표 밖 새 검사 셋」 · GP-1 리뷰 G1B-1 · G1B-2 ·
+#   재검토 G1B-4)
+# -----------------------------------------------------------------------------
+# 11.7 — 모든 kustomization 파일(KUST_FILES — 세 이름)의 최상위 키와 경로를 받는 구조체 항목(KUST_NESTED)의 직속 키를 열거해 kustomize 5.8.1의
+#   해석(encoding/json — 대소문자 무시 · 유니코드 단순 접기 · 같은 필드로 접히는 키가 여럿이면 마지막 값)과 검사의 해석(소문자 필드만 골라 읽는
+#   7.3 · 12.x · 14.8)을 맞춘다. 번호 정정 2026-11-18(처음 적은 11.5는 FMT-symlink와 겹쳤다)
+check_11_kust_keys() {
+  header 11.7 "kustomization 키(T075 보정 2026-11-18) — 최상위 = 정본 철자(KUST_FIELDS · kustomize 5.8.1) · ASCII 밖 · 대소문자 변형 · 정본 밖 · 중복 · 앵커 · 별칭 · 병합 키 · 태그 / 중첩(경로를 받는 구조체 항목의 직속 키) = ASCII 밖 · 대소문자 변형 · 중복"
+  need_tool "11.7 FMT-kust-keys" yq || return 0
+  local LC_ALL=C
+  local f7=$N_FAIL kf rk out line d k lk c x nkf=0 nkey=0 nsi=0 nnk=0 ns it nk gk
+  local -a f=()
+  local -A canon=() seen=() nitem=() nseen=() nfold=()
+  for c in $KUST_FIELDS; do canon[${c,,}]=$c; done
+  for kf in "${KUST_FILES[@]}"; do
+    nkf=$((nkf + 1)); rk=$(rel "$kf")
+    if ! out=$(yq_lines "$YQ_KUST_KEYS" "$kf" 2>/dev/null); then
+      fail "11.7 FMT-kust-keys" "$rk: yq로 읽지 못했다 — 키를 판정할 수 없다(fail-closed)"
+      continue
+    fi
+    seen=(); nitem=(); nseen=(); nfold=()
+    while IFS= read -r line; do
+      [[ -n $line ]] || continue
+      IFS=$YQ_SEP read -r -a f <<< "$line"
+      d=${f[1]:-0}; x="$rk(문서 $((d + 1)))"
+      case ${f[0]} in
+        D)
+          if [[ ${f[2]} != map && ! ( ${f[2]} == scalar && ${f[3]} == '!!null' ) ]]; then
+            fail "11.7 FMT-kust-keys" "$x: 맵이 아닌 문서(${f[2]} ${f[3]}) — kustomization으로 읽을 수 없다(fail-closed)"
+          fi ;;
+        K)
+          [[ ${f[3]} != '!!merge' ]] || continue   # 병합 키는 F 행이 센다
+          nkey=$((nkey + 1))
+          if [[ ${f[3]} != '!!str' ]] || ! ap_unjson "${f[2]}"; then
+            fail "11.7 FMT-kust-keys" "$x: 키 ${f[2]}(태그 ${f[3]}) — 문자열 키가 아니거나 이스케이프가 든 키(fail-closed)"
+            continue
+          fi
+          k=$AP_S
+          if [[ -n ${seen["$d:$k"]:-} ]]; then fail "11.7 FMT-kust-keys" "$x: 키 '$k' 중복 — kustomize는 뒤의 것을 읽는다(검사는 앞의 것을 볼 수 있다)"; fi
+          seen["$d:$k"]=1
+          if [[ $k == *[^\ -~]* ]]; then
+            fail "11.7 FMT-kust-keys" "$x: 키 '$k'에 ASCII 밖 글자 — kustomize(encoding/json)는 유니코드 단순 접기(ſ → s · 켈빈 K → k)로 필드를 맞춘다(정본 철자는 모두 ASCII)"
+            continue
+          fi
+          lk=${k,,}
+          if [[ -z ${canon[$lk]:-} ]]; then
+            fail "11.7 FMT-kust-keys" "$x: 키 '$k' ∉ kustomize 5.8.1 Kustomization 필드(정본 KUST_FIELDS — kustomize는 모르는 필드를 거부한다)"
+          elif [[ $k != "${canon[$lk]}" ]]; then
+            fail "11.7 FMT-kust-keys" "$x: 키 '$k' — 정본 철자 '${canon[$lk]}'와 대소문자만 다르다(kustomize는 같은 필드로 읽는데 검사는 소문자 정본만 본다)"
+          fi ;;
+        F)
+          if [[ ${f[2]:-0} != 0 || ${f[3]:-0} != 0 || ${f[4]:-0} != 0 || ${f[5]:-0} != 0 || ${f[6]:-0} != 0 ]]; then
+            fail "11.7 FMT-kust-keys" "$x: 앵커 ${f[2]:-?} · 별칭 ${f[3]:-?} · 명시 태그 ${f[4]:-?}(사용자 태그 ${f[5]:-?}) · 병합 키(<<) ${f[6]:-?} — kustomization 파일에 금지(키를 풀어 쓴 것과 다르게 읽히는 길)"
+          fi ;;
+        N)
+          # 중첩(재검토 G1B-4): 경로를 받는 구조체 항목(KUST_NESTED)만 — 최상위 키를 ASCII 소문자로 접어 고른다(철자 변형 최상위 키 아래도 kustomize는
+          #   그 구조체로 읽는다 · 최상위 키 자체는 K 행이 판정한다). 키 열 = N · 문서 · 최상위 키 JSON · 항목 번호(맵이면 -) · 직속 키 JSON · 키 태그
+          ap_unjson "${f[2]}" || continue   # 최상위 키가 문자열이 아니면 K 행이 FAIL했다
+          k=$AP_S; lk=${k,,}
+          ns=${KUST_NESTED[$lk]:-}
+          [[ -n $ns ]] || continue
+          [[ ${f[5]:-} != '!!merge' ]] || continue   # 병합 키는 F 행이 센다
+          if [[ ${f[3]} == - ]]; then it=$k; else it="$k[${f[3]}]"; fi
+          gk="$d|${f[2]}|${f[3]}"
+          if [[ -z ${nitem[$gk]:-} ]]; then nitem[$gk]=1; nsi=$((nsi + 1)); fi
+          nnk=$((nnk + 1))
+          if [[ ${f[5]:-} != '!!str' ]] || ! ap_unjson "${f[4]:-}"; then
+            fail "11.7 FMT-kust-keys" "$x $it: 키 ${f[4]:-?}(태그 ${f[5]:-?}) — 문자열 키가 아니거나 이스케이프가 든 키(fail-closed)"
+            continue
+          fi
+          nk=$AP_S
+          if [[ -n ${nseen["$gk|$nk"]:-} ]]; then
+            fail "11.7 FMT-kust-keys" "$x $it: 키 '$nk' 중복 — kustomize(encoding/json)는 마지막 값을 쓴다(검사는 앞의 값을 볼 수 있다)"
+          elif [[ -n ${nfold["$gk|${nk,,}"]:-} ]]; then
+            fail "11.7 FMT-kust-keys" "$x $it: 키 '$nk' — 같은 항목의 '${nfold["$gk|${nk,,}"]}'와 접으면 같은 필드다(encoding/json은 마지막 값을 쓴다 — 검사는 다른 값을 볼 수 있다)"
+          fi
+          nseen["$gk|$nk"]=1
+          [[ -n ${nfold["$gk|${nk,,}"]:-} ]] || nfold["$gk|${nk,,}"]=$nk
+          if [[ $nk == *[^\ -~]* ]]; then
+            fail "11.7 FMT-kust-keys" "$x $it: 키 '$nk'에 ASCII 밖 글자 — kustomize(encoding/json)는 중첩 구조체 필드도 유니코드 단순 접기(ſ → s · 켈빈 K → k)로 맞춘다(정본 철자는 모두 ASCII)"
+            continue
+          fi
+          for c in $ns; do
+            if [[ ${c,,} == "${nk,,}" && $c != "$nk" ]]; then
+              fail "11.7 FMT-kust-keys" "$x $it: 키 '$nk' — ${KUST_NESTED_TYPE[$lk]} 정본 철자 '$c'와 대소문자만 다르다(kustomize는 같은 필드로 읽는데 검사는 정본 철자만 본다 — 리뷰 B: patches: [{Path: <URL>}]가 원격 내용을 렌더에 넣었다)"
+            fi
+          done ;;
+        *) fail "11.7 FMT-kust-keys" "$rk: yq 추출 행을 해석할 수 없다(종류 '${f[0]:0:12}') — fail-closed" ;;
+      esac
+    done <<< "$out"
+  done
+  if [[ $nkf -eq 0 ]]; then
+    finish_group "11.7 FMT-kust-keys" "kustomization 파일 0개 — 대상 없음" "$f7"
+  else
+    finish_group "11.7 FMT-kust-keys" "kustomization 파일 ${nkf}개 · 최상위 키 ${nkey}개 모두 정본 철자(kustomize 5.8.1 Kustomization 필드) · 중복 · 앵커 · 별칭 · 병합 키 · 태그 0 · 중첩(경로를 받는 구조체 항목 ${nsi}개의 직속 키 ${nnk}개 — patches · patchesJson6902 · replacements · configMapGenerator · secretGenerator · helmCharts · helmGlobals · openapi) 정본 철자 · ASCII 밖 · 중복 0" "$f7"
+  fi
+}
+
+# 11.6 — clusters/oci-k3s/apps/(APP_APPS_DIR — root Application의 directory source) 바로 아래 항목: *.yaml · *.yml 파일과 README.md만. 11.3(directory
+#   source 경로만 — kustomization 파일이 있는 디렉터리는 directory source가 아니다)과 달리 이 디렉터리는 늘 본다
+check_11_dirsource_files() {
+  # 머리 줄에 「하위 디렉터리 금지」 글자를 쓰지 않는다 — 자기검사 fmt-dirsource-link가 그 글자가 출력에 없음을 단언한다(11.3의 링크 판정)
+  header 11.6 "directory source 파일(T075 보정 2026-11-18) — $APP_APPS_DIR 바로 아래 = *.yaml · *.yml · README.md만(kustomization 파일 · 다른 확장자 · 하위 디렉터리는 FAIL)"
+  local LC_ALL=C
+  local f6=$N_FAIL d e b lb x n=0 ny=0 nr=0
+  local -a ents=()
+  d="$ROOT/$APP_APPS_DIR"
+  if [[ ! -e $d && ! -L $d ]]; then
+    pass "11.6 FMT-dirsource-files" "$APP_APPS_DIR 없음 — 대상 없음"
+    return 0
+  fi
+  if [[ -L $d || ! -d $d ]]; then
+    fail "11.6 FMT-dirsource-files" "$APP_APPS_DIR: 디렉터리가 아니다(링크 · 파일) — fail-closed"
+    return 0
+  fi
+  mapfile -d '' -t ents < <(find "$d" -mindepth 1 -maxdepth 1 -print0 2>/dev/null | sort -z)
+  for e in "${ents[@]}"; do
+    n=$((n + 1)); b=${e##*/}; lb=${b,,}; x="$APP_APPS_DIR/${b//[[:cntrl:]]/?}"
+    if [[ -L $e ]]; then
+      fail "11.6 FMT-dirsource-files" "$x: 심볼릭 링크 — 일반 파일만(11.5 FMT-symlink도 건다)"
+    elif [[ -d $e ]]; then
+      fail "11.6 FMT-dirsource-files" "$x: 하위 디렉터리 금지(directory source는 recurse 없이 바로 아래만 읽는다 — 그 아래는 어느 검사 · 관문의 열거에도 들지 않는다)"
+    elif [[ ! -f $e ]]; then
+      fail "11.6 FMT-dirsource-files" "$x: 일반 파일이 아니다 — fail-closed"
+    elif [[ $lb == kustomization.yaml || $lb == kustomization.yml || $lb == kustomization ]]; then
+      fail "11.6 FMT-dirsource-files" "$x: kustomization 파일 금지(대소문자 무관) — 있으면 Argo가 이 디렉터리를 kustomize로 렌더해, 그 렌더가 끌어오는 아무 파일의 Application이 파일 검사(7.1 · 14.0)와 승인 관문(*-prod.yaml)을 비켜 간다"
+    elif [[ $b == *.yaml || $b == *.yml ]]; then
+      ny=$((ny + 1))
+    elif [[ $b == README.md ]]; then
+      nr=$((nr + 1))
+    else
+      fail "11.6 FMT-dirsource-files" "$x: *.yaml · *.yml · README.md 밖의 이름 금지(directory source는 .json · .jsonnet도 Application으로 읽고, 승인 관문은 *-prod.yaml만 알아본다)"
+    fi
+  done
+  finish_group "11.6 FMT-dirsource-files" "$APP_APPS_DIR 바로 아래 항목 ${n}개 = *.yaml · *.yml ${ny}개 · README.md ${nr}개 — kustomization 파일 · 다른 확장자 · 하위 디렉터리 0" "$f6"
+}
+
+# -----------------------------------------------------------------------------
+# 검사 3.9 · 7.5 · 13.7 · 14(T075) — 계약 §validate.yml 3 · 4 · 6 「(T075 보정 2026-11-17)」. 검사 번호 · 이름 · FAIL 조건의 정본은 설계 D9와 그 계약 줄이고,
+#   표(APP_*)는 이 파일의 단일 코드 사본이다. 공용 도구: ap_tables(표 → 조회용 맵) · ap_extract(행 추출 · 모양 확인 — fail-closed) · ap_collect(overlay
+#   렌더의 행을 종류별로 한 번만) · ap_ovl(overlay 렌더의 pod · env) · ap_objns(객체 → ns) · ap_unjson(JSON 문자열 → 글자) · ap_gk(apiVersion · kind →
+#   <group>/<kind>) · ap_list(정렬해 쉼표로 잇기). 보지 않는 것은 tests/README.md 「검사 3.9 · 13.7 · 14가 보지 않는 것」.
+# -----------------------------------------------------------------------------
+declare -A AP_ALIAS=() AP_HADMIN=() AP_CMSPEC=() AP_CMKEYS=() AP_ESROW=() AP_ESN=() AP_ENVTAB=() AP_EXMAX=() AP_M2MP=()
+AP_TABLES_DONE=0
+ap_tables() {
+  local p a h k d v e sk dk pk pr w c names n
+  [[ $AP_TABLES_DONE == 0 ]] || return 0
+  AP_TABLES_DONE=1
+  while read -r p a h; do [[ -n $p ]] || continue; AP_ALIAS[$p]=$a; AP_HADMIN[$p]=$h; done <<< "$APP_POD_TABLE"
+  while read -r p k d v; do
+    [[ -n $p ]] || continue
+    AP_CMSPEC["$p dev $k"]=$d; AP_CMSPEC["$p prod $k"]=$v; AP_CMKEYS[$p]+="$k "
+  done <<< "$APP_CM_TABLE"
+  while read -r p e sk dk pk pr; do
+    [[ -n $p ]] || continue
+    n=${AP_ESN["$p $e"]:-0}
+    AP_ESROW["$p $e dev $n"]="$sk · $dk · $pr"; AP_ESROW["$p $e prod $n"]="$sk · $pk · $pr"
+    AP_ESN["$p $e"]=$((n + 1))
+  done <<< "$APP_ES_TABLE"
+  while read -r p k w c names; do [[ -n $p ]] || continue; AP_ENVTAB["$p $k $w $c"]=$names; done <<< "$APP_ENV_TABLE"
+  while read -r p names; do [[ -n $p ]] || continue; AP_EXMAX[$p]=$names; done <<< "$APP_EXEMPT_MAX"
+  while read -r p a h; do [[ -n $p ]] || continue; AP_M2MP[$p]+="$a($h)"$'\n'; done <<< "$APP_M2M_PATHS"
+}
+AP_X=''; AP_XWHY=''
+ap_extract() { # <SRC 인덱스> <yq 식> <종류=구분자 수 …> → 전역 AP_X(모양을 확인한 행들). yq 실패 · 행 모양 이상이면 1과 전역 AP_XWHY(사유)
+  local i=$1 expr=$2 out line typ nsep kv
+  local -A want=()
+  for kv in $3; do want[${kv%%=*}]=${kv#*=}; done
+  AP_X=''; AP_XWHY=''
+  if ! out=$(src_extract "$i" "$expr" 2>/dev/null); then AP_XWHY='yq 추출 실패'; return 1; fi
+  while IFS= read -r line; do
+    [[ -n $line ]] || continue
+    typ=${line%%"$YQ_SEP"*}
+    nsep=${line//[!$YQ_SEP]/}; nsep=${#nsep}
+    if [[ -z $typ || $typ == "$line" || -z ${want[$typ]:-} || $nsep != "${want[$typ]}" ]]; then
+      AP_XWHY="추출 행 모양 이상(종류 '${typ:0:12}' · 구분자 ${nsep}개 — 값에 줄바꿈 · 구분 문자가 든 이름 등)"
+      return 1
+    fi
+    AP_X+="$line"$'\n'
+  done <<< "$out"
+  return 0
+}
+AP_S=''
+ap_unjson() { # <JSON 문자열> → 전역 AP_S(글자). 문자열이 아니거나 이스케이프(\)가 들었으면 1 — 판정하지 않는다(호출한 쪽이 fail-closed)
+  local j=$1
+  AP_S=''
+  [[ ${#j} -ge 2 && ${j:0:1} == '"' && ${j: -1} == '"' ]] || return 1
+  j=${j:1:${#j}-2}
+  [[ $j != *\\* ]] || return 1
+  AP_S=$j
+}
+AP_GK=''
+ap_gk() { # <apiVersion> <kind> → 전역 AP_GK = <group>/<kind>(core group은 빈 글자 — "/ConfigMap")
+  if [[ $1 == */* ]]; then AP_GK="${1%/*}/$2"; else AP_GK="/$2"; fi
+}
+ap_gkshow() { # <group>/<kind> → 사람용(core group은 ""/<kind> — 계약 표기)
+  if [[ $1 == /* ]]; then printf '""%s' "$1"; else printf '%s' "$1"; fi
+}
+ap_list() { # <항목>... → 정렬해 ", "로 이은 한 줄(빈 항목은 뺀다)
+  [[ $# -gt 0 ]] || return 0
+  printf '%s\n' "$@" | LC_ALL=C sort -u | sed '/^$/d' | awk 'NR > 1 { printf ", " } { printf "%s", $0 }'
+}
+AP_OVL=()
+declare -A AP_R=() AP_RERR=() AP_NS=()
+AP_POD=''; AP_ENV=''; AP_INTAB=0; AP_NOBJ=0
+AP_COLLECT_DONE=0
+ap_collect() { # overlay 렌더(apps/<pod>/overlays/<env>)마다 행을 종류별로 한 번만 뽑는다 → AP_OVL · AP_R["<idx> <종류>"] · AP_RERR[<idx>]
+  local i kind expr spec
+  [[ $AP_COLLECT_DONE == 0 ]] || return 0
+  AP_COLLECT_DONE=1
+  ap_tables
+  for ((i = 0; i < SRC_N; i++)); do
+    [[ ${SRC_KIND[$i]} == rendered && ${SRC_PATH[$i]} =~ ^apps/[^/]+/overlays/[^/]+$ ]] || continue
+    AP_OVL+=("$i")
+    for kind in obj svc pod env cm es ing mw; do
+      case $kind in
+        obj) expr=$YQ_AP_OBJ; spec='O=4' ;;
+        svc) expr=$YQ_AP_SVC; spec='S=5' ;;
+        pod) expr=$YQ_AP_POD; spec='P=3 C=5 V=4' ;;
+        env) expr=$YQ_AP_ENV; spec='E=7 F=8' ;;
+        cm) expr=$YQ_AP_CM; spec='M=2 K=4' ;;
+        es) expr=$YQ_AP_ES; spec='X=12 D=7 T=2' ;;
+        ing) expr=$YQ_AP_ING; spec='I=10 R=4 H=8' ;;
+        mw) expr=$YQ_AP_MW; spec='W=4' ;;
+      esac
+      if ap_extract "$i" "$expr" "$spec"; then
+        AP_R["$i $kind"]=$AP_X
+      else
+        AP_RERR[$i]+="${AP_RERR[$i]:+ · }$kind $AP_XWHY"
+      fi
+    done
+  done
+}
+ap_ovl() { # <SRC 인덱스> → 전역 AP_POD · AP_ENV · AP_INTAB(pod 표의 pod이고 env가 dev|prod면 1) · AP_NS · AP_NOBJ(ap_objns)
+  [[ ${SRC_PATH[$1]} =~ ^apps/([^/]+)/overlays/([^/]+)$ ]] || return 1
+  AP_POD=${BASH_REMATCH[1]}; AP_ENV=${BASH_REMATCH[2]}
+  AP_INTAB=0
+  if [[ -n ${AP_ALIAS[$AP_POD]:-} && ( $AP_ENV == dev || $AP_ENV == prod ) ]]; then AP_INTAB=1; fi
+  ap_objns "$1"
+}
+ap_objns() { # <SRC 인덱스> → 전역 AP_NS["<kind>/<이름>"] = ns · AP_NOBJ(객체 수) — O 행(ap_collect)
+  local t k av ns n
+  AP_NS=(); AP_NOBJ=0
+  while IFS=$YQ_SEP read -r t k av ns n; do
+    [[ $t == O ]] || continue
+    AP_NOBJ=$((AP_NOBJ + 1)); AP_NS["$k/$n"]=$ns
+  done <<< "${AP_R["$1 obj"]:-}"
+}
+
+# 3.9 ES-app — apps/**의 ExternalSecret(원본 + 렌더) 일반 규약 · overlay 렌더의 pod 표(이름 · store · data[] · 항목 키 · template = base)
+check_3_es_app() {
+  header 3.9 "앱 ExternalSecret(T075) — apps/** 원본 + 렌더: dataFrom · templateFrom · target.template · mergePolicy · refreshInterval · refreshPolicy · creationPolicy / overlay 렌더: pod 표(이름 · store · data[] · 항목 키 · template = base)"
+  need_tool "3.9 ES-app" yq || return 0
+  local f9=$N_FAIL i p typ n ns tn ht mp tj ssr ri rp cp hdf ntf x nf=0 nr=0 nov=0
+  local pod ov e m got want typ2 n2 idx ik sk rk key prop exp
+  local -A btj=()
+  ap_tables
+  for ((i = 0; i < SRC_N; i++)); do
+    p=${SRC_PATH[$i]}
+    [[ $p == apps/* ]] || continue
+    if ! ap_extract "$i" "$YQ_AP_ES" 'X=12 D=7 T=2'; then
+      fail "3.9 ES-app" "${SRC_LABEL[$i]}: ExternalSecret $AP_XWHY — 판정할 수 없다(fail-closed)"
+      continue
+    fi
+    while IFS=$YQ_SEP read -r typ n ns tn ht mp tj ssr ri rp cp hdf ntf; do
+      [[ $typ == X ]] || continue
+      if [[ ${SRC_KIND[$i]} == rendered ]]; then nr=$((nr + 1)); else nf=$((nf + 1)); fi
+      x="${SRC_LABEL[$i]} ExternalSecret/$ns/$n"
+      [[ $hdf == false ]] || fail "3.9 ES-app" "$x: dataFrom 금지 — 키 목록을 매니페스트가 정하지 않는다(data[]만)"
+      [[ $ntf == 0 ]] || fail "3.9 ES-app" "$x: templateFrom 금지(어느 자리든 — 다른 ConfigMap · Secret의 템플릿을 끌어온다)"
+      if [[ $ht != true ]]; then
+        fail "3.9 ES-app" "$x: target.template 없음 — Secret의 키 · 값 꼴을 매니페스트가 정해야 한다"
+      elif [[ $mp == Merge ]]; then
+        fail "3.9 ES-app" "$x: target.template.mergePolicy Merge 금지 — data[]의 키가 Secret에 그대로 섞인다"
+      fi
+      [[ $ri == '"5m"' ]] || fail "3.9 ES-app" "$x: refreshInterval $ri ≠ \"5m\""
+      [[ $rp == '"Periodic"' ]] || fail "3.9 ES-app" "$x: refreshPolicy $rp ≠ \"Periodic\""
+      [[ $cp == '"Owner"' ]] || fail "3.9 ES-app" "$x: target.creationPolicy $cp ≠ \"Owner\""
+      if [[ ${SRC_KIND[$i]} == rendered && $p =~ ^apps/([^/]+)/base$ ]]; then btj["${BASH_REMATCH[1]} $n"]=$tj; fi
+    done <<< "$AP_X"
+  done
+  if [[ ${TOOL_OK[kustomize]:-0} == 1 ]]; then
+    ap_collect
+    for i in "${AP_OVL[@]}"; do
+      ap_ovl "$i" || continue
+      [[ $AP_INTAB == 1 ]] || continue   # 표에 없는 pod · env — 14.2가 건다
+      pod=$AP_POD; ov=$AP_ENV
+      if [[ -n ${AP_RERR[$i]:-} ]]; then fail "3.9 ES-app" "${SRC_LABEL[$i]}: ${AP_RERR[$i]} — 판정할 수 없다(fail-closed)"; continue; fi
+      while IFS=$YQ_SEP read -r typ n ns tn ht mp tj ssr ri rp cp hdf ntf; do
+        [[ $typ == X ]] || continue
+        nov=$((nov + 1))
+        x="${SRC_LABEL[$i]} ExternalSecret/$ns/$n"
+        if [[ $n != "$pod-env" && $n != "$pod-migrate" ]]; then
+          fail "3.9 ES-app" "$x: 이름 '$n' ∉ {$pod-env, $pod-migrate}(pod 표 — overlay 렌더의 ExternalSecret은 이 둘뿐이다)"
+          continue
+        fi
+        want="{\"kind\":\"ClusterSecretStore\",\"name\":\"vault-$ov\"}"
+        [[ $ssr == "$want" ]] || fail "3.9 ES-app" "$x: secretStoreRef $ssr ≠ $want"
+        if [[ -z ${btj["$pod $n"]+set} ]]; then
+          fail "3.9 ES-app" "$x: apps/$pod/base 렌더에 같은 이름의 ExternalSecret이 없다 — target.template을 대조할 수 없다(fail-closed)"
+        elif [[ $tj != "${btj["$pod $n"]}" ]]; then
+          fail "3.9 ES-app" "$x: target.template ≠ apps/$pod/base 렌더의 같은 이름 ExternalSecret의 것(키 집합 · 값 글자 그대로 — engineVersion · mergePolicy · data)"
+        fi
+        e=${n#"$pod"-}; m=${AP_ESN["$pod $e"]:-0}; got=0
+        while IFS=$YQ_SEP read -r typ2 n2 idx ik sk rk key prop; do
+          [[ $typ2 == D && $n2 == "$n" ]] || continue
+          got=$((got + 1))
+          [[ $ik == remoteRef,secretKey ]] || fail "3.9 ES-app" "$x: data[$idx] 키 [$ik] ≠ {remoteRef, secretKey}"
+          [[ $rk == key,property ]] || fail "3.9 ES-app" "$x: data[$idx].remoteRef 키 [$rk] ≠ {key, property}"
+          exp=${AP_ESROW["$pod $e $ov $idx"]:-}
+          [[ -z $exp || "$sk · $key · $prop" == "$exp" ]] \
+            || fail "3.9 ES-app" "$x: data[$idx] = ($sk · $key · $prop) ≠ pod 표 ($exp) — secretKey · remoteRef.key · property(순서 포함)"
+        done < <(printf '%s' "${AP_R["$i es"]:-}")
+        [[ $got == "$m" ]] || fail "3.9 ES-app" "$x: data[] ${got}개 ≠ pod 표 ${m}개"
+      done < <(printf '%s' "${AP_R["$i es"]:-}")
+    done
+  fi
+  if [[ $((nf + nr)) -eq 0 ]]; then
+    finish_group "3.9 ES-app" "apps/** ExternalSecret 0개(원본 0 · 렌더 0) — 대상 0" "$f9"
+  else
+    finish_group "3.9 ES-app" "apps/** ExternalSecret $((nf + nr))개(원본 $nf · 렌더 $nr): dataFrom · templateFrom 없음 · target.template 있음 · mergePolicy Merge 아님 · refreshInterval 5m · refreshPolicy Periodic · creationPolicy Owner · overlay 렌더 ExternalSecret ${nov}개 = pod 표(이름 · store · data[] · 항목 키 · template = base)" "$f9"
+  fi
+}
+
+# 7.5 WAVE-argocd-placeholder — platform/argocd의 kustomization = 자리표시(최상위 키 {apiVersion, kind, resources} · resources [])
+check_7_argocd_placeholder() {
+  header 7.5 "Argo CD 자기 관리 경로(T075) — $ARGOCD_PLACEHOLDER_DIR = 자리표시(platform-argocd의 source.path = $ARGOCD_SELF_PATH 하나는 7.1)"
+  local f5=$N_FAIL kf kn rk keys res n=0 why='자리표시다(계약 §validate.yml 6 「Argo CD 자기 관리 경로」 — 이 디렉터리를 쓰려면 계약을 먼저 고친다)'
+  local -a kfs=()
+  # kustomize · Argo가 kustomization으로 보는 이름 셋 모두(kust_file_in은 첫 하나만 준다 — 이름 변형 · 여럿을 함께 본다 · T075 보정 2026-11-18 G1A-5)
+  for kn in kustomization.yaml kustomization.yml Kustomization; do
+    if [[ -f $ROOT/$ARGOCD_PLACEHOLDER_DIR/$kn ]]; then kfs+=("$ROOT/$ARGOCD_PLACEHOLDER_DIR/$kn"); fi
+  done
+  if [[ ${#kfs[@]} -eq 0 ]]; then
+    pass "7.5 WAVE-argocd-placeholder" "$ARGOCD_PLACEHOLDER_DIR/kustomization.yaml 없음 — 대상 없음"
+    return 0
+  fi
+  need_tool "7.5 WAVE-argocd-placeholder" yq || return 0
+  for kf in "${kfs[@]}"; do
+    n=$((n + 1)); rk=$(rel "$kf")
+    if ! keys=$(yq -N 'explode(.) | keys | map(tostring) | sort | join(",")' "$kf" 2>/dev/null | tr -d '\r') \
+      || ! res=$(yq -N 'explode(.) | .resources | to_json(0)' "$kf" 2>/dev/null | tr -d '\r'); then
+      fail "7.5 WAVE-argocd-placeholder" "$rk: yq로 풀어 읽지 못했다 — 자리표시인지 판정할 수 없다(fail-closed)"
+      continue
+    fi
+    [[ $keys == apiVersion,kind,resources ]] || fail "7.5 WAVE-argocd-placeholder" "$rk: 최상위 키 [${keys//$'\n'/ | }] ≠ {apiVersion, kind, resources} — $why"
+    [[ $res == '[]' ]] || fail "7.5 WAVE-argocd-placeholder" "$rk: resources ${res//$'\n'/ | } ≠ [] — $why"
+  done
+  if [[ $n -eq 1 ]]; then
+    finish_group "7.5 WAVE-argocd-placeholder" "$rk = 자리표시(최상위 키 {apiVersion, kind, resources} · resources [])" "$f5"
+  else
+    finish_group "7.5 WAVE-argocd-placeholder" "$ARGOCD_PLACEHOLDER_DIR의 kustomization 파일 ${n}개 모두 = 자리표시(최상위 키 {apiVersion, kind, resources} · resources [])" "$f5"
+  fi
+}
+
+# 13.7 RBAC-appproject — AppProject의 자리(파일 + 렌더 — DOC_ROWS)와 그 두 렌더의 dev/prod 꼴. 부분 트리에서도 그대로 본다(13의 완전성 예외)
+check_13_appproject() {
+  header 13.7 "AppProject(T075) — 자리(clusters/oci-k3s/projects · bootstrap/argocd 렌더와 그 원본만) · dev/prod 꼴(허용 목록 8종 · 금지 ⊇ 6종 · destination 하나 · clusterResourceWhitelist [])"
+  need_tool "13.7 RBAC-appproject" yq || return 0
+  need_tool "13.7 RBAC-appproject" kustomize || return 0
+  local f7=$N_FAIL i idx nk tg hk kd av ik nm p ok nr=0 nf=0 nsh=0 nmiss=0 kf rdir typ n ns ds cw hw hb lst g k gk e x want d
+  local -a miss=() extra=() dup=()
+  local -A have=() wl=() bl=()
+  collect_doc_rows
+  for ((i = 0; i < SRC_N; i++)); do
+    if [[ ${SRC_KIND[$i]} == rendered ]]; then have[${SRC_PATH[$i]}]=1; fi
+  done
+  for kf in "${KUST_FILES[@]}"; do
+    rdir=${kf%/*}
+    if [[ $rdir == "$ROOT" ]]; then rdir='.'; else rdir=${rdir#"$ROOT"/}; fi
+    if [[ -z ${have[$rdir]:-} ]]; then nmiss=$((nmiss + 1)); fi
+  done
+  # (자리) 파일 + 렌더의 kind AppProject(argoproj.io/…)
+  while IFS="$YQ_SEP" read -r i idx nk tg hk kd av ik nm; do
+    [[ -n $i && $nk == map && $kd == AppProject && $av =~ $RE_ARGO_API ]] || continue
+    p=${SRC_PATH[$i]}; ok=0
+    if [[ ${SRC_KIND[$i]} == rendered ]]; then
+      nr=$((nr + 1))
+      for d in $APP_PROJ_DIRS; do [[ $p != "$d" ]] || ok=1; done
+    else
+      nf=$((nf + 1))
+      for d in $APP_PROJ_DIRS; do [[ $p != "$d"/* ]] || ok=1; done
+    fi
+    [[ $ok == 1 ]] || fail "13.7 RBAC-appproject" "${SRC_LABEL[$i]} AppProject/$nm: AppProject는 clusters/oci-k3s/projects 렌더와 그것을 base로 포함하는 bootstrap/argocd 렌더에만 — 다른 자리의 AppProject는 승인 관문 밖에서 dev/prod 경계를 바꾼다(platform 프로젝트는 argocd ns에 쓸 수 있다)"
+  done < <(printf '%s' "$DOC_ROWS")
+  # (꼴) 그 두 렌더의 dev · prod
+  for ((i = 0; i < SRC_N; i++)); do
+    [[ ${SRC_KIND[$i]} == rendered && " $APP_PROJ_DIRS " == *" ${SRC_PATH[$i]} "* ]] || continue
+    if ! ap_extract "$i" "$YQ_AP_PROJ" 'Q=6 G=4'; then
+      fail "13.7 RBAC-appproject" "${SRC_LABEL[$i]}: AppProject $AP_XWHY — 판정할 수 없다(fail-closed)"
+      continue
+    fi
+    wl=(); bl=()
+    while IFS=$YQ_SEP read -r typ n lst g k; do
+      [[ $typ == G ]] || continue
+      if [[ $lst == white ]]; then wl["$n $g/$k"]=$(( ${wl["$n $g/$k"]:-0} + 1 )); else bl["$n $g/$k"]=1; fi
+    done <<< "$AP_X"
+    while IFS=$YQ_SEP read -r typ n ns ds cw hw hb; do
+      [[ $typ == Q && ( $n == dev || $n == prod ) ]] || continue
+      nsh=$((nsh + 1)); x="${SRC_LABEL[$i]} AppProject/$n"
+      miss=(); extra=(); dup=()
+      for gk in $APP_KIND_WHITELIST; do [[ -n ${wl["$n $gk"]:-} ]] || miss+=("$(ap_gkshow "$gk")"); done
+      for e in "${!wl[@]}"; do
+        [[ ${e%% *} == "$n" ]] || continue
+        gk=${e#* }
+        [[ " $APP_KIND_WHITELIST " == *" $gk "* ]] || extra+=("$(ap_gkshow "$gk")")
+        [[ ${wl[$e]} -le 1 ]] || dup+=("$(ap_gkshow "$gk")")
+      done
+      if [[ ${#miss[@]} -gt 0 || ${#extra[@]} -gt 0 ]]; then
+        fail "13.7 RBAC-appproject" "$x: namespaceResourceWhitelist ≠ 허용 목록 8종(group 포함 · 순서 무관) — 빠짐 [$(ap_list "${miss[@]}")] 여분 [$(ap_list "${extra[@]}")]"
+      fi
+      [[ ${#dup[@]} -eq 0 ]] || fail "13.7 RBAC-appproject" "$x: namespaceResourceWhitelist 중복 [$(ap_list "${dup[@]}")]"
+      miss=()
+      for gk in $APP_PROJ_BLACKLIST; do [[ -n ${bl["$n $gk"]:-} ]] || miss+=("$(ap_gkshow "$gk")"); done
+      [[ ${#miss[@]} -eq 0 ]] || fail "13.7 RBAC-appproject" "$x: namespaceResourceBlacklist에 금지 6종 중 빠짐 [$(ap_list "${miss[@]}")](⊇ 6종 — 허용 목록의 둘째 겹)"
+      want="[{\"namespace\":\"jt-$n\",\"server\":\"$APP_DEST_SERVER\"}]"
+      [[ $ds == "$want" ]] || fail "13.7 RBAC-appproject" "$x: destinations $ds ≠ $want(정확히 하나 · name 금지)"
+      [[ $cw == '[]' ]] || fail "13.7 RBAC-appproject" "$x: clusterResourceWhitelist $cw ≠ [](cluster 리소스 금지)"
+    done <<< "$AP_X"
+  done
+  if [[ $nmiss -gt 0 ]]; then
+    printf '  13.7 렌더가 없는 kustomization %d개 — 그 렌더의 AppProject를 보지 못했다(13.0 · 검사 1의 FAIL) — 13.7 그룹 PASS 줄을 찍지 않는다\n' "$nmiss"
+    return 0
+  fi
+  if [[ $((nr + nf)) -eq 0 ]]; then
+    finish_group "13.7 RBAC-appproject" "AppProject 0개 — 대상 없음(대상 0)" "$f7"
+  else
+    finish_group "13.7 RBAC-appproject" "AppProject $((nr + nf))개(렌더 $nr · 원본 $nf) 모두 clusters/oci-k3s/projects · bootstrap/argocd에만 · 렌더의 dev/prod ${nsh}개 = 계약 꼴(허용 목록 8종 · 금지 ⊇ 6종 · destination 하나 · clusterResourceWhitelist [])" "$f7"
+  fi
+}
+
+# 14.0 APP-app — clusters/oci-k3s/apps 파일의 결합(문서 하나 · Application · 이름 = 파일 이름) · 앱 Application의 꼴 · 그 source.path 렌더의 ns · cluster 범위
+declare -A AP_CK=()
+AP_CK_DONE=0
+ap_ckinds() { # cluster 범위 kind 표 → AP_CK["<group>/<kind>"](내장 APP_CLUSTER_KINDS + 저장소 렌더 CRD의 spec.scope: Cluster). 읽지 못한 렌더는 1(fail-closed)
+  local i gk typ g k sc rc=0
+  [[ $AP_CK_DONE == 0 ]] || return 0
+  AP_CK_DONE=1
+  for gk in $APP_CLUSTER_KINDS; do AP_CK[$gk]=builtin; done
+  for ((i = 0; i < SRC_N; i++)); do
+    [[ ${SRC_KIND[$i]} == rendered && ${SRC_CONTENT[$i]} == *CustomResourceDefinition* ]] || continue
+    if ! ap_extract "$i" "$YQ_AP_CRD" 'R=3'; then
+      fail "14.0 APP-app" "${SRC_LABEL[$i]}: CRD $AP_XWHY — cluster 범위 kind 표를 만들 수 없다(fail-closed)"
+      rc=1; continue
+    fi
+    while IFS=$YQ_SEP read -r typ g k sc; do
+      if [[ $typ == R && $sc == Cluster ]]; then AP_CK["$g/$k"]="CRD ${SRC_PATH[$i]}"; fi
+    done <<< "$AP_X"
+  done
+  return "$rc"
+}
+check_14_0_app() {
+  local f0=$N_FAIL d fpath rf base rows line idx nk tg hk kd av ik nm ndoc nf=0 na=0 nr=0 no=0 nmiss=0 nnr=0 nprj=0 x msg pre
+  local typ name ns fz sk proj path ds dn sp mn rt so ov want i ri t k o_av o_ns o_n
+  local -a files=() names=() kinds=()
+  d="$ROOT/$APP_APPS_DIR"
+  if [[ -d $d ]]; then mapfile -d '' -t files < <(find "$d" -mindepth 1 -maxdepth 1 -type f \( -name '*.yaml' -o -name '*.yml' \) -print0 | LC_ALL=C sort -z); fi
+  for fpath in "${files[@]}"; do
+    nf=$((nf + 1)); rf=$(rel "$fpath"); base=${fpath##*/}; base=${base%.*}
+    if ! rows=$(yq -N "$YQ_DOCS" "$fpath" 2>/dev/null | tr -d '\r' | sed '/^[[:space:]]*$/d'); then
+      fail "14.0 APP-app" "$rf: yq로 읽지 못했다 — 파일 결합을 판정할 수 없다(fail-closed)"
+      continue
+    fi
+    ndoc=0; names=(); kinds=()
+    while IFS="$YQ_SEP" read -r idx nk tg hk kd av ik nm; do
+      [[ -n $idx ]] || continue
+      if [[ $nk == scalar && $tg == '!!null' ]]; then continue; fi   # 빈 문서(주석뿐 · 끝의 ---)
+      ndoc=$((ndoc + 1)); names+=("$nm"); kinds+=("$kd"$'\t'"$av")
+    done <<< "$rows"
+    if [[ $ndoc -ne 1 ]]; then
+      fail "14.0 APP-app" "$rf: 문서 ${ndoc}개 — 파일 하나에 Application 문서 하나(directory source · 승인 관문이 파일 이름으로 prod Application을 알아본다)"
+    else
+      kd=${kinds[0]%%$'\t'*}; av=${kinds[0]#*$'\t'}
+      [[ $kd == Application && $av =~ $RE_ARGO_API ]] || fail "14.0 APP-app" "$rf: kind '$kd'(apiVersion '$av') — Application(argoproj.io/…)만"
+      [[ ${names[0]} == "$base" ]] || fail "14.0 APP-app" "$rf: metadata.name '${names[0]}' ≠ 파일 이름 '$base'(승인 관문이 파일 이름으로 prod Application을 알아본다)"
+    fi
+    # 앱 Application(이름 ^(.+)-(dev|prod)$) — 문서마다
+    if ! rows=$(yq -N "$YQ_AP_APP" "$fpath" 2>/dev/null | tr -d '\r' | sed '/^[[:space:]]*$/d'); then
+      fail "14.0 APP-app" "$rf: yq로 읽지 못했다 — Application의 꼴을 판정할 수 없다(fail-closed)"
+      continue
+    fi
+    while IFS= read -r line; do
+      [[ -n $line ]] || continue
+      t=${line//[!$YQ_SEP]/}
+      if [[ ${line:0:1} != P || ${#t} -ne 12 ]]; then fail "14.0 APP-app" "$rf: 추출 행 모양 이상 — 판정할 수 없다(fail-closed)"; continue; fi
+      IFS=$YQ_SEP read -r typ name ns fz sk proj path ds dn sp mn rt so <<< "$line"
+      # (T075 보정 2026-11-18 — G1B-2) 이름과 무관하게: project dev/prod는 <pod>-<env> 이름(= 파일 이름 — 관문이 *-prod.yaml로 알아본다)만
+      if [[ $proj == dev || $proj == prod ]]; then
+        pre="^(.+)-${proj}\$"
+        [[ $name =~ $pre ]] || fail "14.0 APP-app" "$rf Application/$name: spec.project '$proj'인데 이름 ≠ ^(.+)-$proj\$ — dev/prod 프로젝트는 <pod>-<env> 꼴 이름(= 파일 이름 · 승인 관문이 *-prod.yaml로 알아본다)만 쓸 수 있다"
+        nprj=$((nprj + 1))
+      fi
+      [[ $name =~ ^(.+)-(dev|prod)$ ]] || continue
+      ov=${BASH_REMATCH[2]}; na=$((na + 1)); x="$rf Application/$name"
+      [[ $ns == argocd ]] || fail "14.0 APP-app" "$x: metadata.namespace '$ns' ≠ argocd"
+      [[ $proj == "$ov" ]] || fail "14.0 APP-app" "$x: spec.project '$proj' ≠ $ov(앱 Application의 project는 env — platform · tests는 jt-*를 destination으로 가져 project 한 줄로 경계가 풀린다)"
+      [[ $dn == false ]] || fail "14.0 APP-app" "$x: spec.destination.name 금지(server · namespace만)"
+      want="{\"namespace\":\"jt-$ov\",\"server\":\"$APP_DEST_SERVER\"}"
+      [[ $ds == "$want" ]] || fail "14.0 APP-app" "$x: spec.destination $ds ≠ $want"
+      [[ $sk == "$APP_SPEC_KEYS" ]] || fail "14.0 APP-app" "$x: spec 키 [$sk] ≠ {destination, project, source, syncPolicy}"
+      [[ $mn == false ]] || fail "14.0 APP-app" "$x: syncPolicy.managedNamespaceMetadata 금지(ns 소유 = platform-policies)"
+      [[ $so != *CreateNamespace* ]] || fail "14.0 APP-app" "$x: syncOptions의 CreateNamespace 금지(ns 소유 = platform-policies)"
+      [[ $rt == false ]] || fail "14.0 APP-app" "$x: syncPolicy.retry 금지(Degraded 경로는 머지 전 시드 · 게이트 출력으로 막는다)"
+      if [[ $ov == dev ]]; then want=$APP_SYNC_DEV; else want=$APP_SYNC_PROD; fi
+      [[ $sp == "$want" ]] || fail "14.0 APP-app" "$x: syncPolicy $sp ≠ $want"
+      [[ $fz == "$APP_FINALIZERS" ]] || fail "14.0 APP-app" "$x: metadata.finalizers $fz ≠ $APP_FINALIZERS"
+      # source.path 렌더 — namespaced 객체의 ns = jt-<env> · cluster 범위 객체 0
+      path=${path%/}
+      if [[ ! -d $ROOT/$path ]]; then nmiss=$((nmiss + 1)); continue; fi
+      ri=''
+      for ((i = 0; i < SRC_N; i++)); do
+        if [[ ${SRC_KIND[$i]} == rendered && ${SRC_PATH[$i]} == "$path" ]]; then ri=$i; break; fi
+      done
+      if [[ -z $ri || ${TOOL_OK[kustomize]:-0} != 1 ]]; then nnr=$((nnr + 1)); continue; fi
+      if [[ -z ${AP_R["$ri obj"]+set} ]]; then
+        if ap_extract "$ri" "$YQ_AP_OBJ" 'O=4'; then AP_R["$ri obj"]=$AP_X; else fail "14.0 APP-app" "${SRC_LABEL[$ri]}: $AP_XWHY — 판정할 수 없다(fail-closed)"; continue; fi
+      fi
+      ap_ckinds || true
+      nr=$((nr + 1))
+      while IFS=$YQ_SEP read -r t k o_av o_ns o_n; do
+        [[ $t == O ]] || continue
+        no=$((no + 1))
+        ap_gk "$o_av" "$k"
+        if [[ -n ${AP_CK[$AP_GK]:-} ]]; then
+          fail "14.0 APP-app" "${SRC_LABEL[$ri]} $k/$o_ns/$o_n: cluster 범위 kind($(ap_gkshow "$AP_GK")) — 앱 렌더에 둘 수 없다(Application $name)"
+        elif [[ $o_ns != "jt-$ov" ]]; then
+          fail "14.0 APP-app" "${SRC_LABEL[$ri]} $k/$o_ns/$o_n: namespace '$o_ns' ≠ jt-$ov(Application $name의 source.path 렌더)"
+        fi
+      done <<< "${AP_R["$ri obj"]}"
+    done <<< "$rows"
+  done
+  if [[ $nf -eq 0 ]]; then
+    msg="$APP_APPS_DIR 파일 0개 — 대상 0"
+  else
+    msg="$APP_APPS_DIR 파일 ${nf}개: 문서 하나 · kind Application · metadata.name = 파일 이름 — 앱 Application ${na}개"
+    if [[ $na -eq 0 ]]; then
+      msg+="(대상 0)"
+    else
+      msg+=": 계약 꼴(namespace argocd · finalizer · project = env · destination · spec 키 · syncPolicy) · source.path 렌더 ${nr}개의 객체 ${no}개 ns = jt-<env> · cluster 범위 0"
+    fi
+    [[ $nmiss -eq 0 ]] || msg+=" · source.path 트리에 없음 ${nmiss}"
+    [[ $nnr -eq 0 ]] || msg+=" · source.path 렌더 없음 ${nnr}(검사 1)"
+    msg+=" · project dev/prod Application ${nprj}개 모두 이름 = ^(.+)-<project>\$"
+  fi
+  finish_group "14.0 APP-app" "$msg" "$f0"
+}
+
+ap_envbad() { # <env 이름> — 금지 env면 0(APP_ENV_FORBIDDEN · 접두 PG · 접미 _PROXY · 대소문자 무시 — ASCII)
+  local LC_ALL=C u
+  u=${1^^}
+  [[ " ${APP_ENV_FORBIDDEN//$'\n'/ } " == *" $u "* || $u == "$APP_ENV_FORBIDDEN_PREFIX"* || $u == *"$APP_ENV_FORBIDDEN_SUFFIX" ]]
+}
+ap_presync() { # <hook 어노테이션 JSON> — 쉼표 토큰(공백 제거)에 PreSync가 있으면 0
+  local t
+  local -a toks=()
+  ap_unjson "$1" || return 1
+  IFS=',' read -r -a toks <<< "$AP_S"
+  for t in "${toks[@]}"; do
+    t=${t//[[:space:]]/}
+    if [[ $t == PreSync ]]; then return 0; fi
+  done
+  return 1
+}
+
+# 14.1 APP-env — overlay 렌더의 pod 템플릿 컨테이너(init 포함). ①–③은 표에 없는 pod에도, ④는 pod 표의 pod에만 적용한다
+check_14_1_env() {
+  local f1=$N_FAIL i pod ov label nov=0 np=0 nc=0 line obj ns c x t name vk key pfx allowed want got where e
+  local bad='금지(금지 env 목록 — 대소문자 무시 · 접두 PG · 접미 _PROXY)'
+  local -a f=() vks=() migref=() ctrl=()
+  local -A cms=() cmk=() effk=() tplk=() secs=() estgt=() esmp=() esht=() phook=() envn=() efrom=()
+  for i in "${AP_OVL[@]}"; do
+    ap_ovl "$i" || continue
+    nov=$((nov + 1)); label=${SRC_LABEL[$i]}; pod=$AP_POD; ov=$AP_ENV
+    if [[ -n ${AP_RERR[$i]:-} ]]; then fail "14.1 APP-env" "$label: ${AP_RERR[$i]} — 판정할 수 없다(fail-closed)"; continue; fi
+    cms=(); cmk=(); effk=(); tplk=(); secs=(); estgt=(); esmp=(); esht=(); phook=(); envn=(); efrom=(); migref=(); ctrl=()
+    # 렌더의 ConfigMap(이름 → data 키) · ExternalSecret(target Secret → template.data 키 · Merge거나 template이 없으면 data[].secretKey도) · Secret 객체
+    while IFS= read -r line; do
+      [[ -n $line ]] || continue
+      IFS=$YQ_SEP read -r -a f <<< "$line"
+      case ${f[0]} in
+        M) cms[${f[1]}]=1 ;;
+        K) cmk[${f[1]}]+="${f[2]} " ;;
+      esac
+    done <<< "${AP_R["$i cm"]:-}"
+    while IFS= read -r line; do
+      [[ -n $line ]] || continue
+      IFS=$YQ_SEP read -r -a f <<< "$line"
+      [[ ${f[0]} == X ]] || continue
+      t=${f[3]}; [[ $t != - ]] || t=${f[1]}   # target.name이 없으면 ES 이름(ESO 기본값)
+      estgt[${f[1]}]=$t; esht[${f[1]}]=${f[4]}; esmp[${f[1]}]=${f[5]}; secs[$t]=1
+    done <<< "${AP_R["$i es"]:-}"
+    while IFS= read -r line; do
+      [[ -n $line ]] || continue
+      IFS=$YQ_SEP read -r -a f <<< "$line"
+      t=${estgt[${f[1]}]:-${f[1]}}
+      case ${f[0]} in
+        T) tplk[$t]+="${f[2]} "; effk[$t]+="${f[2]} " ;;
+        D) if [[ ${esmp[${f[1]}]:-} == Merge || ${esht[${f[1]}]:-} != true ]]; then effk[$t]+="${f[4]} "; fi ;;
+      esac
+    done <<< "${AP_R["$i es"]:-}"
+    while IFS= read -r line; do
+      [[ -n $line ]] || continue
+      IFS=$YQ_SEP read -r -a f <<< "$line"
+      if [[ ${f[0]} == O && ${f[1]} == Secret ]]; then secs[${f[4]}]=1; fi
+    done <<< "${AP_R["$i obj"]:-}"
+    # pod 템플릿 객체(hook) · 컨테이너 · 볼륨의 Secret
+    while IFS= read -r line; do
+      [[ -n $line ]] || continue
+      IFS=$YQ_SEP read -r -a f <<< "$line"
+      obj="${f[1]}/${f[2]}"
+      case ${f[0]} in
+        P) np=$((np + 1)); phook[$obj]=${f[3]} ;;
+        C) nc=$((nc + 1)); ctrl+=("$obj"$'\t'"${f[4]}") ;;
+        V) if [[ ${f[4]:-} == "$pod-migrate" ]]; then migref+=("$obj"$'\t'"volumes ${f[3]}"); fi ;;
+      esac
+    done <<< "${AP_R["$i pod"]:-}"
+    # ① 실효 env 이름 · ② 렌더 밖 참조 · ③의 재료(env · envFrom의 <pod>-migrate 참조)
+    while IFS= read -r line; do
+      [[ -n $line ]] || continue
+      IFS=$YQ_SEP read -r -a f <<< "$line"
+      obj="${f[1]}/${f[2]}"; c=${f[3]}; ns=${AP_NS[$obj]:--}
+      x="$label ${f[1]}/$ns/${f[2]} 컨테이너 $c"
+      if [[ ${f[0]} == E ]]; then
+        name=${f[4]}
+        envn["$obj $c"]+="$name "
+        if ap_envbad "$name"; then fail "14.1 APP-env" "$x: env 이름 '$name'(env[]) $bad"; fi
+        vks=()
+        if [[ -n ${f[5]:-} ]]; then IFS=',' read -r -a vks <<< "${f[5]}"; fi
+        for vk in "${vks[@]}"; do
+          case $vk in
+            fieldRef|resourceFieldRef|configMapKeyRef|secretKeyRef) ;;
+            *) fail "14.1 APP-env" "$x: env '$name' valueFrom.$vk 금지(fieldRef · resourceFieldRef · configMapKeyRef · secretKeyRef만)" ;;
+          esac
+        done
+        if [[ ${f[6]} != - && -z ${cms[${f[6]}]:-} ]]; then
+          fail "14.1 APP-env" "$x: env '$name' valueFrom.configMapKeyRef '${f[6]}' — 같은 렌더에 그 ConfigMap이 없다"
+        fi
+        if [[ ${f[7]} != - && -z ${secs[${f[7]}]:-} ]]; then
+          fail "14.1 APP-env" "$x: env '$name' valueFrom.secretKeyRef '${f[7]}' — 같은 렌더에 그 Secret(ExternalSecret target)이 없다"
+        fi
+        if [[ ${f[7]} == "$pod-migrate" ]]; then migref+=("$obj"$'\t'"env secretKeyRef"); fi
+      elif [[ ${f[0]} == F ]]; then
+        efrom["$obj $c"]+="${efrom["$obj $c"]:+,}${f[5]}"
+        pfx=${f[8]:-}
+        if [[ ${f[6]} != - ]]; then
+          if [[ -z ${cms[${f[6]}]:-} ]]; then
+            fail "14.1 APP-env" "$x: envFrom configMapRef '${f[6]}' — 같은 렌더에 그 ConfigMap이 없다"
+          else
+            for key in ${cmk[${f[6]}]:-}; do
+              if ap_envbad "$pfx$key"; then fail "14.1 APP-env" "$x: env 이름 '$pfx$key'(ConfigMap ${f[6]}) $bad"; fi
+            done
+          fi
+        fi
+        if [[ ${f[7]} != - ]]; then
+          if [[ -z ${secs[${f[7]}]:-} ]]; then
+            fail "14.1 APP-env" "$x: envFrom secretRef '${f[7]}' — 같은 렌더에 그 Secret(ExternalSecret target)이 없다"
+          else
+            for key in ${effk[${f[7]}]:-}; do
+              if ap_envbad "$pfx$key"; then fail "14.1 APP-env" "$x: env 이름 '$pfx$key'(Secret ${f[7]}) $bad"; fi
+            done
+          fi
+          if [[ ${f[7]} == "$pod-migrate" ]]; then migref+=("$obj"$'\t'"envFrom secretRef"); fi
+        fi
+      fi
+    done <<< "${AP_R["$i env"]:-}"
+    # ③ Secret <pod>-migrate 참조는 PreSync hook Job <pod>-migrate 안에만(kind 무관 — Pod · Deployment · StatefulSet · DaemonSet · CronJob · 다른 Job)
+    for e in "${migref[@]}"; do
+      obj=${e%%$'\t'*}; where=${e#*$'\t'}
+      if [[ $obj == "Job/$pod-migrate" ]] && ap_presync "${phook[$obj]:-null}"; then continue; fi
+      fail "14.1 APP-env" "$label ${obj%%/*}/${AP_NS[$obj]:--}/${obj#*/}: Secret '$pod-migrate' 참조($where) — PreSync hook Job $pod-migrate 밖이다"
+    done
+    # ④ 덮어쓰기 금지(pod 표) — envFrom = 표 · env[] 이름 ⊆ 표 · env[] · ConfigMap · ES template.data 키가 서로 겹치지 않는다
+    [[ $AP_INTAB == 1 ]] || continue
+    for e in "${ctrl[@]}"; do
+      obj=${e%%$'\t'*}; c=${e#*$'\t'}
+      x="$label ${obj%%/*}/${AP_NS[$obj]:--}/${obj#*/} 컨테이너 $c"
+      if [[ $obj == "Job/$pod-migrate" ]]; then
+        want="[{\"secretRef\":{\"name\":\"$pod-migrate\"}}]"; t="$pod-migrate"
+      else
+        want="[{\"configMapRef\":{\"name\":\"$pod-config\"}},{\"secretRef\":{\"name\":\"$pod-env\"}}]"; t="$pod-env"
+      fi
+      got="[${efrom["$obj $c"]:-}]"
+      [[ $got == "$want" ]] || fail "14.1 APP-env" "$x: envFrom $got ≠ pod 표 $want(출처 · 순서 · prefix 없음 — 다른 출처가 ConfigMap · Secret 키를 덮는다)"
+      allowed=${AP_ENVTAB["$pod ${obj%%/*} ${obj#*/} $c"]:-}
+      for name in ${envn["$obj $c"]:-}; do
+        [[ ",$allowed," == *",$name,"* ]] || fail "14.1 APP-env" "$x: env 이름 '$name' ∉ pod 표(${allowed:-∅ — 표에 없는 (워크로드, 컨테이너)})"
+        if [[ " ${cmk[$pod-config]:-} " == *" $name "* ]]; then fail "14.1 APP-env" "$x: env 이름 '$name'이 ConfigMap $pod-config 키와 겹친다(덮어쓰기 금지)"; fi
+        if [[ " ${tplk[$t]:-} " == *" $name "* ]]; then fail "14.1 APP-env" "$x: env 이름 '$name'이 Secret $t(ExternalSecret template.data) 키와 겹친다(덮어쓰기 금지)"; fi
+      done
+    done
+    for key in ${cmk[$pod-config]:-}; do
+      if [[ " ${tplk[$pod-env]:-} " == *" $key "* ]]; then
+        fail "14.1 APP-env" "$label: ConfigMap $pod-config 키 '$key'이 Secret $pod-env(ExternalSecret template.data) 키와 겹친다(뒤 envFrom 출처가 덮는다)"
+      fi
+    done
+  done
+  if [[ $nc -eq 0 ]]; then
+    finish_group "14.1 APP-env" "overlay 렌더 ${nov}개 · pod 템플릿 객체 ${np}개 · 컨테이너 0개 — 대상 0" "$f1"
+  else
+    finish_group "14.1 APP-env" "overlay 렌더 ${nov}개 · pod 템플릿 객체 ${np}개 · 컨테이너 ${nc}개: 금지 env 0 · 렌더 밖 ConfigMap·Secret 참조 0 · <pod>-migrate 참조는 PreSync Job <pod>-migrate 안에만 · envFrom · env[] = pod 표" "$f1"
+  fi
+}
+
+# 14.2 APP-cm — (대상 없음 규칙) ConfigMap <pod>-config 하나 · 키 집합 · 값 꼴. 표에 없는 pod · env의 overlay 렌더가 객체를 가지면 FAIL(새 pod는 계약
+#   pod 표에 행을 더하는 계약 변경으로 시작한다 — 계약은 이 문장을 「대상 없음 — 14.2 · 14.4에만」 항에 두고 코드는 정하지 않았다: 그 항의 첫 검사에 둔다)
+check_14_2_cm() {
+  local f2=$N_FAIL i pod ov label nov=0 nt=0 nz=0 npt ncm line x j k e want hasc hosts svc
+  local -a f=() names=() miss=() extra=() els=()
+  local -A val=() tag=() got=()
+  for i in "${AP_OVL[@]}"; do
+    ap_ovl "$i" || continue
+    nov=$((nov + 1)); label=${SRC_LABEL[$i]}; pod=$AP_POD; ov=$AP_ENV
+    if [[ -n ${AP_RERR[$i]:-} ]]; then fail "14.2 APP-cm" "$label: ${AP_RERR[$i]} — 판정할 수 없다(fail-closed)"; continue; fi
+    if [[ $AP_INTAB != 1 ]]; then
+      if [[ $AP_NOBJ -gt 0 ]]; then
+        fail "14.2 APP-cm" "$label: pod 표에 없는 pod '$pod'(env '$ov') — overlay 렌더 객체 ${AP_NOBJ}개(새 pod는 계약 pod 표에 행을 더하는 계약 변경으로 시작한다)"
+      fi
+      continue
+    fi
+    npt=0
+    while IFS= read -r line; do
+      if [[ ${line:0:1} == P ]]; then npt=$((npt + 1)); fi
+    done <<< "${AP_R["$i pod"]:-}"
+    if [[ $npt -eq 0 ]]; then nz=$((nz + 1)); continue; fi
+    nt=$((nt + 1))
+    names=(); val=(); tag=(); got=(); hasc=0
+    while IFS= read -r line; do
+      [[ -n $line ]] || continue
+      IFS=$YQ_SEP read -r -a f <<< "$line"
+      if [[ ${f[0]} == M ]]; then
+        names+=("${f[1]}")
+        if [[ ${f[1]} == "$pod-config" ]]; then
+          hasc=1
+          els=()
+          if [[ -n ${f[2]:-} ]]; then IFS=',' read -r -a els <<< "${f[2]}"; fi
+          for k in "${els[@]}"; do got[$k]=binaryData; done
+        fi
+      elif [[ ${f[0]} == K && ${f[1]} == "$pod-config" ]]; then
+        got[${f[2]}]=data; val[${f[2]}]=${f[3]}; tag[${f[2]}]=${f[4]}
+      fi
+    done <<< "${AP_R["$i cm"]:-}"
+    ncm=${#names[@]}
+    if [[ $hasc == 0 ]]; then fail "14.2 APP-cm" "$label: pod 템플릿 객체가 있는데 ConfigMap $pod-config 없음"; fi
+    [[ $ncm -le 1 ]] || fail "14.2 APP-cm" "$label: ConfigMap ${ncm}개 — 정확히 $pod-config 하나"
+    for k in "${names[@]}"; do
+      [[ $k == "$pod-config" ]] || fail "14.2 APP-cm" "$label ConfigMap/${AP_NS[ConfigMap/$k]:--}/$k: 이름 ≠ $pod-config"
+    done
+    [[ $hasc == 1 ]] || continue
+    x="$label ConfigMap/${AP_NS[ConfigMap/$pod-config]:--}/$pod-config"
+    # 키 집합(data + binaryData) = pod 표
+    miss=(); extra=()
+    for k in ${AP_CMKEYS[$pod]}; do [[ ${got[$k]:-} == data ]] || miss+=("$k"); done
+    for k in "${!got[@]}"; do
+      if [[ ${got[$k]} != data || " ${AP_CMKEYS[$pod]} " != *" $k "* ]]; then extra+=("$k"); fi
+    done
+    if [[ ${#miss[@]} -gt 0 || ${#extra[@]} -gt 0 ]]; then
+      fail "14.2 APP-cm" "$x: 키 집합 ≠ pod 표 — 빠짐 [$(ap_list "${miss[@]}")] 여분 [$(ap_list "${extra[@]}")]"
+    fi
+    for k in "${!val[@]}"; do
+      j=${val[$k]}
+      if [[ ${tag[$k]} != '!!str' ]]; then fail "14.2 APP-cm" "$x: $k 값이 문자열이 아니다(태그 ${tag[$k]})"; continue; fi
+      if [[ $j == *PLACEHOLDER-* ]]; then fail "14.2 APP-cm" "$x: $k 값에 PLACEHOLDER- — 자리값이 남았다(overlay가 값을 넣지 않았다)"; fi
+      case $k in
+        ENV) [[ $j == "\"$ov\"" ]] || fail "14.2 APP-cm" "$x: ENV $j ≠ \"$ov\"" ;;
+        ALLOWED_HOSTS)
+          if ! ap_unjson "$j"; then fail "14.2 APP-cm" "$x: ALLOWED_HOSTS $j — 이스케이프가 든 값은 판정하지 않는다(fail-closed)"; continue; fi
+          hosts=$AP_S; svc=0; els=()
+          IFS=',' read -r -a els <<< "$hosts"
+          for e in "${els[@]}"; do
+            if [[ $e == *'*'* || $e == .* ]]; then fail "14.2 APP-cm" "$x: ALLOWED_HOSTS 원소 '$e' — '*' · '.'로 시작하는 원소 금지"; fi
+            if [[ $e == "$pod.jt-$ov.svc" ]]; then svc=1; fi
+          done
+          [[ $svc == 1 ]] || fail "14.2 APP-cm" "$x: ALLOWED_HOSTS에 $pod.jt-$ov.svc 없음" ;;
+        KAFKA_USERNAME)
+          want=$pod; [[ $ov != dev ]] || want="dev-$pod"
+          [[ $j == "\"$want\"" ]] || fail "14.2 APP-cm" "$x: KAFKA_USERNAME $j ≠ \"$want\"" ;;
+        ADMIN_HOST|FORCE_SCRIPT_NAME)
+          [[ $ov != dev || $j == '""' ]] || fail "14.2 APP-cm" "$x: dev인데 $k $j — 빈 값이어야 한다(admin 경로는 prod만)" ;;
+        ACCESS_AUD_*)
+          [[ $j =~ $RE_AP_AUD ]] || fail "14.2 APP-cm" "$x: $k 값이 꼴("'^$|^[0-9a-f]{64}$'")이 아니다 — Access 앱 AUD(64 hex) 또는 빈 값" ;;
+        ACCESS_EXPECTED_CN)
+          [[ $j =~ $RE_AP_CN ]] || fail "14.2 APP-cm" "$x: ACCESS_EXPECTED_CN 값이 꼴("'^[0-9a-f]{32}\.access$'")이 아니다 — Access 서비스 토큰 Client ID" ;;
+      esac
+    done
+  done
+  finish_group "14.2 APP-cm" "overlay 렌더 ${nov}개 중 pod 템플릿 객체 있음 ${nt}개: ConfigMap <pod>-config 하나 · 키 집합 = pod 표 · 값 꼴(PLACEHOLDER- 0 · ENV · ALLOWED_HOSTS · KAFKA_USERNAME · ACCESS_*) · 대상 없음 ${nz}개(대상 0)" "$f2"
+}
+
+# 14.3 APP-ingress — overlay 렌더의 Ingress(이름으로 m2m · admin을 나눈다) · traefik.io Middleware(pod 표의 pod만 — 표에 없는 pod는 14.2가 건다)
+check_14_3_ingress() {
+  local f3=$N_FAIL i pod ov label nov=0 ni=0 nm=0 na=0 nw=0 nmw line x cls alias hadmin host p pt want got hasc
+  local -a f=() els=() pl=()
+  local -A hosts=() mws=() ingi=()
+  for i in "${AP_OVL[@]}"; do
+    ap_ovl "$i" || continue
+    nov=$((nov + 1)); label=${SRC_LABEL[$i]}; pod=$AP_POD; ov=$AP_ENV
+    [[ $AP_INTAB == 1 ]] || continue
+    if [[ -n ${AP_RERR[$i]:-} ]]; then fail "14.3 APP-ingress" "$label: ${AP_RERR[$i]} — 판정할 수 없다(fail-closed)"; continue; fi
+    alias=${AP_ALIAS[$pod]}; hadmin=${AP_HADMIN[$pod]}
+    # 그 pod ConfigMap의 ALLOWED_HOSTS
+    hosts=(); hasc=0
+    while IFS= read -r line; do
+      [[ -n $line ]] || continue
+      IFS=$YQ_SEP read -r -a f <<< "$line"
+      if [[ ${f[0]} == M && ${f[1]} == "$pod-config" ]]; then hasc=1; fi
+      if [[ ${f[0]} == K && ${f[1]} == "$pod-config" && ${f[2]} == ALLOWED_HOSTS ]] && ap_unjson "${f[3]}"; then
+        els=()
+        IFS=',' read -r -a els <<< "$AP_S"
+        for host in "${els[@]}"; do hosts[$host]=1; done
+      fi
+    done <<< "${AP_R["$i cm"]:-}"
+    # Middleware
+    mws=(); nmw=0
+    while IFS= read -r line; do
+      [[ -n $line ]] || continue
+      IFS=$YQ_SEP read -r -a f <<< "$line"
+      [[ ${f[0]} == W ]] || continue
+      nw=$((nw + 1)); nmw=$((nmw + 1)); mws[${f[1]}]=1
+      x="$label Middleware/${AP_NS[Middleware/${f[1]}]:--}/${f[1]}"
+      [[ ${f[1]} == "$pod-strip" ]] || fail "14.3 APP-ingress" "$x: 이름 ≠ $pod-strip"
+      [[ $ov == prod ]] || fail "14.3 APP-ingress" "$x: dev 렌더에 Middleware 금지(admin Ingress의 stripPrefix는 prod만)"
+      [[ ${f[3]} == stripPrefix ]] || fail "14.3 APP-ingress" "$x: spec 키 [${f[3]}] ≠ {stripPrefix}"
+      [[ ${f[4]} == "[\"/$pod\"]" ]] || fail "14.3 APP-ingress" "$x: stripPrefix.prefixes ${f[4]} ≠ [\"/$pod\"]"
+    done <<< "${AP_R["$i mw"]:-}"
+    [[ $nmw -le 1 ]] || fail "14.3 APP-ingress" "$label: Middleware ${nmw}개 — $pod-strip 하나만"
+    # Ingress — I 행으로 분류하고 공통 조건을 본 뒤 R(host) · H(경로)
+    ingi=()
+    while IFS= read -r line; do
+      [[ -n $line ]] || continue
+      IFS=$YQ_SEP read -r -a f <<< "$line"
+      [[ ${f[0]} == I ]] || continue
+      ni=$((ni + 1))
+      x="$label Ingress/${AP_NS[Ingress/${f[1]}]:--}/${f[1]}"
+      if [[ ${f[1]} == "$pod" ]]; then
+        cls=m2m; nm=$((nm + 1))
+      elif [[ ${f[1]} == "$pod-admin" ]]; then
+        if [[ $ov != prod || $hadmin != yes ]]; then
+          fail "14.3 APP-ingress" "$x: 이름 ${f[1]}(admin)은 prod에서만(has_admin)"
+          continue
+        fi
+        cls=admin; na=$((na + 1))
+      else
+        fail "14.3 APP-ingress" "$x: 이름 — $pod(m2m) · $pod-admin(admin — prod · has_admin)만"
+        continue
+      fi
+      ingi[${f[1]}]=$cls
+      [[ ${f[2]} == '"traefik"' ]] || fail "14.3 APP-ingress" "$x: ingressClassName ${f[2]} ≠ \"traefik\""
+      [[ ${f[3]} == '"websecure"' ]] || fail "14.3 APP-ingress" "$x: router.entrypoints ${f[3]} ≠ \"websecure\""
+      [[ ${f[4]} == '"true"' ]] || fail "14.3 APP-ingress" "$x: router.tls ${f[4]} ≠ \"true\""
+      [[ ${f[6]} == false ]] || fail "14.3 APP-ingress" "$x: 어노테이션 router.tls.options 금지(TLSOption은 플랫폼 기본값)"
+      [[ ${f[7]} == false ]] || fail "14.3 APP-ingress" "$x: 어노테이션 router.priority 금지(다른 라우터를 앞지른다)"
+      [[ ${f[8]} == false ]] || fail "14.3 APP-ingress" "$x: spec.tls 금지(인증서는 Traefik 쪽 설정이 정한다)"
+      [[ ${f[9]} == false ]] || fail "14.3 APP-ingress" "$x: spec.defaultBackend 금지(host 없는 라우터)"
+      if [[ $cls == admin ]]; then
+        want="\"jt-prod-$pod-strip@kubernetescrd\""
+        [[ ${f[5]} == "$want" ]] || fail "14.3 APP-ingress" "$x: router.middlewares ${f[5]} ≠ $want"
+        [[ -n ${mws[$pod-strip]:-} ]] || fail "14.3 APP-ingress" "$x: 같은 렌더에 Middleware $pod-strip 없음"
+      fi
+    done <<< "${AP_R["$i ing"]:-}"
+    if [[ ${#ingi[@]} -gt 0 && $hasc == 0 ]]; then
+      fail "14.3 APP-ingress" "$label: ConfigMap $pod-config 없음 — Ingress host를 ALLOWED_HOSTS와 대조할 수 없다(fail-closed)"
+    fi
+    while IFS= read -r line; do
+      [[ -n $line ]] || continue
+      IFS=$YQ_SEP read -r -a f <<< "$line"
+      [[ ${f[0]} == R && -n ${ingi[${f[1]}]:-} ]] || continue
+      x="$label Ingress/${AP_NS[Ingress/${f[1]}]:--}/${f[1]}"
+      if [[ ${f[3]} != true ]]; then fail "14.3 APP-ingress" "$x: rules[${f[2]}] host 없음(host 없는 라우터)"; continue; fi
+      if ! ap_unjson "${f[4]}"; then fail "14.3 APP-ingress" "$x: rules[${f[2]}] host ${f[4]} — 문자열로 읽지 못했다(fail-closed)"; continue; fi
+      host=$AP_S
+      if [[ ${ingi[${f[1]}]} == m2m ]]; then want="$alias-m2m-$ov.joshuatech.dev"; else want='admin.joshuatech.dev'; fi
+      [[ $host == "$want" ]] || fail "14.3 APP-ingress" "$x: host \"$host\" ≠ $want"
+      if [[ $hasc == 1 && -z ${hosts[$host]:-} ]]; then fail "14.3 APP-ingress" "$x: host \"$host\" ⊄ ConfigMap $pod-config ALLOWED_HOSTS"; fi
+    done <<< "${AP_R["$i ing"]:-}"
+    for p in "${!ingi[@]}"; do
+      pl=()
+      x="$label Ingress/${AP_NS[Ingress/$p]:--}/$p"
+      while IFS= read -r line; do
+        [[ -n $line ]] || continue
+        IFS=$YQ_SEP read -r -a f <<< "$line"
+        [[ ${f[0]} == H && ${f[1]} == "$p" ]] || continue
+        if [[ ${f[5]} != "$pod" || ${f[6]} != http || ${f[7]} != false || ${f[8]} != false ]]; then
+          fail "14.3 APP-ingress" "$x: rules[${f[2]}] 경로 ${f[3]} backend ≠ Service $pod 포트 이름 http"
+        fi
+        if ! ap_unjson "${f[3]}"; then fail "14.3 APP-ingress" "$x: 경로 ${f[3]} — 문자열로 읽지 못했다(fail-closed)"; continue; fi
+        got=$AP_S
+        if ! ap_unjson "${f[4]}"; then fail "14.3 APP-ingress" "$x: 경로 $got의 pathType ${f[4]} — 문자열로 읽지 못했다(fail-closed)"; continue; fi
+        pt=$AP_S
+        if [[ ${ingi[$p]} == m2m ]]; then
+          pl+=("$got($pt)")
+        elif [[ $pt != Prefix || ( $got != "/$pod/admin" && $got != "/$pod/static" ) ]]; then
+          fail "14.3 APP-ingress" "$x: 경로 $got($pt) — {/$pod/admin, /$pod/static}(Prefix)만"
+        fi
+      done <<< "${AP_R["$i ing"]:-}"
+      if [[ ${ingi[$p]} == m2m ]]; then
+        got=$(printf '%s\n' "${pl[@]}" | LC_ALL=C sort | sed '/^$/d' | awk 'NR > 1 { printf " · " } { printf "%s", $0 }')
+        want=$(printf '%s' "${AP_M2MP[$pod]}" | LC_ALL=C sort | sed '/^$/d' | awk 'NR > 1 { printf " · " } { printf "%s", $0 }')
+        [[ $got == "$want" ]] || fail "14.3 APP-ingress" "$x: 경로 집합 [$got] ≠ pod 표 [$want]"
+      fi
+    done
+  done
+  if [[ $((ni + nw)) -eq 0 ]]; then
+    finish_group "14.3 APP-ingress" "overlay 렌더 ${nov}개 · Ingress 0개(m2m 0 · admin 0) · Middleware 0개 — 대상 0" "$f3"
+  else
+    finish_group "14.3 APP-ingress" "overlay 렌더 ${nov}개 · Ingress ${ni}개(m2m ${nm} · admin ${na}) · Middleware ${nw}개 = pod 표(이름 · class · entrypoints · tls · backend · host · 경로 · stripPrefix)" "$f3"
+  fi
+}
+
+# 14.4 APP-values — (대상 없음 규칙) ConfigMap 값 = pod 표의 env별 값 · 면제 상한 · 두 overlay가 모두 렌더될 때 dev = prod 복사(ACCESS_AUD_M2M · ACCESS_EXPECTED_CN).
+#   dev ↔ prod 맞바꿈은 꼴이 같아 이 검사가 잡지 못한다(라이브 양성 탐침 — 계약 14.4 행)
+check_14_4_values() {
+  local f4=$N_FAIL i pod ov label nov=0 nt=0 nz=0 npair=0 npt line x k j spec want hasc e p
+  local -a f=() miss=() extra=() els=()
+  local -A val=() wset=() gset=() keep=()
+  for i in "${AP_OVL[@]}"; do
+    ap_ovl "$i" || continue
+    nov=$((nov + 1)); label=${SRC_LABEL[$i]}; pod=$AP_POD; ov=$AP_ENV
+    [[ $AP_INTAB == 1 ]] || continue
+    if [[ -n ${AP_RERR[$i]:-} ]]; then fail "14.4 APP-values" "$label: ${AP_RERR[$i]} — 판정할 수 없다(fail-closed)"; continue; fi
+    npt=0
+    while IFS= read -r line; do
+      if [[ ${line:0:1} == P ]]; then npt=$((npt + 1)); fi
+    done <<< "${AP_R["$i pod"]:-}"
+    if [[ $npt -eq 0 ]]; then nz=$((nz + 1)); continue; fi
+    nt=$((nt + 1))
+    val=(); hasc=0
+    while IFS= read -r line; do
+      [[ -n $line ]] || continue
+      IFS=$YQ_SEP read -r -a f <<< "$line"
+      if [[ ${f[0]} == M && ${f[1]} == "$pod-config" ]]; then hasc=1; fi
+      if [[ ${f[0]} == K && ${f[1]} == "$pod-config" ]]; then val[${f[2]}]=${f[3]}; fi
+    done <<< "${AP_R["$i cm"]:-}"
+    if [[ $hasc == 0 ]]; then
+      fail "14.4 APP-values" "$label: pod 템플릿 객체가 있는데 ConfigMap $pod-config 없음 — 값을 판정할 수 없다(fail-closed)"
+      continue
+    fi
+    x="$label ConfigMap/${AP_NS[ConfigMap/$pod-config]:--}/$pod-config"
+    for k in ${AP_CMKEYS[$pod]}; do
+      spec=${AP_CMSPEC["$pod $ov $k"]}
+      if [[ -z ${val[$k]+set} ]]; then fail "14.4 APP-values" "$x: $k 없음(pod 표 $ov)"; continue; fi
+      j=${val[$k]}
+      case $spec in
+        =*)
+          want=${spec#=}
+          [[ $j == "\"$want\"" ]] || fail "14.4 APP-values" "$x: $k $j ≠ pod 표($ov) \"$want\"" ;;
+        '~aud')
+          [[ $j =~ $RE_AP_AUD_SET ]] || fail "14.4 APP-values" "$x: $k $j — 빈 값이 아니고 꼴 "'^[0-9a-f]{64}$'"이어야 한다(pod 표 $ov)" ;;
+        '~cn')
+          [[ $j =~ $RE_AP_CN ]] || fail "14.4 APP-values" "$x: $k $j — 빈 값이 아니고 꼴 "'^[0-9a-f]{32}\.access$'"이어야 한다(pod 표 $ov)" ;;
+        @*)
+          wset=(); gset=(); miss=(); extra=(); els=()
+          IFS=',' read -r -a els <<< "${spec#@}"
+          for e in "${els[@]}"; do wset[$e]=1; done
+          if ! ap_unjson "$j"; then fail "14.4 APP-values" "$x: $k $j — 이스케이프가 든 값은 판정하지 않는다(fail-closed)"; continue; fi
+          els=()
+          IFS=',' read -r -a els <<< "$AP_S"
+          for e in "${els[@]}"; do gset[$e]=1; done
+          for e in "${!wset[@]}"; do [[ -n ${gset[$e]:-} ]] || miss+=("$e"); done
+          for e in "${!gset[@]}"; do [[ -n ${wset[$e]:-} ]] || extra+=("$e"); done
+          if [[ ${#miss[@]} -gt 0 || ${#extra[@]} -gt 0 ]]; then
+            fail "14.4 APP-values" "$x: $k 원소 집합 ≠ pod 표($ov) — 빠짐 [$(ap_list "${miss[@]}")] 여분 [$(ap_list "${extra[@]}")]"
+          fi ;;
+        *) fail "14.4 APP-values" "$x: $k — pod 표의 값 표기 '$spec'를 읽지 못했다(표 오류 · fail-closed)" ;;
+      esac
+    done
+    # 면제 상한 — JT_PLACEHOLDER_EXEMPT 원소 ⊆ 코드 상수
+    if [[ -n ${val[JT_PLACEHOLDER_EXEMPT]+set} ]] && ap_unjson "${val[JT_PLACEHOLDER_EXEMPT]}"; then
+      els=()
+      IFS=',' read -r -a els <<< "$AP_S"
+      for e in "${els[@]}"; do
+        [[ ",${AP_EXMAX[$pod]:-}," == *",$e,"* ]] || fail "14.4 APP-values" "$x: JT_PLACEHOLDER_EXEMPT 원소 '$e' — 면제 상한 {${AP_EXMAX[$pod]//,/, }} 밖(게이트 2의 면제는 이 셋을 넘지 않는다)"
+      done
+    fi
+    keep["$pod $ov ACCESS_AUD_M2M"]=${val[ACCESS_AUD_M2M]:-}; keep["$pod $ov ACCESS_EXPECTED_CN"]=${val[ACCESS_EXPECTED_CN]:-}
+    keep["$pod $ov"]=1
+  done
+  for p in "${!AP_ALIAS[@]}"; do
+    [[ -n ${keep["$p dev"]:-} && -n ${keep["$p prod"]:-} ]] || continue
+    npair=$((npair + 1))
+    for k in ACCESS_AUD_M2M ACCESS_EXPECTED_CN; do
+      j=${keep["$p dev $k"]}
+      if [[ -n $j && $j != '""' && $j == "${keep["$p prod $k"]}" ]]; then
+        fail "14.4 APP-values" "apps/$p/overlays/{dev,prod} ConfigMap $p-config: $k dev = prod(같은 값 복사 — Access 앱 · 서비스 토큰은 env마다 다르다)"
+      fi
+    done
+  done
+  finish_group "14.4 APP-values" "overlay 렌더 ${nov}개 중 pod 템플릿 객체 있음 ${nt}개: ConfigMap 값 = pod 표(env별) · 면제 상한 · dev ≠ prod ${npair}쌍 · 대상 없음 ${nz}개(대상 0)" "$f4"
+}
+
+# 14.5 APP-hook — apps/** · platform/policies/tests/**(원본 + 렌더)의 hook 허용 목록
+check_14_5_hook() {
+  local f5=$N_FAIL i p pod line x nf=0 nr=0 nh=0 s t ok k
+  local -a f=() toks=() hk=()
+  for ((i = 0; i < SRC_N; i++)); do
+    p=${SRC_PATH[$i]}
+    [[ $p == apps/* || $p == platform/policies/tests || $p == platform/policies/tests/* ]] || continue
+    if ! ap_extract "$i" "$YQ_AP_HOOK" 'A=5'; then fail "14.5 APP-hook" "${SRC_LABEL[$i]}: $AP_XWHY — 판정할 수 없다(fail-closed)"; continue; fi
+    pod=''
+    if [[ $p =~ ^apps/([^/]+) ]]; then pod=${BASH_REMATCH[1]}; fi
+    while IFS= read -r line; do
+      [[ -n $line ]] || continue
+      IFS=$YQ_SEP read -r -a f <<< "$line"
+      if [[ ${SRC_KIND[$i]} == rendered ]]; then nr=$((nr + 1)); else nf=$((nf + 1)); fi
+      x="${SRC_LABEL[$i]} ${f[1]}/${f[2]}"
+      if [[ ${f[5]} != '[]' ]]; then
+        s=${f[5]#[}; s=${s%]}; hk=()
+        IFS=',' read -r -a hk <<< "$s"
+        for k in "${hk[@]}"; do k=${k//\"/}; fail "14.5 APP-hook" "$x: 어노테이션 '$k' 금지(helm.sh/hook — Argo CD가 helm hook을 hook으로 읽는다)"; done
+      fi
+      [[ ${f[3]} == true ]] || continue
+      if [[ $p == platform/policies/tests || $p == platform/policies/tests/* ]]; then fail "14.5 APP-hook" "$x: platform/policies/tests의 hook 금지(허용 0)"; continue; fi
+      ok=0
+      if ap_unjson "${f[4]}"; then
+        ok=1; toks=()
+        IFS=',' read -r -a toks <<< "$AP_S"
+        if [[ ${#toks[@]} -eq 0 || $AP_S == *, ]]; then ok=0; fi
+        for t in "${toks[@]}"; do t=${t//[[:space:]]/}; [[ $t == PreSync ]] || ok=0; done
+      fi
+      if [[ $ok == 0 ]]; then
+        fail "14.5 APP-hook" "$x: argocd.argoproj.io/hook ${f[4]} — 쉼표 토큰 집합 ≠ {PreSync}(빈 토큰 · 다른 값 · 대소문자 변형 금지)"
+        continue
+      fi
+      if [[ ( ${f[1]} == ExternalSecret || ${f[1]} == Job ) && ${f[2]} == "$pod-migrate" ]]; then
+        nh=$((nh + 1))
+      else
+        fail "14.5 APP-hook" "$x: PreSync hook은 ExternalSecret $pod-migrate · Job $pod-migrate만"
+      fi
+    done <<< "$AP_X"
+  done
+  finish_group "14.5 APP-hook" "apps/** · platform/policies/tests/** 객체 $((nf + nr))개(원본 $nf · 렌더 $nr): helm.sh/hook 0 · argocd hook = PreSync뿐 — ExternalSecret · Job <pod>-migrate ${nh}개" "$f5"
+}
+
+# 14.6 APP-image — overlay 렌더의 모든 pod 템플릿 컨테이너(init 포함)의 image(대상 없음 규칙 밖 — 있는 객체마다)
+check_14_6_image() {
+  local f6=$N_FAIL i pod label nov=0 nc=0 line
+  local -a f=()
+  for i in "${AP_OVL[@]}"; do
+    ap_ovl "$i" || continue
+    nov=$((nov + 1)); label=${SRC_LABEL[$i]}; pod=$AP_POD
+    if [[ -n ${AP_RERR[$i]:-} ]]; then fail "14.6 APP-image" "$label: ${AP_RERR[$i]} — 판정할 수 없다(fail-closed)"; continue; fi
+    while IFS= read -r line; do
+      [[ -n $line ]] || continue
+      IFS=$YQ_SEP read -r -a f <<< "$line"
+      [[ ${f[0]} == C ]] || continue
+      nc=$((nc + 1))
+      if [[ ! ${f[5]} =~ $RE_AP_IMG || ${BASH_REMATCH[1]} != "$pod" ]]; then
+        fail "14.6 APP-image" "$label ${f[1]}/${AP_NS[${f[1]}/${f[2]}]:--}/${f[2]} 컨테이너 ${f[4]}: image ${f[5]} ≠ ghcr.io/joshua92y/$pod@sha256:<64 hex>(태그 병기 · 다른 저장소 · 이름만 금지)"
+      fi
+    done <<< "${AP_R["$i pod"]:-}"
+  done
+  if [[ $nc -eq 0 ]]; then
+    finish_group "14.6 APP-image" "overlay 렌더 ${nov}개 · 컨테이너 0개 — 대상 0" "$f6"
+  else
+    finish_group "14.6 APP-image" "overlay 렌더 ${nov}개 · 컨테이너 ${nc}개 모두 ghcr.io/joshua92y/<pod>@sha256:<64 hex>" "$f6"
+  fi
+}
+
+# 14.7 APP-kinds — overlay 렌더의 객체 kind = AppProject dev/prod 허용 목록 8종(group 포함 — 13.7과 같은 표) · Secret · Service 노출 금지
+check_14_7_kinds() {
+  local f7=$N_FAIL i label nov=0 no=0 nsvc=0 line x
+  local -a f=()
+  for i in "${AP_OVL[@]}"; do
+    ap_ovl "$i" || continue
+    nov=$((nov + 1)); label=${SRC_LABEL[$i]}
+    if [[ -n ${AP_RERR[$i]:-} ]]; then fail "14.7 APP-kinds" "$label: ${AP_RERR[$i]} — 판정할 수 없다(fail-closed)"; continue; fi
+    while IFS= read -r line; do
+      [[ -n $line ]] || continue
+      IFS=$YQ_SEP read -r -a f <<< "$line"
+      [[ ${f[0]} == O ]] || continue
+      no=$((no + 1)); x="$label ${f[1]}/${f[3]}/${f[4]}"
+      ap_gk "${f[2]}" "${f[1]}"
+      if [[ $AP_GK == /Secret ]]; then
+        fail "14.7 APP-kinds" "$x: kind Secret 금지(Secret 값은 ExternalSecret으로만 — 저장소에 두지 않는다)"
+      elif [[ " $APP_KIND_WHITELIST " != *" $AP_GK "* ]]; then
+        fail "14.7 APP-kinds" "$x: kind $(ap_gkshow "$AP_GK") ∉ AppProject dev/prod 허용 목록(group 포함 — 목록 밖 kind는 sync가 실패한다)"
+      fi
+    done <<< "${AP_R["$i obj"]:-}"
+    while IFS= read -r line; do
+      [[ -n $line ]] || continue
+      IFS=$YQ_SEP read -r -a f <<< "$line"
+      [[ ${f[0]} == S ]] || continue
+      nsvc=$((nsvc + 1)); x="$label Service/${AP_NS[Service/${f[1]}]:--}/${f[1]}"
+      [[ -z ${f[2]:-} || ${f[2]} == ClusterIP ]] || fail "14.7 APP-kinds" "$x: Service type '${f[2]}' ≠ ClusterIP"
+      [[ ${f[3]} == false ]] || fail "14.7 APP-kinds" "$x: externalIPs 금지"
+      [[ ${f[4]} == false ]] || fail "14.7 APP-kinds" "$x: loadBalancerIP 금지"
+      [[ ${f[5]} == 0 ]] || fail "14.7 APP-kinds" "$x: nodePort 금지"
+    done <<< "${AP_R["$i svc"]:-}"
+  done
+  if [[ $no -eq 0 ]]; then
+    finish_group "14.7 APP-kinds" "overlay 렌더 ${nov}개 · 객체 0개 — 대상 0" "$f7"
+  else
+    finish_group "14.7 APP-kinds" "overlay 렌더 ${nov}개 · 객체 ${no}개 모두 AppProject dev/prod 허용 목록 8종 · Secret 0 · Service ${nsvc}개 ClusterIP(externalIPs · loadBalancerIP · nodePort 0)" "$f7"
+  fi
+}
+
+ap_kremote() { # <항목> — kustomize 5.8.1이 원격으로 읽는 꼴이면 0(api/internal/git/repospec.go NewRepoSpecFromURL · loader/fileloader.go Load).
+  #   대소문자 무시: git:: 접두(벗겨 읽는다) · ssh:// · https:// · http:// · file:// · <user>@(^[A-Za-z][A-Za-z0-9-]*@ — scp 꼴) · github.com/ · github.com:.
+  #   그 밖에 ://가 든 것 · git@가 든 것 · 절대 경로 · : 이나 @가 든 것(로컬 경로에 쓰지 않는 글자 — 꼴의 변형을 하나씩 열거하지 않는다)도 원격으로 본다.
+  #   이 열거가 빠뜨린 꼴은 실재 경로 판정(14.8 ③)이 잡는다 — 원격 꼴은 저장소 안에 실재하지 않는다
+  local LC_ALL=C s=$1 l
+  l=${s,,}
+  if [[ $l == git::* ]]; then l=${l#git::}; fi
+  [[ $l == ssh://* || $l == https://* || $l == http://* || $l == file://* || $l == github.com/* || $l == github.com:* ]] && return 0
+  [[ $l =~ ^[a-z][a-z0-9-]*@ ]] && return 0
+  [[ $l == *://* || $l == *git@* || $l == *github.com/* || $l == /* || $l == *:* || $l == *@* ]] && return 0
+  return 1
+}
+
+ap_pdisp() { # <경로 JSON(yq path | to_json)> → 전역 AP_S = 사람용(patches[0].target 꼴 · 뿌리는 빈 글자). 표시용이다 — 판정은 JSON 글자로 한다
+  local j=$1 s=''
+  j=${j#[}; j=${j%]}
+  while [[ -n $j ]]; do
+    if [[ $j =~ ^\"(([^\"\\]|\\.)*)\"(,|$) ]]; then
+      s+=".${BASH_REMATCH[1]}"; j=${j:${#BASH_REMATCH[0]}}
+    elif [[ $j =~ ^([0-9]+)(,|$) ]]; then
+      s+="[${BASH_REMATCH[1]}]"; j=${j:${#BASH_REMATCH[0]}}
+    else
+      s+="?$j"; break
+    fi
+  done
+  AP_S=${s#.}
+}
+AP_SHN=0
+# 14.8(tests 범위) · 14.9(앱) — kustomization 한 파일의 모양(계약 「표 밖 새 검사 셋」 14.9 「모든 깊이」 · 14.8 행의 tests 문장 — 재검토 G1B-4 · G1A-8).
+#   YQ_KUST_TREE 행으로 ① 최상위 키(base = 정확히 APP_KUST_BASE_KEYS · overlay ⊆ APP_KUST_OVERLAY_KEYS · tests ⊆ APP_TESTS_KUST_KEYS — 키 글자 그대로)
+#   ② 맵 · 목록이 올 수 있는 자리(앱 = resources · images · images[] · patches · patches[] · patches[].target / tests = resources) — 그 밖의 맵 · 목록
+#   FAIL ③ 그 자리의 키(images[] ⊆ APP_KUST_IMAGE_KEYS · patches[] ⊆ APP_KUST_PATCH_KEYS · patches[].target ⊆ APP_KUST_TARGET_KEYS — 철자 정확히 ·
+#   같은 맵의 중복 키 FAIL) ④ resources[] 항목 = 문자열(!!str 스칼라)을 본다. 별칭 · 병합 키 · 태그는 11.7이 FAIL로 센다(여기서는 집합 밖 키로만 드러난다).
+#   <코드> <rk> <파일> <종류: base | overlay | tests> — FAIL만 찍고 본 노드 수를 AP_SHN에 둔다
+ap_kust_shape() {
+  local code=$1 rk=$2 kf=$3 sk=$4 out line d p k rx pd kset what ok
+  local -a f=() keys=() miss=() extra=()
+  local -A seen=()
+  AP_SHN=0
+  if ! out=$(yq_lines "$YQ_KUST_TREE" "$kf" 2>/dev/null); then
+    fail "$code" "$rk: yq로 읽지 못했다 — 키 · 모양을 판정할 수 없다(fail-closed)"
+    return 0
+  fi
+  while IFS= read -r line; do
+    [[ -n $line ]] || continue
+    IFS=$YQ_SEP read -r -a f <<< "$line"
+    d=${f[1]:-0}; p=${f[2]:-}
+    rx=$rk; [[ $d == 0 ]] || rx="$rk(문서 $((d + 1)))"
+    case ${f[0]} in
+      C)
+        [[ $p != '[]' ]] || continue
+        AP_SHN=$((AP_SHN + 1))
+        ap_pdisp "$p"; pd=$AP_S
+        case ${f[3]:-} in
+          map|seq)
+            ok=0
+            if [[ ${f[3]} == seq && $p == '["resources"]' ]]; then ok=1; fi
+            if [[ $sk != tests ]]; then
+              if [[ ${f[3]} == seq && ( $p == '["images"]' || $p == '["patches"]' ) ]]; then ok=1; fi
+              if [[ ${f[3]} == map && ( $p =~ ^\[\"(images|patches)\",[0-9]+\]$ || $p =~ ^\[\"patches\",[0-9]+,\"target\"\]$ ) ]]; then ok=1; fi
+            fi
+            if [[ $ok == 0 ]]; then
+              if [[ ${f[3]} == map ]]; then what='맵'; else what='목록'; fi
+              if [[ $sk == tests ]]; then
+                fail "$code" "$rx: $pd — 이 자리의 $what 금지(platform/policies/tests/** kustomization의 맵 · 목록 자리 = resources 하나 — 새 자리는 계약 14.8 줄을 먼저 고친다)"
+              else
+                fail "$code" "$rx: $pd — 이 자리의 $what 금지(앱 kustomization의 맵 · 목록 자리 = resources · images · images[] · patches · patches[] · patches[].target — 새 자리는 계약 14.9 줄을 먼저 고친다)"
+              fi
+            fi ;;
+          scalar)
+            if [[ $p =~ ^\[\"resources\",[0-9]+\]$ && ${f[4]:-} != '!!str' ]]; then
+              fail "$code" "$rx: $pd — resources 항목이 문자열이 아니다(태그 ${f[4]:-?})"
+            fi ;;
+        esac ;;
+      Y)
+        if [[ $p == '[]' ]]; then
+          if ap_unjson "${f[3]:-}"; then keys+=("$AP_S"); else keys+=("${f[3]:-?}"); fi
+          continue
+        fi
+        if [[ $sk == tests ]]; then continue; fi   # tests 범위는 뿌리 밖 맵이 없다(그 맵은 C 행이 FAIL로 센다)
+        if [[ $p =~ ^\[\"images\",[0-9]+\]$ ]]; then kset=$APP_KUST_IMAGE_KEYS
+        elif [[ $p =~ ^\[\"patches\",[0-9]+\]$ ]]; then kset=$APP_KUST_PATCH_KEYS
+        elif [[ $p =~ ^\[\"patches\",[0-9]+,\"target\"\]$ ]]; then kset=$APP_KUST_TARGET_KEYS
+        else continue   # 허용하지 않는 자리의 맵 — C 행이 FAIL로 센다
+        fi
+        ap_pdisp "$p"; pd=$AP_S
+        if [[ ${f[4]:-} != '!!str' ]] || ! ap_unjson "${f[3]:-}"; then
+          fail "$code" "$rx: $pd 키 ${f[3]:-?}(태그 ${f[4]:-?}) — 문자열 키가 아니거나 이스케이프가 든 키(fail-closed)"
+          continue
+        fi
+        k=$AP_S
+        if [[ -n ${seen["$d|$p|$k"]:-} ]]; then fail "$code" "$rx: $pd 키 '$k' 중복"; fi
+        seen["$d|$p|$k"]=1
+        [[ " $kset " == *" $k "* ]] || fail "$code" "$rx: $pd 키 '$k' ∉ {${kset// /, }}(철자 정확히 — 새 키는 계약 14.9 줄을 먼저 고친다)" ;;
+      *) fail "$code" "$rk: yq 추출 행을 해석할 수 없다(종류 '${f[0]:0:12}') — fail-closed" ;;
+    esac
+  done <<< "$out"
+  miss=(); extra=()
+  case $sk in
+    base)
+      for k in $APP_KUST_BASE_KEYS; do [[ " ${keys[*]} " == *" $k "* ]] || miss+=("$k"); done
+      for k in "${keys[@]}"; do [[ " $APP_KUST_BASE_KEYS " == *" $k "* ]] || extra+=("$k"); done
+      if [[ ${#miss[@]} -gt 0 || ${#extra[@]} -gt 0 ]]; then
+        fail "$code" "$rk: 최상위 키 ≠ base 키 {${APP_KUST_BASE_KEYS// /, }} — 빠짐 [$(ap_list "${miss[@]}")] 여분 [$(ap_list "${extra[@]}")](새 키는 계약 14.9 줄을 먼저 고친다)"
+      fi ;;
+    overlay)
+      for k in "${keys[@]}"; do
+        [[ " $APP_KUST_OVERLAY_KEYS " == *" $k "* ]] \
+          || fail "$code" "$rk: 키 '$k' ∉ overlay 허용 키 {${APP_KUST_OVERLAY_KEYS// /, }}(새 키는 계약 14.9 줄을 먼저 고친다)"
+      done ;;
+    tests)
+      for k in "${keys[@]}"; do
+        [[ " $APP_TESTS_KUST_KEYS " == *" $k "* ]] \
+          || fail "$code" "$rk: 키 '$k' ∉ tests 허용 키 {${APP_TESTS_KUST_KEYS// /, }}(platform/policies/tests/** — 재검토 G1A-8 · 새 키는 계약 14.8 줄을 먼저 고친다)"
+      done ;;
+  esac
+  return 0
+}
+
+# 14.8 APP-remote — apps/** · platform/policies/tests/**의 kustomization(원본) 경로 항목: 원격 꼴 · 역슬래시 · 제어 문자 · 저장소 안 실재 경로가 아님 ·
+#   인라인 generator · transformer · validator 금지 · (apps/**) 경로 가둠 — prod overlay · base의 렌더가 관문 안 파일(그 디렉터리의 파일 · overlay의
+#   ../../base)로만 만들어지게 한다(계약 14.8 행 · UD-14 관문 완결 · T075 보정 2026-11-18 — GP-1 리뷰 G1A-1 · G1A-2 · G1B-3) · (platform/policies/tests/**
+#   — 재검토 G1A-8) 최상위 키 ⊆ APP_TESTS_KUST_KEYS · resources[] 문자열 · 그 밖 자리의 맵 · 목록 금지(ap_kust_shape — 같은 디렉터리 transformer 설정
+#   파일 안의 path · helmCharts[].valuesFile · 중첩 철자 변형이 원격을 끌어왔다: 항목 판정으로는 닫히지 않는 자리를 없앤다) · (마지막 재검토 G1B-6)
+#   항목 = 같은 디렉터리의 파일(하위 디렉터리 · 디렉터리 항목 · 그 밖으로 풀리는 항목 FAIL — ⑤). 읽는 키는 소문자 정본 철자뿐이다 — 철자
+#   변형(최상위 · 중첩)은 11.7이 건다
+check_14_8_remote() {
+  local f8=$N_FAIL kf rk kdir scope pod out line item r na=0 nt=0 nitems=0 ninl=0 rule yk
+  local ovr='overlay 항목은 같은 디렉터리의 파일 또는 정확히 ../../base뿐(하위 디렉터리 금지)' bsr='base 항목은 같은 디렉터리의 파일뿐(하위 디렉터리 금지)'
+  local tsr='tests 항목은 같은 디렉터리의 파일뿐(하위 디렉터리 · 디렉터리 항목 · 그 밖으로 풀리는 항목 금지 — 디렉터리 항목은 키 검사가 열지 않는 루트 tests/ 아래 kustomization도 끌어온다 · 마지막 재검토 G1B-6)'
+  local -a f=()
+  for kf in "${KUST_FILES[@]}"; do
+    rk=$(rel "$kf"); kdir=${rk%/*}
+    if [[ $rk == apps/* ]]; then scope=apps; elif [[ $rk == platform/policies/tests/* ]]; then scope=tests; else continue; fi
+    if [[ $scope == apps ]]; then na=$((na + 1)); else nt=$((nt + 1)); ap_kust_shape "14.8 APP-remote" "$rk" "$kf" tests; fi
+    if ! out=$(yq_lines "$YQ_AP_KPATHS" "$kf" 2>/dev/null); then
+      fail "14.8 APP-remote" "$rk: yq로 풀어 읽지 못했다(맵이 아닌 문서 · 풀 수 없는 앵커 등) — 경로 항목을 판정할 수 없다(fail-closed)"
+      continue
+    fi
+    pod=''; rule=''
+    if [[ $scope == apps ]]; then
+      if [[ ! $kdir =~ ^apps/([^/]+) ]]; then
+        fail "14.8 APP-remote" "$rk: apps/ 바로 아래 kustomization — pod를 정할 수 없다(경로 가둠 판정 불가 · fail-closed)"
+        continue
+      fi
+      pod=${BASH_REMATCH[1]}
+      if [[ $kdir =~ ^apps/[^/]+/overlays/[^/]+$ ]]; then rule=overlay; elif [[ $kdir =~ ^apps/[^/]+/base$ ]]; then rule=base; fi
+    fi
+    while IFS= read -r line; do
+      [[ -n $line ]] || continue
+      IFS=$YQ_SEP read -r -a f <<< "$line"
+      case ${f[0]} in
+        K)
+          if [[ $scope == apps && ${f[1]} == true ]]; then fail "14.8 APP-remote" "$rk: helmCharts 금지(apps/** — 차트 렌더는 경로 가둠 밖의 매니페스트를 만든다)"; fi
+          if [[ $scope == apps && ${f[2]} == true ]]; then fail "14.8 APP-remote" "$rk: secretGenerator 금지(apps/** — Secret 값은 ExternalSecret으로만)"; fi ;;
+        N) fail "14.8 APP-remote" "$rk: ${f[1]} 값이 목록이 아니다(태그 ${f[2]:-?}) — 경로 항목을 판정할 수 없다(fail-closed)" ;;
+        L)
+          nitems=$((nitems + 1))
+          yk=${f[3]:--}
+          # ④ 인라인 항목 — 판정은 구조다(항목 문자열을 YAML로 읽은 노드 종류 · 줄바꿈 여부로 가르지 않는다 — G1A-2 · G1B-3)
+          case ${f[1]} in
+            generators|transformers|validators)
+              if [[ $yk != scalar ]]; then
+                fail "14.8 APP-remote" "$rk: ${f[1]} 항목이 인라인 설정이다(YAML로 읽으면 $yk) — 인라인 ${f[1]} 금지(kustomize가 그 설정을 그대로 쓴다: PatchTransformer의 path 등이 원격 내용을 끌어온다 — 파일 경로로만)"
+                continue
+              fi ;;
+            patchesStrategicMerge)
+              if [[ $yk == map ]]; then ninl=$((ninl + 1)); continue; fi   # 인라인 전략 병합 패치(맵) — 경로가 아니다
+              if [[ $yk != scalar ]]; then
+                fail "14.8 APP-remote" "$rk: patchesStrategicMerge 항목이 경로(스칼라)도 인라인 패치(맵)도 아니다($yk) — 판정할 수 없다(fail-closed)"
+                continue
+              fi ;;
+          esac
+          # ② JSON 이스케이프가 든 항목(역슬래시 · 제어 문자 · 따옴표 — 역슬래시는 Windows에서 경로 구분자다)과 문자열이 아닌 항목
+          if ! ap_unjson "${f[2]}"; then
+            fail "14.8 APP-remote" "$rk: ${f[1]} 항목 ${f[2]} — 문자열 경로가 아니거나 역슬래시 · 제어 문자 · 따옴표가 들었다(OS마다 다르게 읽는다 — fail-closed)"
+            continue
+          fi
+          item=$AP_S
+          if [[ ${f[1]} == *.files && $item == *=* ]]; then item=${item#*=}; fi   # generator files의 key=path
+          # ① 원격 꼴(kustomize 5.8.1 판정 — ap_kremote)
+          if ap_kremote "$item"; then
+            fail "14.8 APP-remote" "$rk: ${f[1]} '$item' — 원격 ref 금지(kustomize 5.8.1이 원격으로 읽는 꼴 — git:: · ssh/https/http/file:// · <user>@ · github.com/ · github.com: — 대소문자 무시 · 또는 : · @ · 절대 경로)"
+            continue
+          fi
+          r=$(norm_rel "$kdir" "$item")
+          if [[ -z $r ]]; then
+            fail "14.8 APP-remote" "$rk: ${f[1]} '$item' — 저장소 밖으로 풀린다(fail-closed)"
+            continue
+          fi
+          if [[ $scope == apps ]]; then
+            if [[ $r != "apps/$pod" && $r != "apps/$pod/"* ]]; then
+              fail "14.8 APP-remote" "$rk: ${f[1]} '$item'(→ $r) — apps/$pod/ 밖으로 풀린다(경로 가둠)"
+              continue
+            fi
+            if [[ $rule == overlay && $item != ../../base ]] && ! [[ ${r%/*} == "$kdir" && -f $ROOT/$r ]]; then
+              fail "14.8 APP-remote" "$rk: ${f[1]} '$item' — $ovr"
+              continue
+            fi
+            if [[ $rule == base ]] && ! [[ ${r%/*} == "$kdir" && -f $ROOT/$r ]]; then
+              fail "14.8 APP-remote" "$rk: ${f[1]} '$item' — $bsr"
+              continue
+            fi
+          fi
+          # ③ 저장소 안의 실재 경로(원격 꼴 열거에 기대지 않는다 — kustomize는 파일로 읽지 못한 항목을 원격 ref로 다시 읽는다 · G1A-1)
+          if [[ ! -e $ROOT/$r ]]; then
+            fail "14.8 APP-remote" "$rk: ${f[1]} '$item'(→ $r) — 저장소 안의 실재 경로가 아니다(kustomize는 파일로 읽지 못한 항목을 원격 ref로 다시 읽는다 — 원격 꼴 열거에 기대지 않는다)"
+            continue
+          fi
+          # ⑤ (platform/policies/tests/** — 마지막 재검토 G1B-6) 항목 = 같은 디렉터리의 파일(apps base 판정과 같은 꼴). 실재 판정 뒤에 둔다 — 없는 항목은
+          #   ③의 말로 드러난다. 디렉터리 항목은 KUST_FILES가 열지 않는 자리(루트 tests/ · */charts/*)의 kustomization을 tests 렌더로 끌어올 수 있었다
+          if [[ $scope == tests ]] && ! [[ ${r%/*} == "$kdir" && -f $ROOT/$r ]]; then
+            fail "14.8 APP-remote" "$rk: ${f[1]} '$item'(→ $r) — $tsr"
+          fi ;;
+        *) fail "14.8 APP-remote" "$rk: yq 추출 행을 해석할 수 없다(종류 '${f[0]:0:12}') — fail-closed" ;;
+      esac
+    done <<< "$out"
+  done
+  finish_group "14.8 APP-remote" "kustomization $((na + nt))개(apps/** $na · platform/policies/tests/** $nt) · 경로 항목 ${nitems}개: 원격 ref 0 · apps/** 경로 가둠(overlay = 같은 디렉터리 파일 + ../../base · base = 같은 디렉터리 파일) · apps/** helmCharts · secretGenerator 0 · 모두 저장소 안 실재 경로 · 인라인 generator · transformer · validator 0(인라인 전략 병합 패치 ${ninl}개는 경로 아님) · platform/policies/tests/** 최상위 키 ⊆ {${APP_TESTS_KUST_KEYS// /, }} · 항목 = 같은 디렉터리의 파일(resources[] 문자열)" "$f8"
+}
+
+# 14.9 APP-kust-keys — 앱 kustomization 키와 모양(계약 「표 밖 새 검사 셋」 14.9 · 모든 깊이 — 재검토 G1B-4): base = 정확히 APP_KUST_BASE_KEYS · overlay ⊆
+#   APP_KUST_OVERLAY_KEYS · resources[] 문자열 · images[] ⊆ APP_KUST_IMAGE_KEYS · patches[] ⊆ APP_KUST_PATCH_KEYS · patches[].target ⊆ APP_KUST_TARGET_KEYS ·
+#   그 밖 자리의 맵 · 목록 금지(ap_kust_shape). 키 글자 그대로 비교한다(대소문자 · 유니코드 변형은 11.7이 따로 건다 — 여기서는 집합 밖으로 FAIL)
+check_14_9_kust_keys() {
+  local f9=$N_FAIL kf rk kdir kind nb=0 no=0 nn=0
+  for kf in "${KUST_FILES[@]}"; do
+    rk=$(rel "$kf"); kdir=${rk%/*}
+    if [[ $kdir =~ ^apps/[^/]+/base$ ]]; then kind=base; elif [[ $kdir =~ ^apps/[^/]+/overlays/[^/]+$ ]]; then kind=overlay; else continue; fi
+    if [[ $kind == base ]]; then nb=$((nb + 1)); else no=$((no + 1)); fi
+    ap_kust_shape "14.9 APP-kust-keys" "$rk" "$kf" "$kind"
+    nn=$((nn + AP_SHN))
+  done
+  if [[ $((nb + no)) -eq 0 ]]; then
+    finish_group "14.9 APP-kust-keys" "앱 kustomization 0개 — 대상 0" "$f9"
+  else
+    finish_group "14.9 APP-kust-keys" "앱 kustomization $((nb + no))개(base $nb · overlay $no): base 키 = {${APP_KUST_BASE_KEYS// /, }} · overlay 키 ⊆ {${APP_KUST_OVERLAY_KEYS// /, }} · 모든 깊이: resources[] 문자열 · images[] 키 ⊆ {${APP_KUST_IMAGE_KEYS// /, }} · patches[] 키 ⊆ {${APP_KUST_PATCH_KEYS// /, }} · patches[].target 키 ⊆ {${APP_KUST_TARGET_KEYS// /, }} · 그 밖 자리의 맵 · 목록 0(노드 ${nn}개)" "$f9"
+  fi
+}
+
+check_14_app() {
+  header 14 "앱 렌더 검사(T075 · 계약 §validate.yml 3 「(T075 보정 2026-11-17) 앱 렌더 검사 — 3.9 · 14.0–14.8」 · 「표 밖 새 검사 셋」 14.9 · pod 표) — 14.0 Application · 14.1 env · 14.2 ConfigMap · 14.3 Ingress · 14.4 값 · 14.5 hook · 14.6 image · 14.7 kind · 14.8 경로 · 14.9 키"
+  need_tool "14 APP" yq || return 0
+  local c
+  ap_tables
+  if [[ ${TOOL_OK[kustomize]:-0} == 1 ]]; then ap_collect; fi
+  check_14_0_app
+  if [[ ${TOOL_OK[kustomize]:-0} == 1 ]]; then
+    check_14_1_env; check_14_2_cm; check_14_3_ingress; check_14_4_values
+  else
+    for c in "14.1 APP-env" "14.2 APP-cm" "14.3 APP-ingress" "14.4 APP-values"; do need_tool "$c" kustomize || true; done
+  fi
+  check_14_5_hook
+  if [[ ${TOOL_OK[kustomize]:-0} == 1 ]]; then
+    check_14_6_image; check_14_7_kinds
+  else
+    for c in "14.6 APP-image" "14.7 APP-kinds"; do need_tool "$c" kustomize || true; done
+  fi
+  check_14_8_remote
+  check_14_9_kust_keys
+}
+
+# -----------------------------------------------------------------------------
 # 실행
 # -----------------------------------------------------------------------------
 if [[ $ONLY_AUTHOR == 1 ]]; then
@@ -3398,17 +5079,23 @@ check_2_app_ssa
 check_3_externalsecrets
 check_3_workloads
 check_3_cnpg_retain  # 3.8(T054) — 검사 3의 all 관례(파일 + 렌더)로 postgresql.cnpg.io Database·DatabaseRole의 ensure·reclaim 값을 본다
+check_3_es_app       # 3.9(T075) — apps/** ExternalSecret 규약 + overlay 렌더의 pod 표
 check_4_images
 check_5_policies
 check_6_author
 check_7_sync_wave
 check_7_app_source
+check_7_argocd_placeholder   # 7.5(T075) — platform/argocd = 자리표시(7.1의 argocd 갈래 = bootstrap/argocd 하나와 함께)
 check_8_gitleaks
 check_9_clustersecretstores
 check_10_reloader
 check_11_formats
+check_11_dirsource_files  # 11.6 FMT-dirsource-files(T075 보정 2026-11-18) — clusters/oci-k3s/apps 바로 아래 *.yaml · *.yml · README.md만
+check_11_kust_keys        # 11.7 FMT-kust-keys(T075 보정 2026-11-18 · 번호 정정) — kustomization 키(최상위 · 중첩: 대소문자 · 유니코드 접기 · 중복 · 앵커)
 check_12_helm
 check_13_rbac
+check_13_appproject  # 13.7(T075) — AppProject의 자리와 dev/prod 꼴(전 렌더 · 부분 트리에서도 그대로)
+check_14_app         # 14.0–14.8(T075) — 앱 렌더 검사(pod 표)
 
 printf '\n== 요약 ==\n'
 printf 'PASS %d · FAIL %d · WARN %d · SKIP %d\n' "$N_PASS" "$N_FAIL" "$N_WARN" "$N_SKIP"

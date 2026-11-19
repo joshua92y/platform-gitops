@@ -1,0 +1,33 @@
+# 긍정 픽스처 — admin Ingress `<pod>-admin`(prod만 · 계약 §디렉터리 overlays/prod · validate 14.3): host admin.joshuatech.dev · 경로 Prefix
+#   /identity-admin/admin · /identity-admin/static 둘만 · router.middlewares = 같은 ns(jt-prod)의 stripPrefix Middleware · spec.tls ·
+#   router.tls.options · router.priority 없음.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: identity-admin-admin
+  labels:
+    app.kubernetes.io/name: identity-admin
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.middlewares: jt-prod-identity-admin-strip@kubernetescrd
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: admin.joshuatech.dev
+      http:
+        paths:
+          - path: /identity-admin/admin
+            pathType: Prefix
+            backend:
+              service:
+                name: identity-admin
+                port:
+                  name: http
+          - path: /identity-admin/static
+            pathType: Prefix
+            backend:
+              service:
+                name: identity-admin
+                port:
+                  name: http

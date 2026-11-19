@@ -1,0 +1,30 @@
+# identity-admin 비밀이 아닌 설정(base = dev 값 — prod overlay가 값을 패치한다). 평문 스칼라만 쓴다(블록 스칼라 | 금지 — 끝 줄바꿈).
+# ACCESS_AUD_M2M · ACCESS_EXPECTED_CN 자리값은 기동 게이트 2가 overlay 누락을 기동 실패로 바꾼다. sync-wave -1: Deployment보다 먼저.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: identity-admin-config
+  labels:
+    app.kubernetes.io/name: identity-admin
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+data:
+  ACCESS_AUD_ADMIN: ""
+  ACCESS_AUD_M2M: PLACEHOLDER-SET-IN-OVERLAY
+  ACCESS_EXPECTED_CN: PLACEHOLDER-SET-IN-OVERLAY
+  ACCESS_TEAM_DOMAIN: joshua-tech.cloudflareaccess.com
+  ADMIN_HOST: ""
+  ALLOWED_HOSTS: identity-admin.jt-dev.svc
+  AUTH_ACTOR_SUB: ""
+  AUTHENTIK_AUDIENCE: identity-admin
+  # identity-admin(T073) — Authentik 쓰기 플래그(설계 D23 · D6): 늘 따옴표 있는 명시 문자열 "true" · "false"만(빈 값 · 앞뒤 공백은
+  # 기동 실패 · base = dev = "false" — prod overlay가 "true"로 바꾼다). 서비스 기준 URL 둘(AUTHENTIK_API_URL · OPENFGA_API_URL)은 두지
+  # 않는다(기본값 = svc DNS — 포트가 바뀌면 overlay가 키를 더한다).
+  AUTHENTIK_WRITES_ENABLED: "false"
+  ENV: dev
+  FORCE_SCRIPT_NAME: ""
+  KAFKA_BOOTSTRAP: jt-kafka-kafka-bootstrap.data.svc:9093
+  KAFKA_USERNAME: dev-identity-admin
+  OTEL_EXPORTER_OTLP_ENDPOINT: ""
+  OTEL_TRACES_SAMPLER: parentbased_traceidratio
+  OTEL_TRACES_SAMPLER_ARG: "0.1"

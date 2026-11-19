@@ -1,0 +1,44 @@
+# 긍정 픽스처 — AppProject dev(계약 §Application 규약 AppProject 행 · validate 13.7): namespaceResourceWhitelist 정확히 8종(group 포함) ·
+#   namespaceResourceBlacklist 6종 · destinations 하나(jt-dev) · clusterResourceWhitelist: [].
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: dev
+  namespace: argocd
+spec:
+  sourceRepos:
+    - https://github.com/joshua92y/platform-gitops.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: jt-dev
+  clusterResourceWhitelist: []
+  namespaceResourceWhitelist:
+    - group: ""
+      kind: ConfigMap
+    - group: ""
+      kind: Service
+    - group: apps
+      kind: Deployment
+    - group: batch
+      kind: Job
+    - group: batch
+      kind: CronJob
+    - group: networking.k8s.io
+      kind: Ingress
+    - group: external-secrets.io
+      kind: ExternalSecret
+    - group: traefik.io
+      kind: Middleware
+  namespaceResourceBlacklist:
+    - group: networking.k8s.io
+      kind: NetworkPolicy
+    - group: ""
+      kind: ResourceQuota
+    - group: ""
+      kind: LimitRange
+    - group: ""
+      kind: ServiceAccount
+    - group: rbac.authorization.k8s.io
+      kind: Role
+    - group: rbac.authorization.k8s.io
+      kind: RoleBinding

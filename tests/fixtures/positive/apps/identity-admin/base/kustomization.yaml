@@ -1,7 +1,13 @@
-# 긍정 픽스처 — apps/<pod>/base (계약 gitops-repo.md §디렉터리). 값은 전부 가짜.
+# identity-admin deploy/base — kustomize base(dev 값). T075가 gitops apps/identity-admin/base로 파일 이름 1:1 복사한다.
+# namespace · images(digest) · commonLabels는 두지 않는다 — overlay가 정한다(계약 gitops-repo.md §디렉터리 · README 「deploy/base 인터페이스」).
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - deployment.yaml
-  - externalsecrets.yaml
+  - configmap.yaml
+  - externalsecret-env.yaml
+  - externalsecret-migrate.yaml
   - migrate-job.yaml
+  - deployment.yaml
+  - deployment-celery.yaml
+  - service.yaml
+  - ingress.yaml

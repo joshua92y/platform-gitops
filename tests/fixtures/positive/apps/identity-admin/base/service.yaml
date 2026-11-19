@@ -1,0 +1,17 @@
+# identity-admin Service — ClusterIP 80 → web 컨테이너 포트 http(8000). selector는 web pod만 고른다(celery · migrate · CronJob pod 제외).
+apiVersion: v1
+kind: Service
+metadata:
+  name: identity-admin
+  labels:
+    app.kubernetes.io/name: identity-admin
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: identity-admin
+    app.kubernetes.io/component: web
+  ports:
+    - name: http
+      port: 80
+      protocol: TCP
+      targetPort: http
