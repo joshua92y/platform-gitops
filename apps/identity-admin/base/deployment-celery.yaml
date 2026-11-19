@@ -1,0 +1,97 @@
+# identity-admin Celery 워커 + 내장 beat(컨테이너 하나 — 템플릿 기본 beat 작업은 dead outbox purge 하나 · 일 1회). 브로커 = Dragonfly pod
+# 사용자(DRAGONFLY_URL · 키 접두 identity-admin:) · 원격 제어 · gossip · mingle · heartbeat 끔. 프로브 · 지표 포트 없음. beat 일정 파일은 /tmp.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: identity-admin-celery
+  labels:
+    app.kubernetes.io/name: identity-admin
+    app.kubernetes.io/component: celery
+  annotations:
+    reloader.stakater.com/auto: "true"
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: identity-admin
+      app.kubernetes.io/component: celery
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: identity-admin
+        app.kubernetes.io/component: celery
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: role
+                    operator: In
+                    values:
+                      - platform
+      containers:
+        - name: celery
+          image: ghcr.io/joshua92y/identity-admin
+          command:
+            - celery
+            - --app
+            - identity_admin
+            - worker
+            - --pool
+            - solo
+            - --beat
+            - --schedule
+            - /tmp/celerybeat-schedule
+            - --without-gossip
+            - --without-mingle
+            - --without-heartbeat
+            - --loglevel
+            - INFO
+          envFrom:
+            - configMapRef:
+                name: identity-admin-config
+            - secretRef:
+                name: identity-admin-env
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          resources:
+            requests:
+              memory: 192Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: pg-ca
+              mountPath: /etc/pg
+              readOnly: true
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: pg-ca
+          secret:
+            secretName: pg-main-ca

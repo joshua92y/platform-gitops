@@ -55,7 +55,12 @@ cascade로 지워지는 객체가 0건**이다 — 소유 객체인 ExternalSecr
 |---|---|---|---|
 | `platform-tests.yaml` | `platform-tests` | `platform/policies/tests` | **T059.** project `tests`(dev scope · `jt-dev`만) · 검사 Job `data-assert` · `kafka-assert`(`authz-assert`는 T085) · 이름 ↔ 경로 예외(계약 §Application 규약) · 재실행 모델 B. 렌더 5장(ConfigMap 1 · Job별 ExternalSecret 2 · Job 2 — 리소스 수준 sync-wave `"0"` → `"1"` · Application 표의 숫자가 아니다) · 상태 없음(PVC 0) · cascade 삭제 = 검사 산출물뿐. 상세는 파일 머리 주석과 `../../../platform/policies/tests/README.md` §Application `platform-tests` · §재실행 모델 |
 
-앱 Application(`<pod>-<env>`)은 후속 PR에서 이 디렉터리에 추가된다.
+아래 2개는 T075 GP-2가 추가한 앱 Application이다(합계 24). 꼴은 플랫폼 표준이 아니라 계약 §Application 규약 syncPolicy 행 「앱 Application의 정확한 꼴」이다 — finalizer 있음 · project = env · destination `jt-<env>` · syncOptions `[ServerSideApply=true]`뿐(`CreateNamespace` · `Prune=confirm` · `Delete=confirm` 없음) · dev는 prune true · prod는 prune false. 검사 14.0이 그 꼴과 파일 결합(파일 하나에 문서 하나 · 이름 = 파일 이름)을 고정한다. wave는 계약 §sync-wave 단일 표의 앱 행에서 읽어 넣으며(코드 사본 `tests/validate.sh`의 `APP_WAVE` · 대조는 검사 7.1) 여기 옮겨 적지 않는다. 역할 · 첫 배포 선행 조건 · hook ES 운영 성질 · (prod) 노출 축소 규칙은 파일 머리 주석과 모노레포 `docs/runbooks/bootstrap.md` §3 T075.
+
+| 파일 | Application | source.path | project | 관문 |
+|---|---|---|---|---|
+| `identity-admin-dev.yaml` | `identity-admin-dev` | `apps/identity-admin/overlays/dev` | `dev` | 밖 — 이 파일과 dev overlay는 관문 대상이 아니고 꼴은 검사(14.0 · 14.x)가 막는다(`apps/identity-admin/base/**`는 관문 대상) |
+| `identity-admin-prod.yaml` | `identity-admin-prod` | `apps/identity-admin/overlays/prod` | `prod` | 안 — 파일 이름 `<이름>-prod.yaml` · `prod-approval` 운영자 승인(overlay `apps/identity-admin/overlays/prod/**`도 관문 대상) |
 
 ## `platform-argocd` — 자기 관리 Application이 하는 일
 
@@ -153,5 +158,5 @@ kubectl delete networkpolicy -A -l app.kubernetes.io/part-of=platform-policies
 1. 계약 §sync-wave 단일 표에 컴포넌트 행이 있는지 확인한다. 없으면 **계약을 먼저 고친다**(그 다음 `tests/validate.sh`의 `WAVE_TABLE`, 마지막이 이 디렉터리 — 순서를 뒤집지 않는다).
 2. `platform-<component>.yaml` 1파일. `metadata.annotations["argocd.argoproj.io/sync-wave"]`(문자열)과 `spec.destination.namespace`는 그 표에서 **읽어서** 넣는다. 값을 README·주석·PR 본문에 옮겨 적지 않는다(표의 3열이 `-`이면 destination은 `kube-system`).
 3. syncPolicy는 계약 §Application 규약의 플랫폼 표준. 상태를 가진 컴포넌트는 `Prune=confirm`·`Delete=confirm`을 반드시 포함한다.
-4. `bash tests/validate.sh` — 검사 2(APP-SSA)와 7.1(WAVE 이름·경로·값)이 새 파일을 인정하는지 확인한다. 사람이 표와 눈으로 대조하지 않는다. (T075) 14.0도 이 디렉터리의 파일을 본다 — 파일 하나에 Application 문서 하나 · `metadata.name` = 파일 이름(확장자 뺀) · `spec.project`가 `dev` · `prod`인 Application은 이름이 `<pod>-<env>`(= `^(.+)-<project>$` — 승인 관문이 `*-prod.yaml` 파일 이름으로 prod Application을 알아본다). 앱 Application(`<pod>-dev` · `<pod>-prod`)은 계약 §Application 규약의 앱 꼴(finalizer · project = env · destination `jt-<env>` · syncPolicy)을 따른다.
+4. `bash tests/validate.sh` — 검사 2(APP-SSA)와 7.1(WAVE 이름·경로·값)이 새 파일을 인정하는지 확인한다. 사람이 표와 눈으로 대조하지 않는다. (T075) 14.0도 이 디렉터리의 파일을 본다 — 파일 하나에 Application 문서 하나 · `metadata.name` = 파일 이름(확장자 뺀) · `spec.project`가 `dev` · `prod`인 Application은 이름이 `<pod>-<env>`(= `^(.+)-<project>$` — 승인 관문이 `*-prod.yaml` 파일 이름으로 prod Application을 알아본다). 앱 Application(`<pod>-dev` · `<pod>-prod`)은 계약 §Application 규약의 앱 꼴(finalizer · project = env · destination `jt-<env>` · syncPolicy)을 따른다. 새 pod는 계약 §validate.yml 3의 pod 표(와 딸린 표)에 행을 먼저 더한다(`tests/validate.sh` 사본과 함께 — 없으면 14.2 FAIL) · 파일 이름 = `<pod>-<env>.yaml` · sync-wave는 계약 §sync-wave 단일 표의 앱 행에서 읽는다(코드 사본 `APP_WAVE`).
 5. 이 디렉터리 바로 아래에는 `*.yaml` · `*.yml` 파일과 이 `README.md`만 둔다(검사 11.6 — T075 보정 2026-11-18). kustomization 파일(세 이름 · 대소문자 무관)이 하나 생기면 Argo CD가 이 디렉터리를 directory source가 아니라 kustomize 렌더로 읽고, 다른 확장자(`.json` · `.jsonnet`)는 directory source가 Application으로 읽으며, 하위 디렉터리는 어느 검사의 열거에도 들지 않는다 — 모두 승인 관문(`*-prod.yaml`)과 파일 검사를 비켜 가는 길이라 금지한다(승인 관문 `classify`도 그런 경로를 바꾼 PR을 `need`로 본다).

@@ -1,0 +1,64 @@
+# clusters/oci-k3s/apps/identity-admin-prod.yaml — 앱 Application `identity-admin-prod` (T075 GP-2 · 2026-11-19)
+#
+# 역할: root(app-of-apps)가 이 파일을 읽어 child Application `identity-admin-prod`를 만들고, 그 Application이 overlay `apps/identity-admin/overlays/prod`를
+#   서버 사이드 적용한다. 지금 그 overlay는 빈 뼈대라 렌더가 0객체다 — 계약 §Application 규약 syncPolicy 행 「prod Application은 빈 prod overlay를
+#   가리키는 꼴로 먼저 만들 수 있다」. 내용(base + namespace jt-prod · images 사람 seed · m2m Ingress host · ConfigMap · ES store/key prod 패치 ·
+#   admin Ingress · Middleware)은 T075 GP-3이 채운다. 이 파일을 먼저 두는 까닭: GP-3의 관문 diff가 prod 객체뿐이 되고, 빈 Application의
+#   Synced/Healthy를 먼저 본다. project `prod`가 허용 kind 목록 밖 객체와 cluster 리소스를 막는다(`../projects/prod.yaml`).
+#
+# 꼴: identity-admin-dev.yaml과 같고 project = prod · destination jt-prod · automated {prune: false, selfHeal: true}만 다르다(계약 contracts/gitops-repo.md
+#   §Application 규약 syncPolicy 행 「앱 Application의 정확한 꼴」 · validate 14.0). 파일 이름 `<이름>-prod.yaml`이라 승인 관문(prod-approval) 대상이다.
+#   sync-wave 값의 정본은 계약 §sync-wave 단일 표의 앱 행이고 코드 사본은 tests/validate.sh의 APP_WAVE 하나뿐이다 — 숫자를 주석 · README · PR 본문에
+#   옮겨 적지 않는다(대조는 검사 7.1 — source.path = apps/<pod>/overlays/<env>도 본다). destination.namespace는 §Application 규약의 jt-<env>다(14.0).
+#
+# syncPolicy 근거: prod 앱 = automated이되 변경은 PR로만 한다(prod overlay 승격 = promote PR · 사람 머지) · prune: false — Git에서 지운 객체를 자동으로
+#   지우지 않는다. syncOptions [ServerSideApply=true]뿐이고 CreateNamespace · managedNamespaceMetadata(ns 소유 = platform-policies) · retry ·
+#   ApplyOutOfSyncOnly(재시도에서 wave 순서를 잃는다) · Prune=confirm · Delete=confirm · ignoreDifferences를 두지 않는다. Degraded의 대표 경로(hook ES의
+#   kv 누락)는 「머지 전 시드 + 게이트 출력 확인 뒤에만 머지」로 막는다 — 뚫리면 원인 해소 → 전체 수동 Sync. 그 밖의 경로(migrate Job 실패 · 기동 실패 —
+#   startup_check · Kafka SCRAM · Dragonfly ACL · 이미지)도 원인 해소 → 전체 수동 Sync 또는 고친 리비전 머지로 푼다.
+#
+# prod 노출 축소 규칙(설계 D24 · 런북 bootstrap.md §3 T075): prune: false라 Git에서 지운 객체(admin Ingress · Middleware 등)는 OutOfSync(requires pruning)로
+#   남아 계속 서비스된다. 그래서 prod의 노출 축소는 객체 수정으로 한다(경로 줄 삭제 등 — SSA로 반영된다). 객체 삭제가 꼭 필요하면 PR 머지 뒤 운영자가 그
+#   객체만 수동 prune하고 `kubectl get ingress,middlewares.traefik.io -n jt-prod`로 사라졌는지 확인한다. prune 정책은 바꾸지 않는다.
+#
+# 첫 배포 선행 조건(지금은 0객체라 이 파일의 머지에는 prod 선행 조건이 없다 — 아래는 overlay를 채우는 GP-3 머지 전 · 모노레포 docs/runbooks/bootstrap.md
+#   §3 T075 「PR 넷」 · §4 T075 A): GP-3의 ES 둘이 store vault-prod로 읽는 kv 10경로가 값 규칙대로 있어야 한다 — prod/db/identity_admin/app ·
+#   prod/db/identity_admin/owner(`-migrate`만) · prod/kafka/identity-admin · prod/dragonfly/identity-admin · prod/authentik/identity-admin(issuer · jwks_url =
+#   계약 값 · api_token은 sentinel — 면제 · client_id · client_secret은 판정 밖 sentinel) · prod/authentik/webhooks/identity-admin · prod/django/identity-admin ·
+#   prod/sentry/identity-admin(dsn 빈 값 = Sentry 끔) · prod/openfga/store_id · prod/openfga/preshared(둘 다 sentinel — 면제). 확인 = dev 확인 통과 ·
+#   O-3 prod `gate=PASS` 출력 · prod seed digest의 attestation 확인.
+#
+# hook ES 운영 성질 넷(GP-3 뒤 · 모노레포 apps/identity-admin/README.md 「단계 · sync-wave」 요약 — 복구 절차의 자리 = 런북 bootstrap.md §3 T075 「복구」):
+#   ① hook(PreSync ES · Job `identity-admin-migrate`)은 Argo 추적 밖이다 — hook만 바뀐 변경은 전체 수동 Sync(리소스 선택 없음)로만 다시 돈다.
+#   ② `identity-admin-migrate` ES 상태는 Application health 밖이다 — `kubectl -n jt-prod get externalsecret identity-admin-migrate`로 직접 본다.
+#   ③ 전체 sync마다 owner Secret이 지워졌다 다시 생긴다(BeforeHookCreation + Owner) — 모든 배포가 Vault · ESO 가용성에 걸린다.
+#   ④ hook ES가 Healthy가 되지 않으면 두 갈래다 — Degraded(kv 누락 · Vault · store 오류) → operation Failed → 기본 재시도 창(≈ 5분)이 다하면 같은
+#      리비전은 다시 자동 sync되지 않는다 → 원인 해소 뒤 전체 수동 Sync / 상태 없음(ESO 컨트롤러 중단) → operation 무기한 Running → terminate →
+#      ESO 복구 → 전체 수동 Sync.
+#
+# finalizer 있음(`resources-finalizer.argocd.argoproj.io`): 이 Application을 지우면 렌더 객체가 cascade로 함께 지워진다(ES가 소유한 Secret도 GC ·
+#   지금은 0객체). 상태 없는 앱이다 — DB는 data ns의 CNPG(platform-cnpg-cluster · platform-cnpg-databases 소유)에 있어 함께 지워지지 않는다.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: identity-admin-prod
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "100"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: prod
+  source:
+    repoURL: https://github.com/joshua92y/platform-gitops.git
+    targetRevision: main
+    path: apps/identity-admin/overlays/prod
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: jt-prod
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
