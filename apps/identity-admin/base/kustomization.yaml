@@ -1,6 +1,13 @@
-# apps/identity-admin/base/ — deployment·service·ingress·configmap·externalsecret-env·
-# externalsecret-migrate·migrate-job (Ingress host = PLACEHOLDER.joshuatech.dev).
-# 계약 gitops-repo.md §디렉터리. 빈 뼈대(T003) — 실제 매니페스트는 T031+에서 작성한다.
+# identity-admin deploy/base — kustomize base(dev 값). T075가 gitops apps/identity-admin/base로 파일 이름 1:1 복사한다.
+# namespace · images(digest) · commonLabels는 두지 않는다 — overlay가 정한다(계약 gitops-repo.md §디렉터리 · README 「deploy/base 인터페이스」).
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-resources: []
+resources:
+  - configmap.yaml
+  - externalsecret-env.yaml
+  - externalsecret-migrate.yaml
+  - migrate-job.yaml
+  - deployment.yaml
+  - deployment-celery.yaml
+  - service.yaml
+  - ingress.yaml

@@ -1,0 +1,120 @@
+# identity-admin 마이그레이션 — Argo PreSync hook Job(wave 0 — identity-admin-migrate ES hook(wave -1) 뒤). owner 자격(identity-admin-migrate)만
+# 참조한다(ConfigMap 없음 — Sync 단계 리소스라 첫 배포의 PreSync에는 아직 없다) · JT_SETTINGS_PROFILE=migrate · 런타임 env(POD_NAMESPACE) 없음.
+# 스크립트(D20 단계 1–4 · 생성물 tests/test_migrations.py가 이 파일을 읽어 실제로 돈다 · 템플릿 하네스가 이 스크립트 = 골든 본보기를 바이트까지
+# 단언한다): DATABASE_OWNER_URL에서 DB 이름 → 접속 재시도(psycopg.OperationalError만) → CONNECT 경계 SQL(멱등 — REVOKE FROM PUBLIC · GRANT
+# TO <db>_app, <db>_owner · OperationalError와 UndefinedObject(첫 배포에서 <db>_app role이 DB보다 늦게 생긴다)는 다시 접속해 재시도) →
+# manage.py migrate의 종료 코드를 그대로 돌려준다. 마감은 둘이 함께 JT_DB_CONNECT_WAIT_SECONDS(1–600 · 기본 120 — 이 매니페스트는 두지
+# 않는다)이고 재시도 줄(db_connect_retry · db_boundary_retry <클래스> attempt=<n>)은 stdout이다. 스크립트 자신의 실패는 전부 stderr 한 줄
+# + 종료 1이다(트레이스백 · 예외 메시지 · 값 없음): db_url_invalid <클래스>(DATABASE_OWNER_URL 없음 · 해석 실패 — urlsplit의 ValueError는
+# netloc 전체를 싣는다) · db_connect_wait_invalid · db_connect_failed <클래스> · db_boundary_failed <클래스>(마감 또는 재시도하지 않는 예외).
+# 하위 manage.py migrate의 출력 · 실패는 Django 그대로다(migrate 프로필 기동 실패는 설정 이름만).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: identity-admin-migrate
+  labels:
+    app.kubernetes.io/name: identity-admin
+    app.kubernetes.io/component: migrate
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: 600
+  ttlSecondsAfterFinished: 604800
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: identity-admin
+        app.kubernetes.io/component: migrate
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: migrate
+          image: ghcr.io/joshua92y/identity-admin
+          command:
+            - python
+            - -c
+            - |
+              import os, subprocess, sys, time
+              from urllib.parse import unquote, urlsplit
+              import psycopg
+              from psycopg import errors, sql
+              try:
+                  url = os.environ["DATABASE_OWNER_URL"]
+                  db = unquote(urlsplit(url).path.lstrip("/"))
+              except Exception as exc:
+                  print("db_url_invalid", type(exc).__name__, file=sys.stderr)
+                  sys.exit(1)
+              raw = os.environ.get("JT_DB_CONNECT_WAIT_SECONDS", "120")
+              wait = int(raw) if raw.isascii() and raw.isdigit() else 0
+              if not 1 <= wait <= 600:
+                  print("db_connect_wait_invalid", file=sys.stderr)
+                  sys.exit(1)
+              revoke = sql.SQL("REVOKE CONNECT ON DATABASE {} FROM PUBLIC").format(sql.Identifier(db))
+              grant = sql.SQL("GRANT CONNECT ON DATABASE {} TO {}, {}").format(sql.Identifier(db), sql.Identifier(db + "_app"), sql.Identifier(db + "_owner"))
+              deadline = time.monotonic() + wait
+              attempt = 0
+              delay = 1
+              while True:
+                  attempt += 1
+                  step = "connect"
+                  try:
+                      conn = psycopg.connect(url, autocommit=True, connect_timeout=5)
+                      step = "boundary"
+                      with conn:
+                          conn.execute(revoke)
+                          conn.execute(grant)
+                      break
+                  except Exception as exc:
+                      error = type(exc).__name__
+                      if step == "connect":
+                          retry = isinstance(exc, psycopg.OperationalError)
+                          failed, retrying = "db_connect_failed", "db_connect_retry"
+                      else:
+                          retry = isinstance(exc, (psycopg.OperationalError, errors.UndefinedObject))
+                          failed, retrying = "db_boundary_failed", "db_boundary_retry"
+                      if not retry or time.monotonic() + delay > deadline:
+                          print(failed, error, file=sys.stderr)
+                          sys.exit(1)
+                  print(retrying, error, "attempt=%d" % attempt, flush=True)
+                  time.sleep(delay)
+                  delay = min(delay * 2, 10)
+              sys.exit(subprocess.call([sys.executable, "manage.py", "migrate", "--noinput"]))
+          envFrom:
+            - secretRef:
+                name: identity-admin-migrate
+          env:
+            - name: JT_SETTINGS_PROFILE
+              value: migrate
+          resources:
+            requests:
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: pg-ca
+              mountPath: /etc/pg
+              readOnly: true
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: pg-ca
+          secret:
+            secretName: pg-main-ca

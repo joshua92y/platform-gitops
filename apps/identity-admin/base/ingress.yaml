@@ -1,0 +1,53 @@
+# identity-admin Ingress(Traefik websecure · router.tls — spec.tls 없음: 인증서는 Traefik 쪽 설정이 정한다). host는 자리값이다 — overlay가 규칙 0의 host
+# (/spec/rules/0/host)를 패치한다. 경로: /health만 Exact(접두면 /healthz가 열린다) · 나머지는 하위 경로가 맞도록 Prefix. /healthz ·
+# /ready · /webhooks는 열지 않는다. admin Ingress(admin.joshuatech.dev · stripPrefix)는 prod overlay가 둔다.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: identity-admin
+  labels:
+    app.kubernetes.io/name: identity-admin
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: PLACEHOLDER.joshuatech.dev
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: identity-admin
+                port:
+                  name: http
+          - path: /health
+            pathType: Exact
+            backend:
+              service:
+                name: identity-admin
+                port:
+                  name: http
+          - path: /session
+            pathType: Prefix
+            backend:
+              service:
+                name: identity-admin
+                port:
+                  name: http
+          - path: /sessions
+            pathType: Prefix
+            backend:
+              service:
+                name: identity-admin
+                port:
+                  name: http
+          - path: /tenants
+            pathType: Prefix
+            backend:
+              service:
+                name: identity-admin
+                port:
+                  name: http

@@ -1,0 +1,206 @@
+# identity-admin web pod — initContainer startup-check(DB 접속 재시도 → check_rls --require-rls-role) · web(이미지 CMD = gunicorn
+# --no-control-socket · 8000 · 지표 9100) · relay(manage.py outbox_relay · 지표 9464). 명령은 README 「프로세스」 표 · 하네스 상수와 같다.
+# 쓰기 경로는 /tmp(emptyDir)뿐이다(읽기 전용 루트). APP_VERSION · APP_GIT_SHA · DJANGO_SETTINGS_MODULE은 이미지 ENV가 정한다 — 여기 두지 않는다.
+# grace 90 s: relay 한 패스 최악 ≈ 80 s · web preStop 5 s(엔드포인트 제거와 SIGTERM의 경합) + gunicorn 종료.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: identity-admin
+  labels:
+    app.kubernetes.io/name: identity-admin
+    app.kubernetes.io/component: web
+  annotations:
+    reloader.stakater.com/auto: "true"
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: identity-admin
+      app.kubernetes.io/component: web
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: identity-admin
+        app.kubernetes.io/component: web
+      annotations:
+        k8s.grafana.com/scrape: "true"
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 90
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: role
+                    operator: In
+                    values:
+                      - platform
+      initContainers:
+        - name: startup-check
+          image: ghcr.io/joshua92y/identity-admin
+          command:
+            - python
+            - manage.py
+            - startup_check
+          envFrom:
+            - configMapRef:
+                name: identity-admin-config
+            - secretRef:
+                name: identity-admin-env
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          resources:
+            requests:
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: pg-ca
+              mountPath: /etc/pg
+              readOnly: true
+      containers:
+        - name: web
+          image: ghcr.io/joshua92y/identity-admin
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+            - name: web-metrics
+              containerPort: 9100
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: identity-admin-config
+            - secretRef:
+                name: identity-admin-env
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+          startupProbe:
+            httpGet:
+              path: /ready
+              port: http
+            failureThreshold: 30
+            periodSeconds: 5
+            timeoutSeconds: 3
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 5
+          resources:
+            requests:
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: pg-ca
+              mountPath: /etc/pg
+              readOnly: true
+            - name: kafka-ca
+              mountPath: /etc/kafka
+              readOnly: true
+        - name: relay
+          image: ghcr.io/joshua92y/identity-admin
+          command:
+            - python
+            - manage.py
+            - outbox_relay
+          ports:
+            - name: metrics
+              containerPort: 9464
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: identity-admin-config
+            - secretRef:
+                name: identity-admin-env
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          livenessProbe:
+            tcpSocket:
+              port: metrics
+            periodSeconds: 20
+            timeoutSeconds: 3
+          resources:
+            requests:
+              memory: 96Mi
+            limits:
+              memory: 192Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: pg-ca
+              mountPath: /etc/pg
+              readOnly: true
+            - name: kafka-ca
+              mountPath: /etc/kafka
+              readOnly: true
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: pg-ca
+          secret:
+            secretName: pg-main-ca
+        - name: kafka-ca
+          secret:
+            secretName: jt-kafka-cluster-ca-cert

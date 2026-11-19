@@ -1,0 +1,60 @@
+# clusters/oci-k3s/apps/identity-admin-dev.yaml — 앱 Application `identity-admin-dev` (T075 GP-2 · 2026-11-19)
+#
+# 역할: root(app-of-apps)가 이 파일을 읽어 child Application `identity-admin-dev`를 만들고, 그 Application이 overlay `apps/identity-admin/overlays/dev`
+#   (namespace jt-dev · images digest · m2m Ingress host · ConfigMap 값 — base = 모노레포 apps/identity-admin/deploy/base의 바이트 사본)를 서버 사이드
+#   적용한다. 렌더 = ConfigMap · ExternalSecret 2(`identity-admin-env` · PreSync hook `identity-admin-migrate`) · PreSync hook Job `identity-admin-migrate` ·
+#   Deployment 2(`identity-admin` · `identity-admin-celery`) · Service · m2m Ingress(`identity-m2m-dev.joshuatech.dev`) — 전부 ns jt-dev. project `dev`가
+#   허용 kind 목록 밖 객체와 cluster 리소스를 막는다(`../projects/dev.yaml`).
+#
+# 꼴: 계약 contracts/gitops-repo.md §Application 규약 syncPolicy 행 「앱 Application의 정확한 꼴」 그대로이고 validate 14.0이 본다 — 파일 하나에 문서
+#   하나 · metadata.name = 파일 이름 · namespace argocd · finalizer 하나 · spec 키 넷 · project = env · destination jt-dev(destination.name 금지).
+#   sync-wave 값의 정본은 계약 §sync-wave 단일 표의 앱 행이고 코드 사본은 tests/validate.sh의 APP_WAVE 하나뿐이다 — 숫자를 주석 · README · PR 본문에
+#   옮겨 적지 않는다(대조는 검사 7.1 — source.path = apps/<pod>/overlays/<env>도 본다). destination.namespace는 §Application 규약의 jt-<env>다(14.0).
+#
+# syncPolicy 근거: dev 앱 = automated {prune: true, selfHeal: true} + syncOptions [ServerSideApply=true]뿐이다. CreateNamespace · managedNamespaceMetadata를
+#   두지 않는다(ns 소유 = platform-policies · project가 Namespace 생성을 막는다). retry · ApplyOutOfSyncOnly(재시도에서 wave 순서를 잃는다) ·
+#   Prune=confirm(dev prune과 충돌) · Delete=confirm · ignoreDifferences도 두지 않는다. 이 앱이 Degraded가 되는 대표 경로는 hook ES의 kv 누락이고,
+#   그것은 「머지 전 시드 + 게이트 출력 확인 뒤에만 머지」로 막는다 — 뚫리면 원인 해소 → 전체 수동 Sync. 그 밖의 경로(migrate Job 실패 · 기동 실패 —
+#   startup_check · Kafka SCRAM · Dragonfly ACL · 이미지)도 원인 해소 → 전체 수동 Sync 또는 고친 리비전 머지로 푼다.
+#
+# 첫 배포 선행 조건(이 파일을 머지하기 전 — 모노레포 docs/runbooks/bootstrap.md §3 T075 「PR 넷」 · §4 T075 A): ES 둘이 store vault-dev로 읽는 kv 10경로가
+#   값 규칙대로 있어야 한다 — dev/db/dev_identity_admin/app · dev/db/dev_identity_admin/owner(`-migrate`만) · dev/kafka/identity-admin ·
+#   dev/dragonfly/identity-admin · dev/authentik/identity-admin(issuer · jwks_url = 계약 값 · api_token은 sentinel — 면제 · client_id · client_secret은
+#   판정 밖 sentinel) · dev/authentik/webhooks/identity-admin · dev/django/identity-admin · dev/sentry/identity-admin(dsn 빈 값 = Sentry 끔) ·
+#   dev/openfga/store_id · dev/openfga/preshared(둘 다 sentinel — 면제).
+#   확인 = O-3 dev `gate=PASS` 출력 · Dragonfly ACL B2 적용(L6) · data-assert 7 id PASS(acl-list = NOPERM). 머지 명령은 세 출력을 받은 뒤에만 낸다.
+#
+# hook ES 운영 성질 넷(모노레포 apps/identity-admin/README.md 「단계 · sync-wave」 요약 — 복구 절차의 자리 = 런북 bootstrap.md §3 T075 「복구」):
+#   ① hook(PreSync ES · Job `identity-admin-migrate`)은 Argo 추적 밖이다 — hook만 바뀐 변경은 전체 수동 Sync(리소스 선택 없음)로만 다시 돈다.
+#   ② `identity-admin-migrate` ES 상태는 Application health 밖이다 — `kubectl -n jt-dev get externalsecret identity-admin-migrate`로 직접 본다.
+#   ③ 전체 sync마다 owner Secret이 지워졌다 다시 생긴다(BeforeHookCreation + Owner) — 모든 배포가 Vault · ESO 가용성에 걸린다.
+#   ④ hook ES가 Healthy가 되지 않으면 두 갈래다 — Degraded(kv 누락 · Vault · store 오류) → operation Failed → 기본 재시도 창(≈ 5분)이 다하면 같은
+#      리비전은 다시 자동 sync되지 않는다 → 원인 해소 뒤 전체 수동 Sync / 상태 없음(ESO 컨트롤러 중단) → operation 무기한 Running → terminate →
+#      ESO 복구 → 전체 수동 Sync.
+#
+# finalizer 있음(`resources-finalizer.argocd.argoproj.io`): 이 Application을 지우면 렌더 객체가 cascade로 함께 지워진다(ES가 소유한 Secret도 GC).
+#   상태 없는 앱이다 — DB는 data ns의 CNPG(platform-cnpg-cluster · platform-cnpg-databases 소유)에 있어 함께 지워지지 않는다.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: identity-admin-dev
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "100"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: dev
+  source:
+    repoURL: https://github.com/joshua92y/platform-gitops.git
+    targetRevision: main
+    path: apps/identity-admin/overlays/dev
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: jt-dev
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
