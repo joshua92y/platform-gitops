@@ -1,0 +1,18 @@
+# identity-admin admin Ingress의 stripPrefix Middleware(prod만 — 설계 D6 · 계약 gitops-repo.md §디렉터리 overlays/prod · validate 14.3).
+#   이름 identity-admin-strip은 ingress-admin.yaml의 router.middlewares 값 jt-prod-identity-admin-strip@kubernetescrd(<ns>-<이름>@kubernetescrd)와 묶인다 —
+#   이름이 어긋나면 그 라우터에 middleware 오류가 난다(VD-T075-12가 Traefik 로그의 middleware 오류 0줄을 본다). ns는 overlay 변환(jt-prod)이 정한다 —
+#   다른 ns면 Traefik CRD provider의 allowCrossNamespace(기본 false)가 필요하다. prefixes = [/identity-admin] 하나(14.3이 정확히 본다).
+#   sync-wave -1: 같은 sync의 admin Ingress(wave 0)보다 먼저 선다 — wave가 같으면 Argo CD가 kind 순서로 Ingress를 먼저 적용해, 아직 없는
+#   Middleware를 가리키는 일시 오류가 Traefik 로그에 남을 수 있다. Middleware는 Argo health 판정이 없어 이 wave의 대기가 늘지 않는다.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: identity-admin-strip
+  labels:
+    app.kubernetes.io/name: identity-admin
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  stripPrefix:
+    prefixes:
+      - /identity-admin

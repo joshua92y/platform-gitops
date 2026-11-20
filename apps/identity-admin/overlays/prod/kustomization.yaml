@@ -1,7 +1,157 @@
-# apps/identity-admin/overlays/prod/ — namespace(jt-prod)·images[].digest(태그 금지)·
-# Ingress host JSON6902·replicas·admin Ingress. 계약 gitops-repo.md §디렉터리·§이미지·승격.
-# prod 승격은 promote.yml이 연 PR을 사람이 머지한다(FR-038 — auto-merge 금지).
-# 빈 뼈대(T003) — 실제 내용은 T031+에서 작성한다.
+# apps/identity-admin/overlays/prod/ — identity-admin prod(jt-prod). 이 overlay를 쓰는 Application = identity-admin-prod(clusters/oci-k3s/apps/identity-admin-prod.yaml).
+#   base(../../base) = 모노레포 apps/identity-admin/deploy/base의 바이트 사본(dev 값 — 그래서 ES 둘의 store · data[].remoteRef.key를 prod로 패치한다). 여기서 정하는 것:
+#   namespace · images digest(태그 금지) · m2m Ingress host(op test → replace) · ConfigMap 값(키별 JSON6902 replace · JT_PLACEHOLDER_EXEMPT만 add) ·
+#   ES store → vault-prod와 data[N] key → prod/…(인덱스마다 op test secretKey 뒤 replace — base 순번이 바뀌면 렌더가 실패한다) ·
+#   admin Ingress(ingress-admin.yaml) · stripPrefix Middleware(middleware-admin.yaml) — 그 둘은 prod만 둔다. replicas(base 1)는 두지 않는다.
+#   계약 gitops-repo.md §디렉터리 · §이미지·승격 · §ExternalSecret 규약 · §validate.yml 3(pod 표 — 검사 3.9 · 14.x).
+# 노출 축소 규칙(설계 D24): Application identity-admin-prod는 prune: false라 Git에서 지운 객체(admin Ingress · Middleware 등)가 OutOfSync로 남아 계속
+#   서비스된다. 그래서 노출은 객체 수정(경로 줄 삭제 등)으로 줄이고, 객체 삭제가 꼭 필요하면 PR 머지 뒤 운영자가 그 객체만 수동 prune한다(런북 bootstrap.md §3 T075).
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-resources: []
+namespace: jt-prod
+resources:
+  - ../../base
+  - middleware-admin.yaml
+  - ingress-admin.yaml
+# 첫 항목(promote ④의 전제)은 사람 seed PR(T075 GP-3)이 넣었다 — 값 = 그 PR을 쓰는 시점의 dev digest · attestation 확인 결과는 그 PR 본문.
+# 이후 prod digest 변경은 promote.yml이 연 PR을 사람이 승인 · 머지한다(FR-038 — auto-merge 금지). promote ④는 아래 digest 줄의 hex만 제자리에서 바꾼다 —
+# 항목은 정확히 하나 · name · newName · digest 줄을 지우거나 옮기지 않는다. 옛 digest가 든 줄은 정확히 하나여야 하므로 주석에 digest 값을 적지 않는다.
+images:
+  - name: ghcr.io/joshua92y/identity-admin
+    newName: ghcr.io/joshua92y/identity-admin
+    digest: sha256:faf55a5752533dffb3b5e93e3b8d8857890d4a0690945de70c526de50be057dd
+patches:
+  - target: {group: networking.k8s.io, version: v1, kind: Ingress, name: identity-admin}
+    patch: |-
+      - op: test
+        path: /spec/rules/0/host
+        value: PLACEHOLDER.joshuatech.dev
+      - op: replace
+        path: /spec/rules/0/host
+        value: identity-m2m-prod.joshuatech.dev
+  - target: {version: v1, kind: ConfigMap, name: identity-admin-config}
+    patch: |-
+      - op: replace
+        path: /data/ACCESS_AUD_M2M
+        value: "4b80c1ea43d4c160e16ec99b7bc4ae62830929785fb5dab5cd3d6d475cf4ba46"
+      - op: replace
+        path: /data/ACCESS_EXPECTED_CN
+        value: "97be0d37995c77f88c01340994d56f33.access"
+      - op: replace
+        path: /data/ACCESS_AUD_ADMIN
+        value: "bb921cd68bb6ba9dbf024d0ecf4fb190d560ae6fe6a3a5ed6000ec253bab0e0c"
+      - op: replace
+        path: /data/ALLOWED_HOSTS
+        value: "identity-admin.jt-prod.svc,identity-m2m-prod.joshuatech.dev,admin.joshuatech.dev"
+      - op: replace
+        path: /data/ENV
+        value: "prod"
+      - op: replace
+        path: /data/KAFKA_USERNAME
+        value: "identity-admin"
+      - op: replace
+        path: /data/ADMIN_HOST
+        value: "admin.joshuatech.dev"
+      - op: replace
+        path: /data/FORCE_SCRIPT_NAME
+        value: "/identity-admin"
+      - op: replace
+        path: /data/AUTHENTIK_WRITES_ENABLED
+        value: "true"
+      - op: add
+        path: /data/JT_PLACEHOLDER_EXEMPT
+        value: "AUTHENTIK_API_TOKEN,OPENFGA_STORE_ID,OPENFGA_PRESHARED_KEY"
+  - target: {group: external-secrets.io, version: v1, kind: ExternalSecret, name: identity-admin-env}
+    patch: |-
+      - op: replace
+        path: /spec/secretStoreRef/name
+        value: vault-prod
+      - op: test
+        path: /spec/data/0/secretKey
+        value: db_username
+      - op: replace
+        path: /spec/data/0/remoteRef/key
+        value: prod/db/identity_admin/app
+      - op: test
+        path: /spec/data/1/secretKey
+        value: db_password
+      - op: replace
+        path: /spec/data/1/remoteRef/key
+        value: prod/db/identity_admin/app
+      - op: test
+        path: /spec/data/2/secretKey
+        value: kafka_password
+      - op: replace
+        path: /spec/data/2/remoteRef/key
+        value: prod/kafka/identity-admin
+      - op: test
+        path: /spec/data/3/secretKey
+        value: dragonfly_url
+      - op: replace
+        path: /spec/data/3/remoteRef/key
+        value: prod/dragonfly/identity-admin
+      - op: test
+        path: /spec/data/4/secretKey
+        value: authentik_issuer
+      - op: replace
+        path: /spec/data/4/remoteRef/key
+        value: prod/authentik/identity-admin
+      - op: test
+        path: /spec/data/5/secretKey
+        value: authentik_jwks_url
+      - op: replace
+        path: /spec/data/5/remoteRef/key
+        value: prod/authentik/identity-admin
+      - op: test
+        path: /spec/data/6/secretKey
+        value: sentry_dsn
+      - op: replace
+        path: /spec/data/6/remoteRef/key
+        value: prod/sentry/identity-admin
+      - op: test
+        path: /spec/data/7/secretKey
+        value: secret_key
+      - op: replace
+        path: /spec/data/7/remoteRef/key
+        value: prod/django/identity-admin
+      - op: test
+        path: /spec/data/8/secretKey
+        value: authentik_api_token
+      - op: replace
+        path: /spec/data/8/remoteRef/key
+        value: prod/authentik/identity-admin
+      - op: test
+        path: /spec/data/9/secretKey
+        value: authentik_webhook_secret
+      - op: replace
+        path: /spec/data/9/remoteRef/key
+        value: prod/authentik/webhooks/identity-admin
+      - op: test
+        path: /spec/data/10/secretKey
+        value: openfga_store_id
+      - op: replace
+        path: /spec/data/10/remoteRef/key
+        value: prod/openfga/store_id
+      - op: test
+        path: /spec/data/11/secretKey
+        value: openfga_preshared_key
+      - op: replace
+        path: /spec/data/11/remoteRef/key
+        value: prod/openfga/preshared
+  - target: {group: external-secrets.io, version: v1, kind: ExternalSecret, name: identity-admin-migrate}
+    patch: |-
+      - op: replace
+        path: /spec/secretStoreRef/name
+        value: vault-prod
+      - op: test
+        path: /spec/data/0/secretKey
+        value: db_username
+      - op: replace
+        path: /spec/data/0/remoteRef/key
+        value: prod/db/identity_admin/owner
+      - op: test
+        path: /spec/data/1/secretKey
+        value: db_password
+      - op: replace
+        path: /spec/data/1/remoteRef/key
+        value: prod/db/identity_admin/owner
