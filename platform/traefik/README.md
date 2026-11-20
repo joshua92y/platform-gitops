@@ -198,10 +198,21 @@ AOP 계열은 525 또는 520으로 나타난다(어느 쪽인지 미실측 — V
 >
 > **⚠ 당기기 전 필수 판정 — 증상을 먼저 분류하고, 526 뒤에 사용자 트래픽이 없으면 당기지 않는다.**
 > 판단 기준은 "526이 보이는가"가 아니라 **"526 뒤에 실제 사용자 트래픽이 있는가"**다.
-> T043(2026-09-11) 뒤 **이 저장소의** Ingress는 `bootstrap/argocd/ingress.yaml`(`argo.joshuatech.dev`) **1개**이고
+> T043(2026-09-11) 뒤 **이 저장소의** Ingress는 `bootstrap/argocd/ingress.yaml`(`argo.joshuatech.dev`) **1개**였고
 > (`grep -rn '^kind: Ingress' platform/ clusters/ bootstrap/`), 라이브에는 차트가 만든 `traefik-dashboard` IngressRoute 1개가 더 있다
-> (`traefik.joshuatech.dev`). 둘 다 GitHub IdP Access 뒤의 **운영자 트래픽**이고 사용자(앱) 호스트의 Ingress는 없다(앱 Application은 후속 PR).
+> (`traefik.joshuatech.dev`). 둘 다 GitHub IdP Access 뒤의 **운영자 트래픽**이다.
+> 지금(T075 GP-3 #64 뒤 · 2026-11-20 — `git grep -n '^kind: Ingress$' -- apps platform clusters bootstrap` = 4파일)은 그 밖에
+> `platform/vault/ingress.yaml`(`vault.joshuatech.dev` — T044 G2 · GitHub IdP · **운영자 트래픽**) · identity-admin m2m 둘(`apps/identity-admin/base/ingress.yaml`을
+> 두 overlay가 렌더 — `identity-m2m-dev.joshuatech.dev` · `identity-m2m-prod.joshuatech.dev` · Access **Service Auth**(서비스 토큰 `web-bff-<env>` · `tester-m2m` — 모노레포
+> `infra/cloudflare/access.tf`) 뒤의 **기계 트래픽**) · admin(`apps/identity-admin/overlays/prod/ingress-admin.yaml` — `admin.joshuatech.dev` · GitHub IdP · **운영자 트래픽**)이
+> 있다. 최종 사용자(웹) 호스트는 Worker라 이 클러스터의 Ingress가 아니다(모노레포 계약 `hostnames-and-access.md` 호스트 표). (T075 정정 2026-11-20 — 이전 문구 「… **1개**이고
+> … 둘 다 GitHub IdP Access 뒤의 **운영자 트래픽**이고 사용자(앱) 호스트의 Ingress는 없다(앱 Application은 후속 PR)」 · vault Ingress(T044 G2 · 2026-09-17)는 그때 이 줄에
+> 더해지지 않았다)
 > 즉 지금의 526 뒤에도 **서비스 중인 사용자 트래픽은 없다** — 가용성 이득 0에 v1 존 전역 보안 저하만 남으므로 **당기지 않는다**.
+> 이 결론을 다시 볼 조건: 최종 사용자 요청이 이 클러스터의 Ingress에 직접 또는 간접으로 닿기 시작할 때 — 예: T080이 `platform/authentik`을 채운 뒤 사용자
+> 로그인이 `auth.joshuatech.dev`(Authentik · identity ns Ingress — 모노레포 계약 호스트 표)에 닿는 순간(브라우저 직접 · BFF 토큰 교환 간접 — 모노레포 계약
+> `bff-api.md` login · callback) · 운영 Worker의 BFF가 사용자 요청을 처리하며 `identity-m2m-prod`를 부르는 순간. 공개 로그인 호스트의 Ingress는 아직 없다
+> (`platform/authentik` 빈 뼈대 — T080).
 > Argo CD UI는 `port-forward`로 우회한다(§2).
 >
 > **T043 뒤의 판정 순서**
@@ -224,7 +235,8 @@ AOP 계열은 525 또는 520으로 나타난다(어느 쪽인지 미실측 — V
 >    **No changes**인지 확인한다. (`ssl=strict` 드리프트 단언 추가는 T047/converge 인계 후보.)
 
 레버를 쓰지 않고 버티는 근거는 T043 뒤에도 그대로다: 526은 **v2 플랫폼 호스트에만** 걸리고 v1 매출 경로는 이 인증서를 쓰지 않는다.
-SSH·kubectl 복구 경로도 살아 있으므로(§2), 사용자 호스트의 Ingress가 생긴 뒤에도 근본 복구가 수 분 내면 **당기지 않는 쪽이 낫다.**
+SSH·kubectl 복구 경로도 살아 있으므로(§2), 최종 사용자 요청이 이 클러스터의 Ingress에 직접 또는 간접으로 닿기 시작한 뒤에도 근본 복구가 수 분 내면
+**당기지 않는 쪽이 낫다.** (T075 정정 2026-11-20 — 이전 문구 「사용자 호스트의 Ingress가 생긴 뒤에도」)
 (사용자 트래픽이 없는 지금은 "낫다"가 아니라 **당기지 않는다** — 위 판정 참조.)
 
 ---

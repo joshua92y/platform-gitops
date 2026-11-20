@@ -12,14 +12,18 @@
 #   - ES 분할(결정 D5): 옛 공유 ES `assert-env`(8키 · kv 6경로) → Job별 ES — 자격 격리 + 부분 실패 격리(한 ES의 경로 하나가 없어도 다른 Job은 돈다).
 #   - 재실행 모델 B(결정 D6): hook이 아닌 일반 리소스. `ttlSecondsAfterFinished` 7일 뒤 Job이 사라지면 selfHeal이 다시 만든다(= 주간 재검사) ·
 #     수동 재실행 = 운영자(admin kubeconfig) `kubectl -n jt-dev delete job <이름>` → selfHeal. Job `spec.template`은 immutable이라 Job 스펙을 바꾸는 PR은
-#     완료된 Job이 남아 있으면 sync가 실패한다 → 운영자(admin kubeconfig) Job 삭제(절차 · 재시도 창은 `../../../platform/policies/tests/README.md` §재실행 모델).
+#     완료된 Job이 남아 있으면 머지 뒤 비교에서 거부된다(서버 측 diff — sync 상태 Unknown · 조건 ComparisonError · 새 operation 없음 · 재시도 창 없음 —
+#     VD-3 · T075 GP-A 2026-11-19 실측) → 운영자(admin kubeconfig) Job 삭제 → 자동 sync가 새 스펙으로 Job을 만든다(절차는
+#     `../../../platform/policies/tests/README.md` §재실행 모델). (T075 정정 2026-11-20 — 이전 문구 「완료된 Job이 남아 있으면 sync가 실패한다 →
+#     운영자(admin kubeconfig) Job 삭제(절차 · 재시도 창은 `../../../platform/policies/tests/README.md` §재실행 모델)」)
 #
 # sync-wave · destination.namespace: 값의 정본은 계약 contracts/gitops-repo.md §sync-wave 단일 표의 `policies/tests` 행이고, 코드 사본은
 #   tests/validate.sh의 WAVE_TABLE(`tests` 행) 하나뿐이다. 아래 두 값은 그 표에서 기계적으로 읽어 넣었고 저장소의 어떤 README·주석·PR 본문에도
 #   숫자를 다시 적지 않는다(대조는 검사 7.1). 이 행이 표의 마지막 **플랫폼** 행인 이유: 모든 플랫폼 컴포넌트 뒤라, 검사 실패(Job Failed → 이 Application
 #   Degraded)가 root 재구축에서 앞 wave(터널 · Traefik · 모니터링을 포함한 플랫폼 컴포넌트 전부)를 막지 않는다.
-#   표의 마지막 **플랫폼** 행이지 전체의 마지막은 아니다 — `<pod>-<env>`(앱 · 뒤 행)가 생기면 root 콜드 재구축의 첫 operation은 이 Application의 health가
-#   Healthy로 읽힐 때까지 기다린 뒤 앱 행으로 간다. 단, Argo CD v3.5.2는 live가 없는 리소스를 Application health 집계에서 뺀다(`controller/health.go`
+#   표의 마지막 **플랫폼** 행이지 전체의 마지막은 아니다 — `<pod>-<env>`(앱 · 뒤 행)가 생겼으므로(`identity-admin-dev` · `identity-admin-prod` — T075
+#   GP-2 #63 · 2026-11-19) root 콜드 재구축의 첫 operation은 이 Application의 health가 Healthy로 읽힐 때까지 기다린 뒤 앱 행으로 간다(T075 정정
+#   2026-11-20 — 이전 문구 「`<pod>-<env>`(앱 · 뒤 행)가 생기면」). 단, Argo CD v3.5.2는 live가 없는 리소스를 Application health 집계에서 뺀다(`controller/health.go`
 #   "Missing resources should not affect parent app health")라, ES 2가 SecretSynced가 되고 Job이 아직 만들어지기 전의 짧은 창에서 이 Application은 Healthy로
 #   읽힌다 — root가 그 창을 읽으면 Job 실행(2–3분)을 기다리지 않고 앱 행으로 간다. 즉 뒤 행(앱) 게이트는 검사 Job의 결과를 보장하지 않는다(경합 · 실측 VD-6 ·
 #   리뷰 r2 A-r2-1). 창을 지나 Job이 Progressing이면 기다리고, Degraded면 그 시도는 Failed이되 retry(root `ApplyOutOfSyncOnly=true` · limit 5)가 이미 만들어진

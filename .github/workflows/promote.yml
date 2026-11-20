@@ -45,8 +45,12 @@
 # - 로직은 모두 이 파일 안에 인라인으로 둔다. `${{ }}` 값은 run: 본문에 끼워 넣지 않고 env:로만 넘긴다(입력 pod 포함).
 # - 도구는 yq 하나다(validate job 스텝 3 · render-diff job 스텝 2와 같은 버전 · sha256 — 값을 바꾸면 함께 바꾼다).
 # - 각 run 스텝은 스텝 이름 · 시작·종료 시각(UTC) · 초 · exit를 job 요약에 한 줄 남긴다(validate.yml과 같다).
-# - 끝까지 돌려 보는 것(첫 이미지의 dev → prod 승격 · attestation 검증 · 승인 대기 · 관문 · 머지)은 T115다. 오늘 pod의 overlay는
-#   빈 뼈대라(images 없음) 이 워크플로를 실행하면 ②에서 실패한다.
+# - 끝까지 돌려 보는 것(첫 승격(dev → prod) · attestation 검증 · 승인 대기 · 관문 · 머지)은 T115다. 지금(T075 GP-3 #64 머지 뒤 · 2026-11-20)
+#   identity-admin의 두 overlay에 images 항목이 있다 — dev(첫 항목 = T074 사람 seed · 값은 봇 dev bump가 바꾼다) · prod(첫 항목 = T075 GP-3 사람
+#   seed — 그때의 dev digest와 같다). 그래서 GP-3 머지 시점(dev digest = prod digest인 동안)에 실행하면 ②는 통과하고, ③(러너에서 도는지는 T115에서
+#   처음 확인)을 지나면 ④가 「할 일 없음」(prod digest = dev digest · exit 0 · 브랜치 · PR 없음)으로 끝난다(②·④는 GP-3 빌드가 재현). 첫 실제 승격
+#   PR은 다음 dev bump 뒤다(실연 T115). (T075 정정 2026-11-20 — 이전 문구 「끝까지 돌려 보는 것(첫 이미지의 dev → prod 승격 · …)은 T115다. 오늘
+#   pod의 overlay는 빈 뼈대라(images 없음) 이 워크플로를 실행하면 ②에서 실패한다」)
 name: promote
 
 on:

@@ -16,9 +16,12 @@
 #   rbac.authorization.k8s.io/Role · rbac.authorization.k8s.io/RoleBinding.
 #   ServiceAccount 를 막는 이유는 pod 워크로드가 `automountServiceAccountToken: false` 로 API 를 쓰지 않기 때문이다(계약 §워크로드 강화).
 #
-# 이 프로젝트를 쓰는 Application(`identity-admin-dev` 등)은 T075 가 만든다(gitops PR GP-2 — clusters/oci-k3s/apps/<pod>-dev.yaml).
+# 이 프로젝트를 쓰는 Application(지금 `identity-admin-dev` 하나 — clusters/oci-k3s/apps/<pod>-dev.yaml)은 T075 가 만들었다(gitops PR GP-2 #63 ·
+#   2026-11-19 — dev 첫 배포).
 #   반영 경로: 이 파일은 승인 관문(prod-approval) 대상이다(clusters/oci-k3s/projects/** — 계약 §validate.yml 8) → 머지 뒤 platform-argocd
 #   (bootstrap/argocd 가 이 디렉터리를 base 로 포함)가 SSA 로 갱신한다.
+#   (T075 정정 2026-11-20 — 이전 문구 「이 프로젝트를 쓰는 Application(`identity-admin-dev` 등)은 T075 가 만든다(gitops PR GP-2 —
+#   clusters/oci-k3s/apps/<pod>-dev.yaml)」)
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
