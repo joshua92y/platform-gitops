@@ -153,8 +153,9 @@ Application을 두지 않았다(설계 D3-A — 검사 대상이 US3/US4 산출�
   세므로 `platform/tests/` 디렉터리는 없다 — 만들면 7.2가 FAIL한다(표의 `tests` 키가 그 디렉터리를 통과시키는 사각 · 리뷰 r1 A3 · C6). (`platform-argocd`가 `bootstrap/argocd`를 쓰는 것은 계약 §디렉터리의 자기 관리 배치 — 7.1의 별도 분기다.)
 - **sync-wave**: 계약 §sync-wave 단일 표의 `policies/tests` 행. 모든 플랫폼 컴포넌트 뒤라 검사 실패(Job Failed → Application Degraded)가
   root 재구축에서 앞 wave를 막지 않는다. 숫자는 계약 표 · `tests/validate.sh` `WAVE_TABLE`(`tests` 행) · Application 어노테이션에만 있다(여기 옮겨 적지 않는다).
-  표의 마지막 **플랫폼** 행이지 전체의 마지막은 아니다 — `<pod>-<env>`(앱 · 뒤 행)가 생기면 root 콜드 재구축의 첫 operation은 이 Application의 health가 Healthy로
-  읽힐 때까지 기다린 뒤 앱 행으로 간다. 단, Argo CD v3.5.2는 live가 없는 리소스를 Application health 집계에서 뺀다(`controller/health.go` "Missing resources should
+  표의 마지막 **플랫폼** 행이지 전체의 마지막은 아니다 — `<pod>-<env>`(앱 · 뒤 행)가 생겼으므로(`identity-admin-dev` · `identity-admin-prod` — T075 GP-2 #63 ·
+  2026-11-19) root 콜드 재구축의 첫 operation은 이 Application의 health가 Healthy로 읽힐 때까지 기다린 뒤 앱 행으로 간다(T075 정정 2026-11-20 — 이전 문구
+  「`<pod>-<env>`(앱 · 뒤 행)가 생기면」). 단, Argo CD v3.5.2는 live가 없는 리소스를 Application health 집계에서 뺀다(`controller/health.go` "Missing resources should
   not affect parent app health")라, ES 2가 SecretSynced가 되고 Job이 아직 만들어지기 전의 짧은 창에서 이 Application은 Healthy로 읽힌다 — root가 그 창을 읽으면 Job
   실행(2–3분)을 기다리지 않고 앱 행으로 간다. 즉 뒤 행(앱) 게이트는 검사 Job의 결과를 **보장하지 않는다**(경합 · 실측 VD-6 · 리뷰 r2 A-r2-1). 창을 지나 Job이
   Progressing이면 기다리고, Degraded면 그 시도는 Failed이되 retry(root `ApplyOutOfSyncOnly=true` · limit 5)가 이미 만들어진 CR을 건너뛰어 앱 행을 적용하므로 최종
@@ -189,7 +190,7 @@ Application을 두지 않았다(설계 D3-A — 검사 대상이 US3/US4 산출�
 | 단계 | 무슨 일 | 기대 상태 | 예상 시간 |
 |---|---|---|---|
 | 0 머지 선행 | kv `dev/` 4경로 시드(`dev/db/dev_identity_admin/app` · `dev/dragonfly/identity-admin` · `dev/dragonfly/sample-pod` · `dev/kafka/identity-admin` — 새 시드 0) · ns jt-dev CA 미러 ES 2(`pg-main-ca` · `jt-kafka-cluster-ca-cert`) Ready · ClusterSecretStore `vault-dev` Valid · ns data 대상 파드 Running(`kubectl -n data get pods` — `pg-main-1` · `jt-kafka-combined-0` · `dragonfly-dev`) · CI(validate) PASS + 렌더 diff = 추가분만 · 운영자 kubectl 사전 동작 0 — 출력을 확인한 **뒤에만** 머지한다(모노레포 build-notes 「T059」 D10 ①–⑥) | 여섯 조건 전부 출력으로 확인 | — |
-| 1 root 폴링 → child 생성 | root가 폴링 주기(`bootstrap/argocd/argocd-cm.yaml` `timeout.reconciliation` 180 s) 안에 새 커밋을 보고 자동 sync로 Application `platform-tests`를 만든다. 즉시 당기려면 운영자(admin kubeconfig) `kubectl -n argocd annotate app root argocd.argoproj.io/refresh=normal --overwrite` | root operation **즉시 Succeeded** — 지금은 이 Application이 root의 마지막 wave라 health를 기다리지 않는다(앱 행이 생긴 뒤의 콜드 재구축은 §Application `platform-tests` sync-wave) | ≤ 180 s |
+| 1 root 폴링 → child 생성 | root가 폴링 주기(`bootstrap/argocd/argocd-cm.yaml` `timeout.reconciliation` 180 s) 안에 새 커밋을 보고 자동 sync로 Application `platform-tests`를 만든다. 즉시 당기려면 운영자(admin kubeconfig) `kubectl -n argocd annotate app root argocd.argoproj.io/refresh=normal --overwrite` | root operation **즉시 Succeeded** — T059 첫 배포(2026-11-02) 때는 이 Application이 root의 마지막 wave라 health를 기다리지 않았다(앱 행은 T075 GP-2 #63 · 2026-11-19부터 있다 — 그 뒤의 콜드 재구축은 §Application `platform-tests` sync-wave · T075 정정 2026-11-20 — 이전 문구 「지금은 이 Application이 root의 마지막 wave라 health를 기다리지 않는다(앱 행이 생긴 뒤의 콜드 재구축은 …)」) | ≤ 180 s |
 | 2 리소스 wave `"0"` | ConfigMap `assert-config` · ES 2(`assert-data-env` · `assert-kafka-env`) SSA → ESO가 `vault-dev`로 kv를 읽어 Secret 2를 만든다 | ES 2 `Ready=True`(SecretSynced) → Healthy | 수 초 |
 | 3 리소스 wave `"1"` | Job 2(`data-assert` · `kafka-assert`) SSA — 마지막 리소스 wave라 적용 직후 operation이 닫힌다 | operation **Succeeded** · Application(그리고 root) health Progressing — Job이 끝날 때까지(이때 하네스 `argo-1`은 일시 FAIL) | 초 |
 | 4 파드 기동 · 검사 | data-assert: initContainer `dragonfly-assert`(Dragonfly 7검사) → `pg-assert`(pg 6검사 + init 결과 중계) · kafka-assert: 컨슈머 선기동 → 할당 확인 → produce → 마커 수신 → cross-env | pod Completed · 로그 마지막 줄 data-assert `SUMMARY: pass=13 fail=0` · kafka-assert `SUMMARY: pass=2 fail=0` | data-assert ≤ 2분 · kafka-assert ≤ 3분 |
@@ -218,6 +219,7 @@ Synced/Healthy · 하네스 46/0/9 · 15/0/1 · 17/0/0. 시간표 · 로그 · V
 | (f) Job `Failed` reason `DeadlineExceeded`(pod는 있었다) | **활성 pod가 삭제돼 로그가 없다**(`logs job/…` 실패 — 로그를 읽는 하네스 검사가 FAIL) → `kubectl -n jt-dev describe job <job>` Events · 대상 쪽 로그(`kubectl -n data logs deploy/dragonfly-dev --since=10m` · `kubectl -n data logs jt-kafka-combined-0 --since=10m`) | 할당 60 s + 마커 30 s 초과 · 네트워크 | 운영자(admin kubeconfig) `kubectl -n jt-dev delete job <job>`으로 재실행 → 같은 모양이면 kafka-assert에 기동 유예(data-assert `wait_ready` 모양)를 더할지 재검토(스크립트 변경 — 이 PR은 결정 D7로 스크립트 불변 · 다음 Job 스펙 변경 PR) |
 | (g) Application `OutOfSync`/`Healthy`가 영구 | `kubectl -n argocd get app platform-tests -o jsonpath='{.status.resources[?(@.status=="OutOfSync")]}'` | 완료된 Job의 live-only 필드(VD-1 — 2026-11-02 첫 배포 실측은 Synced 유지라 이 증상은 나오지 않았다) | `ignoreDifferences`(Job `/spec/selector` · template 라벨) 후속 PR — §재실행 모델 |
 | (h) 주간 재실행 FAIL | (e)와 같다 | — | **Degraded가 7일 남는다**(`backoffLimit: 0` · 자동 재시도 없음 — 다음 재실행은 TTL 삭제 뒤) → 운영자(admin kubeconfig) `kubectl -n jt-dev delete job <job>`으로 즉시 재실행 |
+| (i) sync `Unknown` · 조건 `ComparisonError`(`… Job.batch "<job>" is invalid: spec.template: Invalid value … field is immutable`) — health · operationState는 옛 값 그대로(새 operation 없음) | `kubectl -n argocd get app platform-tests -o jsonpath='{.status.sync.status} {.status.sync.revision} {.status.conditions[*].type} {.status.conditions[*].message}'` | Job 스펙을 바꾸는 PR이 머지됐는데 완료된 Job이 남아 있다(`spec.template` immutable — 서버 측 diff의 비교 오류 · VD-3 — T075 GP-A 2026-11-19 실측) | §재실행 모델 「Job 스펙을 바꾸는 PR」 ②–④ — 운영자(admin kubeconfig) `kubectl -n jt-dev delete job <job>` → 자동 sync가 새 스펙으로 만든다(수동 Sync를 누르지 않는다) |
 
 ## 재실행 모델 — **B 확정** (T059 결정 D6 · 2026-10-29)
 
@@ -228,21 +230,39 @@ Job의 `spec.template`은 immutable이라 Argo CD가 같은 이름의 Job을 갱
   → 검사가 다시 돈다(첫 관찰 = VD-2 · 2026-11-05 무렵 — 2026-11-02 첫 실행 기준으로 다시 세면 11-09 무렵 · 미실측).
 - **수동 재실행(운영자 전용 — admin kubeconfig)**: `kubectl -n jt-dev delete job <이름>` → selfHeal이 다시 만든다(≤ 3분 — 조정 주기 상한) 또는 Argo Sync.
   agent-view에는 `delete` 동사가 없다(`platform/policies/rbac-agent-view.yaml` — ClusterRole `view` + get/list/watch + `pods/portforward` create뿐) · tester · agent-view는 로그만 읽는다.
-- **Job 스펙을 바꾸는 PR**: 완료된 Job이 남아 있으면 머지 뒤 sync가 그 Job 적용에서 거부된다(`spec.template` immutable). 순서:
+- **Job 스펙을 바꾸는 PR**: 완료된 Job이 남아 있으면 머지 뒤 Argo CD가 새 리비전을 **비교**하는 단계에서 그 Job이 거부된다(`spec.template` immutable). 이 저장소는
+  서버 측 diff를 전역으로 켠다(`bootstrap/argocd/argocd-cmd-params-cm.yaml` `controller.diff.server.side`) — 비교가 dry-run 서버 측 적용이라 거부가 **비교 오류**로 나고
+  sync operation은 시작되지 않는다(VD-3 — T075 GP-A 2026-11-19 실측 · Argo CD v3.5.2). 순서(T075 정정 2026-11-20 — 이전 문구 「완료된 Job이 남아 있으면 머지 뒤
+  sync가 그 Job 적용에서 거부된다(`spec.template` immutable)」):
   - ① 머지한다.
-  - ② `kubectl -n argocd get app platform-tests -o jsonpath='{.status.operationState.phase} {.status.operationState.message}'`에서 `field is immutable`을 확인한다(agent-view로 된다).
-    자동 sync operation은 기본 retry(대기 10·20·40·80·160 s — 재시도 창 ≈ 5분) 동안 phase `Running`이다(message `… Retrying attempt #<n> …`).
+  - ② `kubectl -n argocd get app platform-tests -o jsonpath='{.status.sync.status} {.status.sync.revision} {.status.conditions[*].type} {.status.conditions[*].message}'`에서
+    sync 상태 `Unknown` · revision이 ①의 머지 커밋인지 · 조건 `ComparisonError`(message `… serverSideDiff error: error running server side apply in dryrun mode for resource
+    Job/<이름>: Job.batch "<이름>" is invalid: spec.template: Invalid value … field is immutable`)를 함께 확인한다(agent-view로 된다). **`operationState`가 아니다** — 새
+    operation이 없어 옛 operationState(이전 리비전의 마지막 operation — 실측 때 `Succeeded`)가 그대로 남고, health도 옛 Job 그대로(실측 `Healthy`)다. 재시도 창(`Running` ·
+    `Retrying`)이 없다 — Job을 지울 때까지 `Unknown`이 이어지므로 창이 닫히기 전에 ③을 끝내야 하는 압박은 없다(실측 2026-11-19 KST: 머지 18:43:44 → 운영자 refresh 뒤
+    18:43:50에 `Unknown` · revision `6729cf0`(머지 커밋) · `ComparisonError`). 다만 그동안 이 Application 전체가 자동 sync되지 않는다(다른 Job의 TTL 주간 재실행 포함 — 소스 판독: 자동 sync는 sync 상태가 OutOfSync일 때만 돈다 · TTL 몫 미실측) ·
+    모노레포 하네스 `argo-1`은 FAIL이다(`argo-5`는 옛 `Succeeded`가 남아 못 잡는다) — 오래 두지 않는다. ② 상태에서 수동 Sync를 누르지 않는다 — ④가 자동으로 푼다.
+    누르면 비교 오류로 operation이 `Error`로 남아 같은 리비전의 자동 sync가 멈출 수 있다(소스 판독 · 미실측) — 그때는 아래 ⑤의 수동 전체 Sync.
+    (T075 정정 2026-11-20 — 이전 문구 「`kubectl -n argocd get app platform-tests -o jsonpath='{.status.operationState.phase} {.status.operationState.message}'`에서
+    `field is immutable`을 확인한다(agent-view로 된다). 자동 sync operation은 기본 retry(대기 10·20·40·80·160 s — 재시도 창 ≈ 5분) 동안 phase `Running`이다(message
+    `… Retrying attempt #<n> …`).」)
   - ③ 운영자(admin kubeconfig) `kubectl -n jt-dev delete job <이름>`.
-  - ④ 창 안이면 → 다음 재시도가 새 스펙으로 Job을 만든다.
-  - ⑤ 창 밖이면(operation `Failed` — 같은 리비전으로는 자동 sync가 다시 시작하지 않는다 · 모노레포 하네스 `argo-5`(operationState `Failed` · `Error` — T059 D9)가 잡는다)
+  - ④ Job이 지워지면 비교 오류가 풀리고 자동 sync가 새 스펙으로 Job을 만든다 — 수동 Sync는 필요 없다(실측 2026-11-19 KST: 삭제 18:45 무렵 → 새 Job 18:45:33 시작 ·
+    18:45:38 끝 · `SUMMARY: pass=13 fail=0` · Synced/Healthy · 새 리비전의 operation `Succeeded`). (T075 정정 2026-11-20 — 이전 문구 「창 안이면 → 다음 재시도가 새
+    스펙으로 Job을 만든다.」)
+  - ⑤ (자동 경로(②–④)에서는 이 갈래로 가지 않는다 — operation이 `Failed` · `Error`로 남았을 때(옛 재시도 모델 · 위 ②의 수동 Sync 뒤)의 방법이다. 증상표 (a)도
+    아래 방법을 가리킨다.) operation이 `Failed` · `Error`로 남았으면(같은 리비전으로는 자동 sync가 다시 시작하지 않는다 · 모노레포 하네스 `argo-5`(operationState
+    `Failed` · `Error` — T059 D9)가 잡는다)
     ③ 뒤 **운영자 전체 수동 Sync**(리소스 선택 없음): Argo CD UI `platform-tests` → SYNC(리소스 전부 · PRUNE 끔 · Apply Out of Sync Only 끔 · Retry 끔 · Sync options는
     미리 채워진 값 그대로) → 안 되면 CLI `argocd app sync platform-tests`(**옵션 플래그 없이** — syncOptions를 하나라도 주면 spec 목록이 대체된다 · `--resource` ·
     `--prune`도 주지 않는다) → admin kubeconfig만 있을 때 JSON patch(옛 `status.operationState` 제거 + `.operation` 추가 · `test` phase Failed) 순. **`.operation`만 넣는
     `--type merge` patch 금지** — 정상 경로(`SetAppOperation`)가 하는 operationState 비우기가 빠져 옛 실패 기록이 새 기록에 섞인다(2026-10-19 T056 실측 · 출처:
     `platform/kafka-topics/README.md` §1 증상표 첫 행 · 모노레포 런북 `docs/runbooks/bootstrap.md` §3 T056 교훈 ③ · §4 T056 「늦은 시드」 4단계). agent-view로는 할 수 없다
-    (K8s 동사 get · list · watch뿐 — Application에 쓸 수 없다 · 운영자 전용).
+    (K8s 동사 get · list · watch뿐 — Application에 쓸 수 없다 · 운영자 전용). (T075 정정 2026-11-20 — 이전 문구 「창 밖이면(operation `Failed` — 같은 리비전으로는
+    자동 sync가 다시 시작하지 않는다 · 모노레포 하네스 `argo-5`(operationState `Failed` · `Error` — T059 D9)가 잡는다)」)
   - ⑥ 머지 **전에**(또는 Argo가 새 리비전을 당기기 전에) Job을 지우지 않는다 — selfHeal이 옛 리비전의 옛 스펙 Job을 수 초 안에 다시 만들어(옛 스펙 검사가 한 번 더 돈다)
-    머지 뒤 같은 거부가 난다. 첫 사례에서 실측한다(VD-3).
+    머지 뒤 같은 거부가 난다(VD-3 — T075 GP-A 2026-11-19 실측 결과: 머지 뒤 거부의 모양은 ②, 풀리는 길은 ③ · ④ · 머지 전 삭제 갈래 자체는 미실측). (T075 정정
+    2026-11-20 — 이전 문구 「첫 사례에서 실측한다(VD-3).」)
 - **A(Sync hook)를 채택하지 않은 이유**: hook 결과는 sync · health 집계 밖이라 Job 실패가 Application의 Synced/Healthy에 가려져 하네스 `argo-1`이 보지 못한다
   (`platform/cnpg-databases/README.md` §6 T059 — C5) · selfHeal 부분 sync · 리소스 선택 Sync · Apply only는 hook을 건너뛴다(Argo CD v3.5.2 `controller/sync.go:311`) —
   주간 재검사가 일어나지 않는다. B는 Job 실패가 Application health(Degraded)로 드러나 `argo-1`이 본다.
@@ -561,7 +581,7 @@ ES 이름도) · ConfigMap 어노테이션(`"0"` — 값 불변) · `tests/valid
   | VD-10 | Degraded일 때 root 헬스 전파 | **해당 없음** — Degraded 0 |
 
 - **미확인(미실측으로 둔다)**: `CreateNamespace` 거부 메시지(jt-dev가 이미 있었다 — §Application `platform-tests` syncPolicy) · VD-11(ESO가 ES 어노테이션을 Secret에
-  복사하는가 — 운영자 Secret 읽기) · 주간 재실행(VD-2 · 11-09 무렵 — §재실행 모델) · Job 스펙 변경 PR의 immutable 경로(VD-3) · root 재구축 때 앞 행 · 뒤 행 게이트(VD-6 · SP-3 리허설).
+  복사하는가 — 운영자 Secret 읽기) · 주간 재실행(VD-2 · 11-09 무렵 — §재실행 모델) · Job 스펙 변경 PR의 immutable 경로(VD-3)(→ 2026-11-19 T075 GP-A에서 실측 — §재실행 모델 ②–④) · root 재구축 때 앞 행 · 뒤 행 게이트(VD-6 · SP-3 리허설).
 
 ## 검증 기록 (T075 GP-A — data-assert `acl-list` 새 뜻(UD-9 B2 회귀 탐지기), 저장소 로컬 · 2026-11-17)
 

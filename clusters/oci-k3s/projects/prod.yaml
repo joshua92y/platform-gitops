@@ -7,8 +7,11 @@
 #   dev.yaml 머리 주석과 같다. 허용 목록 = 정확히 ""/ConfigMap · ""/Service · apps/Deployment · batch/Job · batch/CronJob ·
 #   networking.k8s.io/Ingress · external-secrets.io/ExternalSecret · traefik.io/Middleware(admin Ingress 의 stripPrefix — 같은 ns).
 #
-# 이 프로젝트를 쓰는 Application(`identity-admin-prod` 등)은 T075 가 만든다(gitops PR GP-2 — 빈 prod overlay 를 가리키는 꼴로 먼저).
+# 이 프로젝트를 쓰는 Application(지금 `identity-admin-prod` 하나 — clusters/oci-k3s/apps/<pod>-prod.yaml)은 T075 가 만들었다(gitops PR GP-2 #63 ·
+#   2026-11-19 — 빈 prod overlay 를 가리키는 꼴로 먼저 → GP-3 #64 · 2026-11-20 이 overlays/prod 를 채워 prod 첫 배포).
 #   이 파일은 승인 관문(prod-approval) 대상이다(clusters/oci-k3s/projects/** — 계약 §validate.yml 8).
+#   (T075 정정 2026-11-20 — 이전 문구 「이 프로젝트를 쓰는 Application(`identity-admin-prod` 등)은 T075 가 만든다(gitops PR GP-2 — 빈 prod overlay 를
+#   가리키는 꼴로 먼저)」)
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
